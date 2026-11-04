@@ -223,6 +223,7 @@ export const de: Translations = {
     counterPendingBody: 'Deine Bestätigung ist ausgestellt. Die Bestätigung von {name} kommt über das Netz; dann ist die Begegnung gegenseitig.',
     successBody: 'Du und {name} seid jetzt verbunden.',
     trustPerson: '{name} vertrauen',
+    trustNotNow: 'Nicht jetzt',
     openChat: 'Gespräch öffnen',
     recognized: 'Erneut begegnet · wiedererkannt',
   },
@@ -261,7 +262,7 @@ export const de: Translations = {
     'trust.givenSub': 'Dein Anker ist offengelegt: {name} erkennt dich auch in Gruppen und sieht dein Profil.',
     'trust.notGiven': 'Du vertraust {name} noch nicht.',
     'trust.notGivenSub': 'Dein Anker ist {name} nicht offengelegt.',
-    classesToggle: 'Einzeln einstellen',
+    classesToggle: 'Erweiterte Einstellungen',
     classDefault: 'folgt dem Vertrauen',
     classes: {
       anchorMapping: { name: 'Anker', body: 'Deine dauerhafte Identität. {name} erkennt dich über Gruppen hinweg.' },
@@ -285,7 +286,10 @@ export const de: Translations = {
 
   trustSheet: {
     onTitle: '{name} vertrauen?',
-    onBody: 'Du legst {name} deinen Anker offen. {name} erkennt dich damit auch in Gruppen wieder und sieht dein Profil. Was offengelegt ist, bleibt bekannt, auch wenn du es später ausschaltest.',
+    onAnchor: 'Du legst {name} deinen Anker offen. {name} erkennt dich damit wieder, auch über Begegnungen hinweg.',
+    onProfile: '{name} sieht deinen Namen und dein Bild.',
+    onGroups: 'In gemeinsamen Gruppen weiß {name}, wer du bist.',
+    onStays: 'Was offengelegt ist, bleibt bekannt, auch wenn du es später ausschaltest.',
     onConfirm: 'Vertrauen',
     offTitle: 'Vertrauen zurückziehen?',
     offBody: 'Du teilst mit {name} nichts Neues mehr: kein Profil, keine gemeinsamen Gruppen. Was {name} schon kennt, bleibt.',
