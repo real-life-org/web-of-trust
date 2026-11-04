@@ -317,6 +317,8 @@ export function project(raw: ProjectionInput): ReadModels {
       metAt: met?.metAt ?? null,
       lastMetAt: met?.lastMetAt ?? null,
       sharedGroups: null,
+      // the contact's star tested against the anchors this holder holds (lib sharedContacts, entry ids)
+      sharedContacts: c.sharedContacts === undefined ? null : c.sharedContacts.map((id) => ({ id: id as ContactId, name: names.get(id) ?? null })),
       actions,
     })
     const conversation = summaries.get(key) ?? { key, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false }

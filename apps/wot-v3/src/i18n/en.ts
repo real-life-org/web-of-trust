@@ -244,6 +244,8 @@ export const en = {
     trust: 'Trust',
     actions: 'Actions',
     sharedGroups: 'Shared groups',
+    sharedContacts: 'Contacts in common',
+    sharedContactsSub: 'As {name} states it; nothing is proven by it.',
     'ver.mutual': 'You confirmed each other on {date}.',
     'ver.mutualSub': 'One encounter, both confirmations.',
     'ver.mutualRemet': 'Met again on {date}, recognized silently.',

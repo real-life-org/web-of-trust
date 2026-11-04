@@ -297,6 +297,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       metAt,
       lastMetAt: metAt,
       sharedGroups: null,
+      sharedContacts: null,
       actions: ACTIONS,
     })
     return { ...summary, conversation: summaries.get(key) ?? summaryOf(state, key, [], decisionById) }
