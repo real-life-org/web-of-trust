@@ -123,6 +123,8 @@ function Window({ person, pos, screen, src, focused, online, onFocus, onMove, on
   onOnline: (on: boolean) => void
 }) {
   const drag = useRef<{ dx: number; dy: number } | null>(null)
+  /** the app has loaded in its frame: until then the screen is dark and shows that it is coming */
+  const [loaded, setLoaded] = useState(false)
   return (
     <div className={'wb-win' + (focused ? ' focus' : '')} style={{ left: pos.x, top: pos.y }} onPointerDown={onFocus} data-window={person.id}>
       <div
@@ -150,8 +152,8 @@ function Window({ person, pos, screen, src, focused, online, onFocus, onMove, on
           ✕
         </button>
       </div>
-      <div className="wb-win-screen" style={{ height: screen }}>
-        <iframe title={person.name} name={person.id} src={src} style={{ width: PHONE_W, height: Math.round(screen / SCALE), transform: `scale(${SCALE})` }} />
+      <div className={'wb-win-screen' + (loaded ? '' : ' loading')} style={{ height: screen }} data-loaded={loaded}>
+        <iframe title={person.name} name={person.id} src={src} onLoad={() => setLoaded(true)} style={{ width: PHONE_W, height: Math.round(screen / SCALE), transform: `scale(${SCALE})` }} />
       </div>
     </div>
   )

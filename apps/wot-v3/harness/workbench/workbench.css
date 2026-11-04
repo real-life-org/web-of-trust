@@ -297,13 +297,46 @@
   width: 270px;
   overflow: hidden;
   border-radius: 17px;
-  background: #fff;
+  background: oklch(14% 0.012 265);
+  position: relative;
 }
 .wb-win-screen iframe {
   border: 0;
   transform-origin: 0 0;
   display: block;
-  background: #fff;
+  background: transparent;
+  transition: opacity 0.25s;
+}
+/* until the app has loaded: dark, with a ring that turns */
+.wb-win-screen.loading iframe {
+  opacity: 0;
+}
+.wb-win-screen.loading::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  border: 3px solid var(--wb-border);
+  border-top-color: var(--wb-primary);
+  animation: wb-spin 0.9s linear infinite;
+}
+@keyframes wb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wb-win-screen.loading::before {
+    animation: none;
+    border-top-color: var(--wb-primary);
+  }
+  .wb-win-screen iframe {
+    transition: none;
+  }
 }
 .wb-gear {
   position: relative;
