@@ -242,6 +242,8 @@ export const de: Translations = {
     trust: 'Vertrauen',
     actions: 'Aktionen',
     sharedGroups: 'Gemeinsame Gruppen',
+    sharedContacts: 'Gemeinsame Kontakte',
+    sharedContactsSub: 'So sagt es {name}; bewiesen ist damit nichts.',
     'ver.mutual': 'Ihr habt euch am {date} gegenseitig bestätigt.',
     'ver.mutualSub': 'Eine Begegnung, beide Bestätigungen.',
     'ver.mutualRemet': 'Erneut begegnet am {date}, stillschweigend wiedererkannt.',
