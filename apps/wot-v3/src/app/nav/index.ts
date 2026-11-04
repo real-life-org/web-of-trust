@@ -6,7 +6,8 @@
 import type { ContactId, ConversationKey, ReadStore } from '../../port'
 import { writableStore } from '../../port'
 
-export type Tab = 'contacts' | 'groups' | 'profile'
+/** the middle tab is the graph (Anton 04.11.: it replaces groups, which v3 does not have yet) */
+export type Tab = 'contacts' | 'graph' | 'profile'
 export type Route =
   | { readonly kind: 'chat'; readonly key: ConversationKey }
   | { readonly kind: 'contact'; readonly id: ContactId }
@@ -36,10 +37,6 @@ export type NavEvent =
 
 export const INITIAL_NAV: NavState = { tab: 'contacts', stack: [], sheet: null }
 
-function tabOf(route: Route): Tab {
-  return route.kind === 'chat' && route.key.startsWith('g:') ? 'groups' : 'contacts'
-}
-
 /** Pure transition. `exit` is true when back has nothing left to close. */
 export function navTransition(state: NavState, event: NavEvent): { state: NavState; exit: boolean } {
   switch (event.type) {
@@ -50,7 +47,8 @@ export function navTransition(state: NavState, event: NavEvent): { state: NavSta
     case 'pop':
       return { state: { ...state, stack: state.stack.slice(0, -1) }, exit: false }
     case 'open':
-      return { state: { tab: tabOf(event.route), stack: [event.route], sheet: null }, exit: false }
+      // every route belongs to the contacts (the graph tab has no routes of its own)
+      return { state: { tab: 'contacts', stack: [event.route], sheet: null }, exit: false }
     case 'reset':
       return { state: INITIAL_NAV, exit: false }
     case 'back':

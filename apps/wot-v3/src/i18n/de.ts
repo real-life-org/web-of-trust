@@ -14,7 +14,7 @@ export const de: Translations = {
   },
   nav: {
     contacts: 'Kontakte',
-    groups: 'Gruppen',
+    graph: 'Graph',
     profile: 'Profil',
     back: 'Zurück',
     details: 'Details',
@@ -22,7 +22,6 @@ export const de: Translations = {
   },
   shell: {
     pickOne: 'Wähle links ein Gespräch.',
-    comingNext: 'Dieser Bereich folgt in einem späteren Schritt.',
     verifyInPerson: 'Persönlich verifizieren',
     foundGroup: 'Gruppe gründen',
     loading: 'Lädt…',
@@ -47,6 +46,17 @@ export const de: Translations = {
     directRefused: 'Nicht getragen: Der Vermittler verweigert die Direktzustellung. Nachrichten bleiben auf diesem Gerät.',
     notConfigured: 'Nicht getragen: Diese App hat keinen Vermittler. Nachrichten bleiben auf diesem Gerät.',
     notCarried: 'Nicht getragen. Nachrichten bleiben auf diesem Gerät.',
+  },
+  graph: {
+    count: '{n} Kontakte · was dein Gerät kennt',
+    countOne: '1 Kontakt · was dein Gerät kennt',
+    nobody: 'Noch niemand',
+    you: 'Du',
+    emptyBody: 'Dein Netz beginnt mit einer Begegnung. Wen du persönlich verifizierst, erscheint hier.',
+    open: 'Öffnen',
+    shared: 'Gemeinsame Kontakte: {names} · so sagt es {name}',
+    full: 'Auf dem ganzen Bildschirm zeigen',
+    exitFull: 'Zurück zur App',
   },
   contacts: {
     trustOn: '{name} vertrauen',

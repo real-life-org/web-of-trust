@@ -49,7 +49,7 @@ interface IdentityOpts extends Opts {
 }
 
 function navFor(open: ConversationKey | null | undefined): NavState {
-  return open ? { tab: open.startsWith('g:') ? 'groups' : 'contacts', stack: [{ kind: 'chat', key: open }], sheet: null } : INITIAL_NAV
+  return open ? { tab: 'contacts', stack: [{ kind: 'chat', key: open }], sheet: null } : INITIAL_NAV
 }
 
 /** Scenarios without an identity: the app starts unlocked, no identity runtime (data screens). */
