@@ -12,7 +12,8 @@
 //   never moves the window. Lowering the cap drops by the same rule and re-seats the survivors.
 // - The graph's centre leans away from an occupied flank: one device open, the graph takes the free
 //   strip beside it; two or more, the strip between the flanks.
-// - A phone's screen is as tall as the stage allows, between 150 and 430 px.
+// - A phone's screen is as tall as the stage allows, between 150 and 560 px (the real app's code screen
+//   needs the height: the code, and the scan button under it without scrolling).
 
 export const FULL_W = 280
 export const CHROME_H = 32
@@ -46,7 +47,7 @@ export interface Stage {
 const clamp = (lo: number, v: number, hi: number) => Math.max(lo, Math.min(v, hi))
 
 export function screenH(stage: Stage): number {
-  return Math.round(clamp(150, stage.h - WIN_TOP - 8 - CHROME_H, 430))
+  return Math.round(clamp(150, stage.h - WIN_TOP - 8 - CHROME_H, 560))
 }
 
 export function winH(stage: Stage): number {

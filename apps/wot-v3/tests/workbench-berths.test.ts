@@ -115,8 +115,8 @@ describe('the corridor and the screen', () => {
     expect(corridor({ w: 800, h: 700 }, 2).w).toBe(800 - 32)
   })
 
-  it('the screen is as tall as the stage allows, between 150 and 430', () => {
-    expect(screenH({ w: 1400, h: 700 })).toBe(430)
+  it('the screen is as tall as the stage allows, between 150 and 560', () => {
+    expect(screenH({ w: 1400, h: 700 })).toBe(560)
     expect(screenH({ w: 1400, h: 400 })).toBe(400 - 20 - 8 - 32)
     expect(screenH({ w: 1400, h: 100 })).toBe(150)
   })

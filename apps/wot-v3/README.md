@@ -39,7 +39,8 @@ the page is `harness/workbench/`.
   eye draws everything, which no device holds; a person's camera draws only what their device holds.
   Clicking a node opens that phone.
 - **Phones**: floating windows on the stage, each the full app in its own frame
-  (`?scenario=workbench&phone=<id>`, a 320 px phone scaled into a 280 px window), draggable by the
+  (`?scenario=workbench&phone=<id>`, a 300 px phone scaled into a 280 px window, up to 560 px tall so
+  the code screen shows the scan button without scrolling), draggable by the
   title bar, with its own online switch, collapsible into the dock. No onboarding: the identities are
   set up through the real port steps with the public test phrases of `harness/loopback.ts`. Where
   they sit is `harness/workbench/berths.ts`, the Claude Design workbench's rules: fixed berths on the
@@ -48,6 +49,13 @@ the page is `harness/workbench/`.
   open at once (the gear, default 2): opening past it closes the phone longest untouched, never the
   focused one, and the newcomer takes its place. The graph's centre leans away from the occupied
   flanks.
+- **Ceremony**: the apps' own flow, choreographed on the stage (`harness/workbench/flight.ts`, the
+  Claude Design workbench's flight): when a phone opens its camera, the phone whose code it is pointed
+  at (the room's newest card that is not its own) flies to the centre of the stage and tilts, the
+  scanning phone flies over it with its viewfinder punched out, the code shows through the hole; once
+  it has landed the lens opens (`world.ceremony.land()`) and the fake camera sees the code, the app
+  asks its question, both fly back. Under `prefers-reduced-motion` the lens opens after a beat and
+  nothing flies. God mode's `meet` reads the code directly; the lens is not involved.
 - **Wire**: along the bottom, every document the in-memory carrier carried, newest first, with the
   endpoint that took it and the disposition (`memoryCarrier.tap`). Over the mediator double or a live
   mediator the wire is not observable from the page yet.
@@ -58,7 +66,7 @@ the page is `harness/workbench/`.
   the wall clock.
 
 Not here yet: fault injection on the wire, god mode (meet and trust from the stage), the artifact sheet
-of a device, the Outside camera.
+of a device, the Outside camera, a sign on the scanning phone when nobody shows a code.
 
 ### Unlock measurement on a device
 

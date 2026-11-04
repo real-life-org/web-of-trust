@@ -7,11 +7,13 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
+import { startFlight, type Flight } from './flight'
 import { sceneFor, type Edge, type Scene } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
 
-/** the phone's own viewport: a small phone, so the app draws large on the stage */
-const PHONE_W = 320
+/** the phone's own viewport: a small phone, so the app draws large on the stage and its code screen
+ *  shows the scan button without scrolling */
+const PHONE_W = 300
 /** the window's inner width over the phone's viewport */
 const SCALE = (FULL_W - 10) / PHONE_W
 
@@ -109,13 +111,16 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
   )
 }
 
-function Window({ person, pos, screen, src, focused, online, onFocus, onMove, onCollapse, onClose, onOnline }: {
+function Window({ person, pos, screen, src, focused, online, flying, winRef, onFocus, onMove, onCollapse, onClose, onOnline }: {
   person: WorkbenchPerson
   pos: { x: number; y: number }
   screen: number
   src: string
   focused: boolean
   online: boolean
+  /** in the ceremony's flight: the scanner on top, the shown code beneath it */
+  flying: 'scan' | 'show' | null
+  winRef: (el: HTMLDivElement | null) => void
   onFocus: () => void
   onMove: (to: { x: number; y: number }) => void
   onCollapse: () => void
@@ -126,7 +131,7 @@ function Window({ person, pos, screen, src, focused, online, onFocus, onMove, on
   /** the app has loaded in its frame: until then the screen is dark and shows that it is coming */
   const [loaded, setLoaded] = useState(false)
   return (
-    <div className={'wb-win' + (focused ? ' focus' : '')} style={{ left: pos.x, top: pos.y }} onPointerDown={onFocus} data-window={person.id}>
+    <div ref={winRef} className={'wb-win' + (focused ? ' focus' : '') + (flying ? ` flying-${flying}` : '')} style={{ left: pos.x, top: pos.y }} onPointerDown={onFocus} data-window={person.id}>
       <div
         className="wb-win-head"
         onPointerDown={(e) => {
@@ -215,7 +220,24 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const online = useSyncExternalStore(world.online.subscribe, world.online.get)
   const graph = useSyncExternalStore(world.graph.subscribe, world.graph.get)
   const wire = useSyncExternalStore(world.wire.subscribe, world.wire.get)
+  const ceremony = useSyncExternalStore(world.ceremony.subscribe, world.ceremony.get)
   const stageRef = useRef<HTMLDivElement>(null)
+  /** the windows on the stage, by phone (the flight animates them) */
+  const winEls = useRef(new Map<string, HTMLDivElement>())
+  // the ceremony's flight: starts when a phone opens its camera, ends when its scan ended
+  const scanning = ceremony.scanning, showing = ceremony.showing
+  useEffect(() => {
+    if (!scanning) return
+    const stage = stageRef.current
+    const scanWin = winEls.current.get(scanning)
+    const scanFrame = scanWin?.querySelector('iframe')
+    if (!stage || !scanWin || !scanFrame) return
+    const showWin = showing ? (winEls.current.get(showing) ?? null) : null
+    const showFrame = showWin?.querySelector('iframe') ?? null
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const flight: Flight = startFlight({ scanWin, scanFrame, showWin, showFrame, stage, scale: SCALE, reducedMotion, onLanded: () => world.ceremony.land() })
+    return () => flight.release()
+  }, [scanning, showing, world])
   const stage = useStageSize(stageRef)
   const [camera, setCamera] = useState('god')
   // until the first action the layout is the seating of the first two people on the stage as
@@ -291,7 +313,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
           )}
         </div>
       </header>
-      <div className="wb-stage" ref={stageRef}>
+      <div className="wb-stage" ref={stageRef} {...(scanning ? { 'data-ceremony': `${scanning}>${showing ?? ''}` } : {})}>
         <Graph world={world} scene={scene} stage={stage} centre={centre} open={visible} onOpen={show} />
         <div className="wb-cams">
           <span className="wb-label">Camera</span>
@@ -345,6 +367,8 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
               src={src(id)}
               focused={layout.focus === id}
               online={online[id] ?? true}
+              flying={scanning === id ? 'scan' : showing === id && scanning ? 'show' : null}
+              winRef={(el) => (el ? winEls.current.set(id, el) : winEls.current.delete(id))}
               onFocus={() => setLayout((s) => focusDevice(s, id))}
               onMove={(to) => setLayout((s) => moveDevice(s, id, to))}
               onCollapse={() => setLayout((s) => collapseDevice(s, id, true))}

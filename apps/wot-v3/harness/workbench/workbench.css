@@ -260,6 +260,13 @@
 .wb-win.focus {
   z-index: 601;
 }
+/* the ceremony's flight: the scanner above the code, both above everything else on the stage */
+.wb-win.flying-show {
+  z-index: 790;
+}
+.wb-win.flying-scan {
+  z-index: 800;
+}
 .wb-win.focus {
   border-color: var(--wb-primary);
 }
