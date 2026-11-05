@@ -152,7 +152,7 @@ function Window({ person, pos, screen, src, focused, online, flying, winRef, onF
   /** the app has loaded in its frame: until then the screen is dark and shows that it is coming */
   const [loaded, setLoaded] = useState(false)
   return (
-    <div ref={winRef} className={'wb-win' + (focused ? ' focus' : '') + (flying ? ` flying-${flying}` : '')} style={{ left: pos.x, top: pos.y }} onPointerDown={onFocus} data-window={person.id}>
+    <div ref={winRef} className={'wb-win' + (focused ? ' focus' : '') + (flying ? ` flying-${flying}` : '')} style={{ left: pos.x, top: pos.y, ['--wb-person' as string]: person.color }} onPointerDown={onFocus} data-window={person.id}>
       <div
         className="wb-win-head"
         onPointerDown={(e) => {

@@ -267,7 +267,8 @@
   position: absolute;
   z-index: 600;
   background: oklch(11% 0.012 265);
-  border: 1.5px solid var(--wb-border);
+  /* the frame in the person's colour, the colour of their node in the graph */
+  border: 2px solid var(--wb-person, var(--wb-border));
   border-radius: 22px;
   padding: 0 5px 5px;
   box-shadow: var(--wb-shadow);
@@ -284,8 +285,8 @@
   z-index: 800;
 }
 .wb-win.focus {
-  /* the frame stays in the stage's colours: the focused phone is a shade lighter, not blue */
-  border-color: #4a5566;
+  /* the focused phone: a soft glow in the same colour */
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--wb-person, var(--wb-border)) 35%, transparent), var(--wb-shadow);
 }
 .wb-win-head {
   display: flex;
