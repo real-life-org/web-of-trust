@@ -102,17 +102,34 @@
 }
 .wb-node {
   cursor: pointer;
+  outline: none;
+}
+.wb-node:focus-visible circle {
+  stroke: var(--wb-fg);
+  stroke-width: 3px;
 }
 .wb-node circle {
   transition: fill 0.4s, stroke 0.4s, r 0.3s;
 }
 .wb-node text {
-  font-size: 11px;
+  font-size: 15px;
+  font-weight: 600;
+  /* a halo in the stage's colour: the name stays readable where an edge runs under it */
+  paint-order: stroke;
+  stroke: var(--wb-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
   fill: var(--wb-fg);
   pointer-events: none;
 }
+.wb-node text.initials {
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: normal;
+  stroke: none;
+}
 .wb-node text.sub {
-  font-size: 9px;
+  font-size: 12px;
   fill: var(--wb-muted);
 }
 .wb-node.open circle {
@@ -122,7 +139,7 @@
 .wb-edge {
   stroke: var(--wb-primary);
   stroke-opacity: 0.8;
-  stroke-width: 1.8;
+  stroke-width: 2.4;
 }
 .wb-edge.one {
   stroke: var(--wb-amber);
@@ -137,7 +154,7 @@
 .wb-edge.star {
   stroke: #c4b5fd;
   stroke-opacity: 0.9;
-  stroke-width: 1.6;
+  stroke-width: 2;
   stroke-dasharray: 2 5;
   stroke-linecap: round;
 }
@@ -261,7 +278,8 @@
   position: absolute;
   z-index: 600;
   background: oklch(11% 0.012 265);
-  border: 1.5px solid var(--wb-border);
+  /* the frame in the person's colour, the colour of their node in the graph */
+  border: 2px solid var(--wb-person, var(--wb-border));
   border-radius: 22px;
   padding: 0 5px 5px;
   box-shadow: var(--wb-shadow);
@@ -278,7 +296,8 @@
   z-index: 800;
 }
 .wb-win.focus {
-  border-color: var(--wb-primary);
+  /* the focused phone: a soft glow in the same colour */
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--wb-person, var(--wb-border)) 35%, transparent), var(--wb-shadow);
 }
 .wb-win-head {
   display: flex;

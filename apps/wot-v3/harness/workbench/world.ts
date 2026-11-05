@@ -13,19 +13,24 @@ import { mediatorDouble, phoneNet, type MediatorDouble } from '../mediator-doubl
 import { edgesOf, starEdgesOf, type DeviceContacts, type Edge, type StarEdge } from './graph'
 import { tapDevice, type DeviceEvent } from './tap'
 
+/** a phone as one device knows it */
+export interface SeenPerson {
+  readonly name: string | null
+  readonly image: string | null
+}
+
 export interface WorkbenchPerson {
   readonly id: string
   readonly name: string
-  readonly color: string
 }
 
 /** the people the workbench can seat, in order; a phone opens for each seated one */
 export const PEOPLE: readonly WorkbenchPerson[] = [
-  { id: 'jonas', name: 'Jonas Weber', color: '#3b82f6' },
-  { id: 'noah', name: 'Noah Lindqvist', color: '#ef4444' },
-  { id: 'lea', name: 'Lea Brandt', color: '#f59e0b' },
-  { id: 'mara', name: 'Mara Kowalski', color: '#ec4899' },
-  { id: 'sam', name: 'Sam Okafor', color: '#84cc16' },
+  { id: 'jonas', name: 'Jonas Weber' },
+  { id: 'noah', name: 'Noah Lindqvist' },
+  { id: 'lea', name: 'Lea Brandt' },
+  { id: 'mara', name: 'Mara Kowalski' },
+  { id: 'sam', name: 'Sam Okafor' },
 ]
 
 export type WorkbenchCarrier = { readonly kind: 'memory' } | { readonly kind: 'mediator' } | { readonly kind: 'live'; readonly did: string; readonly insecure?: boolean }
@@ -66,6 +71,9 @@ export interface WorkbenchWorld {
   /** the wire, newest first, as the phones saw it: what each handed its carrier, and who took it */
   readonly wire: ReadStore<readonly WireEntry[]>
   /** the graph's edges, from the devices' contact lists; `rev` bumps on every change */
+  /** each device's view of the other phones: the name and picture its contact list holds for them
+   *  (#517: a person's camera draws from this, never from the other phone's own profile) */
+  readonly seen: ReadStore<Readonly<Record<string, Readonly<Record<string, SeenPerson>>>>>
   readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
   /** the phones' clock as the page shows it */
   readonly now: ReadStore<number>
@@ -113,6 +121,18 @@ function contactResolver(devices: ReadonlyMap<string, LoopbackDevice>) {
     pinned.set(key, matches[0] as string)
     return matches[0] as string
   }
+}
+
+/** the phones a device holds as contacts, with the name and picture it holds for each */
+function seenBy(id: string, d: LoopbackDevice, resolve: ReturnType<typeof contactResolver>): Record<string, SeenPerson> {
+  const v: Loadable<readonly ContactListItem[]> = d.port.stores.contacts.get()
+  if (v.status !== 'ready') return {}
+  const out: Record<string, SeenPerson> = {}
+  for (const c of v.value) {
+    const peer = resolve(id, c.id, c.name)
+    if (peer) out[peer] = { name: c.name, image: c.image }
+  }
+  return out
 }
 
 function contactsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof contactResolver>): DeviceContacts['contacts'] {
@@ -302,7 +322,20 @@ export async function createWorkbenchWorld(opts: {
     last = sig
     graph.set({ edges, stars, rev: ++rev })
   }
-  for (const d of devices.values()) d.port.stores.contacts.subscribe(derive)
+  // names and pictures, apart from the graph: a rename must not restart the layout
+  const seen = writableStore<Readonly<Record<string, Readonly<Record<string, SeenPerson>>>>>({})
+  let lastSeen = ''
+  const deriveSeen = () => {
+    const next = Object.fromEntries(opts.people.map((p) => {
+      const d = devices.get(p.id)
+      return [p.id, d ? seenBy(p.id, d, resolve) : {}]
+    }))
+    const sig = JSON.stringify(next)
+    if (sig === lastSeen) return
+    lastSeen = sig
+    seen.set(next)
+  }
+  for (const d of devices.values()) d.port.stores.contacts.subscribe(() => (derive(), deriveSeen()))
 
   // the phones' clock runs as a device's would (the library's due work, the continuity sweep that
   // joins a second encounter, the stars, all run on the holder's resume on that clock); the page's
@@ -312,10 +345,12 @@ export async function createWorkbenchWorld(opts: {
     if (how.kind !== 'live') clock.advance(1000)
     now.set(clock.now())
     derive()
+    deriveSeen()
   }, 1000)
 
   for (const [a, b] of opts.met) await meet(a, b)
   derive()
+  deriveSeen()
 
   const online = writableStore<Readonly<Record<string, boolean>>>(Object.fromEntries(opts.people.map((p) => [p.id, true])))
   return {
@@ -333,6 +368,7 @@ export async function createWorkbenchWorld(opts: {
     },
     wire,
     graph,
+    seen,
     now,
     // over a live mediator the clock follows the wall clock: a jump would run ahead of the mediator's
     // token times (review 503), so there is none

@@ -37,6 +37,15 @@ describe('the graph tab', () => {
     expect(document.querySelector('[data-node="me"]')).not.toBeNull()
   })
 
+  it('in the middle your own avatar (Anton 05.11.): your initials, labelled "You"', async () => {
+    show()
+    await waitFor(() => expect(document.querySelector('[data-node="me"]')).not.toBeNull())
+    const me = document.querySelector('[data-node="me"]') as HTMLElement
+    // Jonas Weber in the IIW scenario
+    expect(within(me).getByText('JW')).toBeInTheDocument()
+    expect(within(me).getByText('You')).toBeInTheDocument()
+  })
+
   it('a tap opens the contact into a card; "Open" leads to its details', async () => {
     const { nav } = show()
     await waitFor(() => expect(document.querySelector('[data-node="priya"]')).not.toBeNull())
