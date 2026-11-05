@@ -59,6 +59,10 @@ function linksOf(scene: Scene): Link[] {
   return out
 }
 
+/** node radii on the stage: large enough to read from the back of a room */
+const NODE_R = 17
+const NODE_R_ME = 21
+
 function Graph({ world, scene, stage, centre, open, onOpen }: { world: WorkbenchWorld; scene: Scene; stage: Stage; centre: number; open: readonly string[]; onOpen: (id: string) => void }) {
   /** the simulation's nodes, by id: they keep their place across scenes (read and written in the effect only) */
   const nodesRef = useRef<Map<string, Node>>(new Map())
@@ -87,12 +91,12 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
       // every node stays near the middle, and the tick keeps it on the stage, clear of the wire below
       .force('x', forceX(cx).strength(0.05))
       .force('y', forceY(cy).strength(0.07))
-      .force('collide', forceCollide(34))
+      .force('collide', forceCollide(46))
       .alpha(0.9)
       .on('tick', () => {
         for (const n of nodes) {
-          n.x = Math.max(28, Math.min(stage.w - 28, n.x ?? cx))
-          n.y = Math.max(40, Math.min(stage.h - 40, n.y ?? cy))
+          n.x = Math.max(44, Math.min(stage.w - 44, n.x ?? cx))
+          n.y = Math.max(44, Math.min(stage.h - 52, n.y ?? cy))
         }
         setPlaced(nodes.map((n) => ({ ...n })))
       })
@@ -106,7 +110,7 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
   return (
     <svg role="group" aria-label="the trust graph">
       <defs>
-        <marker id="wb-arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <marker id="wb-arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24" />
         </marker>
       </defs>
@@ -117,8 +121,8 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
       })}
       {nodes.map((n) => (
         <g key={n.id} className={'wb-node' + (open.includes(n.id) ? ' open' : '')} data-node={n.id} transform={`translate(${n.x ?? 0},${n.y ?? 0})`} onClick={() => onOpen(n.id)} role="button" tabIndex={0} aria-label={`${n.name}: open the phone`} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ' ? onOpen(n.id) : undefined)}>
-          <circle r={n.me ? 13 : 10} fill={n.color} stroke={n.color} strokeWidth={1.5} />
-          <text y={n.me ? 28 : 24} textAnchor="middle">
+          <circle r={n.me ? NODE_R_ME : NODE_R} fill={n.color} stroke={n.color} strokeWidth={2} />
+          <text y={(n.me ? NODE_R_ME : NODE_R) + 19} textAnchor="middle">
             {n.name.split(' ')[0]}
             {n.me ? ' (me)' : ''}
           </text>
