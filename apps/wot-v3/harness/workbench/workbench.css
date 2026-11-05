@@ -284,7 +284,8 @@
   z-index: 800;
 }
 .wb-win.focus {
-  border-color: var(--wb-primary);
+  /* the frame stays in the stage's colours: the focused phone is a shade lighter, not blue */
+  border-color: #4a5566;
 }
 .wb-win-head {
   display: flex;
