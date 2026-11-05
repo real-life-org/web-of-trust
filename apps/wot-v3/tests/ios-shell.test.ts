@@ -41,6 +41,15 @@ describe('Xcode project', () => {
     expect(pbxproj).not.toMatch(/DEVELOPMENT_TEAM = \S/)
   })
 
+  it('runs on iPhone only: an iPad release could never be withdrawn again (Anton 04.11.)', () => {
+    expect(pbxproj.match(/TARGETED_DEVICE_FAMILY = ([^;]+);/g)).toEqual(['TARGETED_DEVICE_FAMILY = 1;', 'TARGETED_DEVICE_FAMILY = 1;'])
+    expect(infoPlist).not.toContain('~ipad')
+  })
+
+  it('answers export compliance in the build, so no build waits in App Store Connect (Anton 04.11.)', () => {
+    expect(infoPlist).toMatch(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/)
+  })
+
   it('compiles the view controller and the three own plugins', () => {
     const sources = pbxproj.slice(pbxproj.indexOf('/* Begin PBXSourcesBuildPhase section */'), pbxproj.indexOf('/* End PBXSourcesBuildPhase section */'))
     for (const f of ['AppDelegate.swift', 'MyViewController.swift', 'BiometricKeystorePlugin.swift', 'ScreenProtectionPlugin.swift', 'AppSettingsPlugin.swift']) {

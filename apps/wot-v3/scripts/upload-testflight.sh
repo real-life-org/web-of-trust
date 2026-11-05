@@ -10,9 +10,8 @@
 # "What to Test" text; default names version, build and tag).
 #
 # The App Store Connect record (the app with this bundle id) must exist: fastlane pilot adds builds to
-# an app, it does not create one. Export compliance: a build whose Info.plist does not answer
-# ITSAppUsesNonExemptEncryption waits for the answer in App Store Connect before testers can load it;
-# pilot then fails at the distribution step and says so.
+# an app, it does not create one. Export compliance is answered in Info.plist
+# (ITSAppUsesNonExemptEncryption), so no build waits for an answer in App Store Connect.
 set -euo pipefail
 
 APP_ID=org.reallife.weboftrust
