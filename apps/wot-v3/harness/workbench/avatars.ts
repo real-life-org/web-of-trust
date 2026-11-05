@@ -3,7 +3,7 @@
 // avatar in the app. Live: a rename or a new picture on a phone changes its node and its frame.
 import { useEffect, useState } from 'react'
 import { initials, paletteIndex } from '../../src/ui/components/avatar-color'
-import type { WorkbenchWorld } from './world'
+import type { SeenPerson, WorkbenchWorld } from './world'
 
 export interface WorkbenchAvatar {
   readonly name: string
@@ -40,4 +40,20 @@ export function useAvatars(world: WorkbenchWorld): ReadonlyMap<string, Workbench
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world])
   return avatars
+}
+
+/** The avatars a camera draws (#517). God's eye: every phone's own profile. A person's camera: their
+ *  own profile for themselves, and for everyone else only what their device holds (the contact's name
+ *  and picture as received); a phone their device does not hold gets no avatar. */
+export function avatarsSeenBy(
+  camera: string,
+  own: ReadonlyMap<string, WorkbenchAvatar>,
+  seen: Readonly<Record<string, Readonly<Record<string, SeenPerson>>>>,
+): ReadonlyMap<string, WorkbenchAvatar> {
+  if (camera === 'god') return own
+  const out = new Map<string, WorkbenchAvatar>()
+  const me = own.get(camera)
+  if (me) out.set(camera, me)
+  for (const [id, p] of Object.entries(seen[camera] ?? {})) if (id !== camera) out.set(id, avatarOf(p.name ?? '?', p.image))
+  return out
 }

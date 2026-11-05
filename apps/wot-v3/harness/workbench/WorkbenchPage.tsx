@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
-import { useAvatars, type WorkbenchAvatar } from './avatars'
+import { avatarsSeenBy, useAvatars, type WorkbenchAvatar } from './avatars'
 import { startFlight, type Flight } from './flight'
 import { sceneFor, type Edge, type Scene } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
@@ -66,7 +66,8 @@ const NODE_R_ME = 21
 /** a node as the person's avatar in the app: their picture, else their initials on their palette colour */
 function avatarNode(n: Node, a: WorkbenchAvatar | undefined) {
   const r = n.me ? NODE_R_ME : NODE_R
-  const av = a ?? { name: n.name, image: null, initials: n.name.slice(0, 2).toUpperCase(), bg: '#94a3b8', fg: '#1e293b', solid: '#94a3b8' }
+  // no avatar: the camera's device holds no name for this phone, so none is drawn (#517)
+  const av = a ?? { name: '?', image: null, initials: '?', bg: '#94a3b8', fg: '#1e293b', solid: '#94a3b8' }
   return (
     <>
       {/* the app paints its avatars on white: the same ground under the node */}
@@ -302,6 +303,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const online = useSyncExternalStore(world.online.subscribe, world.online.get)
   const graph = useSyncExternalStore(world.graph.subscribe, world.graph.get)
   const avatars = useAvatars(world)
+  const seen = useSyncExternalStore(world.seen.subscribe, world.seen.get)
   const wire = useSyncExternalStore(world.wire.subscribe, world.wire.get)
   const ceremony = useSyncExternalStore(world.ceremony.subscribe, world.ceremony.get)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -323,6 +325,8 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   }, [scanning, showing, world])
   const stage = useStageSize(stageRef)
   const [camera, setCamera] = useState('god')
+  // the graph draws what the camera's device holds (#517); the phone frames are the phones themselves
+  const cameraAvatars = useMemo(() => avatarsSeenBy(camera, avatars, seen), [camera, avatars, seen])
   // until the first action the layout is the seating of the first two people on the stage as
   // measured now (derived, so a late measurement seats them right); every action starts from it
   const [touched, setTouched] = useState<Layout | null>(null)
@@ -396,7 +400,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
         </div>
       </header>
       <div className="wb-stage" ref={stageRef} {...(scanning ? { 'data-ceremony': `${scanning}>${showing ?? ''}` } : {})}>
-        <Graph scene={scene} avatars={avatars} stage={stage} centre={centre} open={visible} onOpen={show} />
+        <Graph scene={scene} avatars={cameraAvatars} stage={stage} centre={centre} open={visible} onOpen={show} />
         <div className="wb-cams">
           <span className="wb-label">Camera</span>
           <div role="group" aria-label="Camera">

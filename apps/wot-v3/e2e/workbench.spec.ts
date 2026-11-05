@@ -136,6 +136,44 @@ test('a person’s camera shows only its own device: Noah trusts Jonas while Jon
   await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(1, { timeout: 20_000 })
 })
 
+test('a person’s camera shows names and pictures as its own device holds them: Noah renames while Jonas is offline (#517)', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.goto(`/?${new URLSearchParams({ scenario: 'workbench', theme: 'light', people: 'jonas,noah', met: 'jonas-noah' }).toString()}`)
+  await expect(page.frameLocator('iframe[name=jonas]').getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 60_000 })
+  type W = {
+    devices: Map<string, { port: { stores: { contacts: { get(): { status: string; value?: { id: string; name: string | null }[] } } }; trust: { giveTrust(id: string): { done: Promise<unknown> }; setProfile(p: { name: string }): { done: Promise<unknown> } } } }>
+  }
+  // Noah's profile reaches the people he trusts: he trusts Jonas first, while both are online
+  await page.evaluate(async () => {
+    const w = await (window as unknown as { __wotWorkbench: Promise<W> }).__wotWorkbench
+    const noah = w.devices.get('noah')!
+    const jonas = (noah.port.stores.contacts.get().value ?? []).find((c) => c.name === 'Jonas Weber')!
+    await noah.port.trust.giveTrust(jonas.id).done
+  })
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Jonas' }).click()
+  await expect(page.locator('[data-edge="t:jonas|noah"]')).toHaveCount(1, { timeout: 20_000 })
+  await expect(page.locator('[data-node=noah]')).toContainText('Noah')
+
+  // Jonas offline; Noah renames himself
+  await page.locator('[data-window=jonas]').getByRole('button', { name: 'online', exact: true }).click()
+  await page.evaluate(async () => {
+    const w = await (window as unknown as { __wotWorkbench: Promise<W> }).__wotWorkbench
+    await w.devices.get('noah')!.port.trust.setProfile({ name: 'Secret Rename' }).done
+  })
+  // God's eye knows it at once; Jonas's camera does not, his device has not received it
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: "God's eye" }).click()
+  await expect(page.locator('[data-node=noah]')).toContainText('Secret', { timeout: 10_000 })
+  await page.getByRole('group', { name: 'Camera' }).getByRole('button', { name: 'Jonas' }).click()
+  await page.waitForTimeout(2500)
+  await expect(page.locator('[data-node=noah]')).toContainText('Noah')
+  await expect(page.locator('[data-node=noah]')).not.toContainText('Secret')
+
+  // back online: once delivered, Jonas's camera shows the new name
+  await page.locator('[data-window=jonas]').getByRole('button', { name: 'offline', exact: true }).click()
+  await expect(page.locator('[data-node=noah]')).toContainText('Secret', { timeout: 30_000 })
+})
+
 test('the wire can be dragged taller and shorter by its handle', async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
