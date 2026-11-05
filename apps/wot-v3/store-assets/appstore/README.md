@@ -1,6 +1,6 @@
 # App Store screenshots
 
-Six iPhone screenshots of Web of Trust 3, German, light theme, 1320×2868 PNG (iPhone 6.9", the size App Store Connect scales down for the smaller iPhones).
+Six iPhone screenshots of Web of Trust 3, German, light theme, 1206×2622 PNG (iPhone 6.3", "iPhone with Dynamic Island, medium display" in App Store Connect).
 
 | File | Screen |
 |---|---|
@@ -13,7 +13,7 @@ Six iPhone screenshots of Web of Trust 3, German, light theme, 1320×2868 PNG (i
 
 ## How they are taken
 
-`e2e/appstore-screenshots.spec.ts` runs the workbench page (the real app on the real library, the VTI mediator double in the page, offline): five fictional people (Jonas, Noah, Lea, Mara, Sam) who met before the page opened, everyone trusts everyone they met except Jonas → Sam, then the clock runs until the shared contacts have arrived. Each screen is a phone of its own, 440×956 CSS pixels at device scale factor 3, laid over the workbench. Language `lang=de`, time zone `tz=Europe/Berlin`.
+`e2e/appstore-screenshots.spec.ts` runs the workbench page (the real app on the real library, the VTI mediator double in the page, offline): five fictional people (Jonas, Noah, Lea, Mara, Sam) who met before the page opened, everyone trusts everyone they met except Jonas → Sam, then the clock runs until the shared contacts have arrived. Each screen is a phone of its own, 402×874 CSS pixels at device scale factor 3, laid over the workbench. Language `lang=de`, time zone `tz=Europe/Berlin`.
 
 From `apps/wot-v3`:
 
