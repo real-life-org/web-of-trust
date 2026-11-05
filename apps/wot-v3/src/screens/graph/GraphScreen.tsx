@@ -27,6 +27,9 @@ function directionOf(e: MyEdge): 'mutual' | 'outgoing' | 'incoming' {
   return 'mutual'
 }
 
+/** your node: the gold ring around your avatar marks the middle of the graph */
+const ME_RING = 'shadow-[0_0_0_3px_oklch(0.72_0.15_75),0_0_0_7px_color-mix(in_oklab,oklch(0.72_0.15_75)_25%,transparent)]'
+
 export function GraphScreen() {
   const { t, f } = useI18n()
   const g = t.graph
@@ -151,7 +154,9 @@ export function GraphScreen() {
       </header>
       {empty ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
-          <span className="flex size-16 items-center justify-center rounded-full bg-[oklch(0.72_0.15_75)] font-bold text-white shadow-[0_0_0_6px_color-mix(in_oklab,oklch(0.72_0.15_75)_25%,transparent)]">{g.you}</span>
+          <span className={'block size-16 overflow-hidden rounded-full text-2xl ' + ME_RING}>
+            <PersonAvatar name={input?.me.name ?? g.you} image={input?.me.image ?? null} size={44} className="!size-full !text-[1em]" />
+          </span>
           <p className="m-0 max-w-[30ch] text-sm text-pretty text-muted-foreground">{g.emptyBody}</p>
           <PrimaryAction label={t.shell.verifyInPerson} onClick={() => send({ type: 'push', route: { kind: 'verify' } })} />
         </div>
@@ -221,16 +226,14 @@ export function GraphScreen() {
                 className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity"
                 style={{ left: p.x, top: p.y, opacity: faint ? 0.4 : 1 }}
               >
-                {n.me ? (
-                  <span className="flex items-center justify-center rounded-full bg-[oklch(0.72_0.15_75)] text-sm font-bold text-white" style={{ width: n.size * 2, height: n.size * 2 }}>
-                    {g.you}
-                  </span>
-                ) : (
-                  <span className="block overflow-hidden rounded-full" style={{ width: n.size * 2, height: n.size * 2, fontSize: Math.max(9, Math.round(n.size * 0.7)) }}>
-                    <PersonAvatar name={nameOf(n.id)} image={n.image} size={44} className="!size-full !text-[1em]" />
-                  </span>
-                )}
-                {n.me ? null : <span className="max-w-24 truncate text-[11px] text-foreground">{nameOf(n.id).split(' ')[0]}</span>}
+                {/* every node is the person's avatar; yours in the middle with the gold ring (Anton 05.11.) */}
+                <span
+                  className={'block overflow-hidden rounded-full' + (n.me ? ' ' + ME_RING : '')}
+                  style={{ width: n.size * 2, height: n.size * 2, fontSize: Math.max(9, Math.round(n.size * 0.7)) }}
+                >
+                  <PersonAvatar name={n.me ? (input?.me.name ?? g.you) : nameOf(n.id)} image={n.image} size={44} className="!size-full !text-[1em]" />
+                </span>
+                <span className={'max-w-24 truncate text-[11px] text-foreground' + (n.me ? ' font-semibold' : '')}>{n.me ? g.you : nameOf(n.id).split(' ')[0]}</span>
               </button>
             )
           })}

@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
+import { useAvatars, type WorkbenchAvatar } from './avatars'
 import { startFlight, type Flight } from './flight'
 import { sceneFor, type Edge, type Scene } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
@@ -20,7 +21,6 @@ const SCALE = (FULL_W - 10) / PHONE_W
 interface Node extends SimulationNodeDatum {
   id: string
   name: string
-  color: string
   me: boolean
 }
 interface Link extends SimulationLinkDatum<Node> {
@@ -63,12 +63,40 @@ function linksOf(scene: Scene): Link[] {
 const NODE_R = 17
 const NODE_R_ME = 21
 
-function Graph({ world, scene, stage, centre, open, onOpen }: { world: WorkbenchWorld; scene: Scene; stage: Stage; centre: number; open: readonly string[]; onOpen: (id: string) => void }) {
+/** a node as the person's avatar in the app: their picture, else their initials on their palette colour */
+function avatarNode(n: Node, a: WorkbenchAvatar | undefined) {
+  const r = n.me ? NODE_R_ME : NODE_R
+  const av = a ?? { name: n.name, image: null, initials: n.name.slice(0, 2).toUpperCase(), bg: '#94a3b8', fg: '#1e293b', solid: '#94a3b8' }
+  return (
+    <>
+      {/* the app paints its avatars on white: the same ground under the node */}
+      <circle r={r} fill="#fff" stroke={av.solid} strokeWidth={2} />
+      <circle r={r} fill={av.bg} />
+      {av.image ? (
+        <>
+          <clipPath id={`wb-clip-${n.id}`}>
+            <circle r={r} />
+          </clipPath>
+          <image href={av.image} x={-r} y={-r} width={r * 2} height={r * 2} clipPath={`url(#wb-clip-${n.id})`} preserveAspectRatio="xMidYMid slice" />
+        </>
+      ) : (
+        <text className="initials" dy="0.35em" textAnchor="middle" style={{ fill: av.fg }}>
+          {av.initials}
+        </text>
+      )}
+      <text y={r + 19} textAnchor="middle">
+        {av.name.split(' ')[0]}
+        {n.me ? ' (me)' : ''}
+      </text>
+    </>
+  )
+}
+
+function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; stage: Stage; centre: number; open: readonly string[]; avatars: ReadonlyMap<string, WorkbenchAvatar>; onOpen: (id: string) => void }) {
   /** the simulation's nodes, by id: they keep their place across scenes (read and written in the effect only) */
   const nodesRef = useRef<Map<string, Node>>(new Map())
   /** what the render draws: a copy of the positions after each tick */
   const [placed, setPlaced] = useState<readonly Node[]>([])
-  const colorOf = useMemo(() => new Map(world.people.map((p) => [p.id, p.color])), [world.people])
 
   useEffect(() => {
     const cx = centre, cy = stage.h / 2
@@ -77,7 +105,7 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
       // a new node starts on a circle by its place in the scene: the same layout every time
       const i = scene.nodes.indexOf(n)
       const a = (i / Math.max(1, scene.nodes.length)) * Math.PI * 2
-      const node: Node = prev ?? { id: n.id, name: n.name, color: colorOf.get(n.id) ?? '#94a3b8', me: n.me, x: cx + Math.cos(a) * 80, y: cy + Math.sin(a) * 80 }
+      const node: Node = prev ?? { id: n.id, name: n.name, me: n.me, x: cx + Math.cos(a) * 80, y: cy + Math.sin(a) * 80 }
       node.me = n.me
       nodesRef.current.set(n.id, node)
       return node
@@ -101,7 +129,7 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
         setPlaced(nodes.map((n) => ({ ...n })))
       })
     return () => void sim.stop()
-  }, [scene, colorOf, centre, stage.w, stage.h])
+  }, [scene, centre, stage.w, stage.h])
 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
@@ -121,19 +149,16 @@ function Graph({ world, scene, stage, centre, open, onOpen }: { world: Workbench
       })}
       {nodes.map((n) => (
         <g key={n.id} className={'wb-node' + (open.includes(n.id) ? ' open' : '')} data-node={n.id} transform={`translate(${n.x ?? 0},${n.y ?? 0})`} onClick={() => onOpen(n.id)} role="button" tabIndex={0} aria-label={`${n.name}: open the phone`} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ' ? onOpen(n.id) : undefined)}>
-          <circle r={n.me ? NODE_R_ME : NODE_R} fill={n.color} stroke={n.color} strokeWidth={2} />
-          <text y={(n.me ? NODE_R_ME : NODE_R) + 19} textAnchor="middle">
-            {n.name.split(' ')[0]}
-            {n.me ? ' (me)' : ''}
-          </text>
+          {avatarNode(n, avatars.get(n.id))}
         </g>
       ))}
     </svg>
   )
 }
 
-function Window({ person, pos, screen, src, focused, online, flying, winRef, onFocus, onMove, onCollapse, onClose, onOnline }: {
+function Window({ person, avatar, pos, screen, src, focused, online, flying, winRef, onFocus, onMove, onCollapse, onClose, onOnline }: {
   person: WorkbenchPerson
+  avatar: WorkbenchAvatar | undefined
   pos: { x: number; y: number }
   screen: number
   src: string
@@ -152,7 +177,7 @@ function Window({ person, pos, screen, src, focused, online, flying, winRef, onF
   /** the app has loaded in its frame: until then the screen is dark and shows that it is coming */
   const [loaded, setLoaded] = useState(false)
   return (
-    <div ref={winRef} className={'wb-win' + (focused ? ' focus' : '') + (flying ? ` flying-${flying}` : '')} style={{ left: pos.x, top: pos.y, ['--wb-person' as string]: person.color }} onPointerDown={onFocus} data-window={person.id}>
+    <div ref={winRef} className={'wb-win' + (focused ? ' focus' : '') + (flying ? ` flying-${flying}` : '')} style={{ left: pos.x, top: pos.y, ['--wb-person' as string]: avatar?.solid }} onPointerDown={onFocus} data-window={person.id}>
       <div
         className="wb-win-head"
         onPointerDown={(e) => {
@@ -166,7 +191,7 @@ function Window({ person, pos, screen, src, focused, online, flying, winRef, onF
         }}
         onPointerUp={() => (drag.current = null)}
       >
-        <i style={{ background: person.color }} />
+        <i style={{ background: avatar?.solid }} />
         <span className="name">{person.name}</span>
         <button type="button" className={online ? '' : 'off'} aria-pressed={!online} title={online ? 'take the phone offline' : 'bring the phone online'} onClick={() => onOnline(!online)}>
           {online ? 'online' : 'offline'}
@@ -276,6 +301,7 @@ function useStageSize(ref: React.RefObject<HTMLDivElement | null>): Stage {
 export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: string }) {
   const online = useSyncExternalStore(world.online.subscribe, world.online.get)
   const graph = useSyncExternalStore(world.graph.subscribe, world.graph.get)
+  const avatars = useAvatars(world)
   const wire = useSyncExternalStore(world.wire.subscribe, world.wire.get)
   const ceremony = useSyncExternalStore(world.ceremony.subscribe, world.ceremony.get)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -370,7 +396,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
         </div>
       </header>
       <div className="wb-stage" ref={stageRef} {...(scanning ? { 'data-ceremony': `${scanning}>${showing ?? ''}` } : {})}>
-        <Graph world={world} scene={scene} stage={stage} centre={centre} open={visible} onOpen={show} />
+        <Graph scene={scene} avatars={avatars} stage={stage} centre={centre} open={visible} onOpen={show} />
         <div className="wb-cams">
           <span className="wb-label">Camera</span>
           <div role="group" aria-label="Camera">
@@ -379,7 +405,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
             </button>
             {world.people.map((p) => (
               <button key={p.id} type="button" className="wb-chip" aria-pressed={camera === p.id} onClick={() => setCamera(p.id)}>
-                <i style={{ background: p.color }} />
+                <i style={{ background: avatars.get(p.id)?.solid }} />
                 {p.name.split(' ')[0]}
               </button>
             ))}
@@ -403,7 +429,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
               const p = world.people.find((x) => x.id === id)
               return p ? (
                 <button key={id} type="button" onClick={() => setLayout((s) => collapseDevice(s, id, false))}>
-                  <i style={{ background: p.color }} />
+                  <i style={{ background: avatars.get(p.id)?.solid }} />
                   {p.name.split(' ')[0]}
                 </button>
               ) : null
@@ -418,6 +444,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
             <Window
               key={id}
               person={p}
+              avatar={avatars.get(p.id)}
               pos={pos}
               screen={screen}
               src={src(id)}

@@ -102,6 +102,11 @@
 }
 .wb-node {
   cursor: pointer;
+  outline: none;
+}
+.wb-node:focus-visible circle {
+  stroke: var(--wb-fg);
+  stroke-width: 3px;
 }
 .wb-node circle {
   transition: fill 0.4s, stroke 0.4s, r 0.3s;
@@ -116,6 +121,12 @@
   stroke-linejoin: round;
   fill: var(--wb-fg);
   pointer-events: none;
+}
+.wb-node text.initials {
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: normal;
+  stroke: none;
 }
 .wb-node text.sub {
   font-size: 12px;

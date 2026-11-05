@@ -16,16 +16,15 @@ import { tapDevice, type DeviceEvent } from './tap'
 export interface WorkbenchPerson {
   readonly id: string
   readonly name: string
-  readonly color: string
 }
 
 /** the people the workbench can seat, in order; a phone opens for each seated one */
 export const PEOPLE: readonly WorkbenchPerson[] = [
-  { id: 'jonas', name: 'Jonas Weber', color: '#3b82f6' },
-  { id: 'noah', name: 'Noah Lindqvist', color: '#ef4444' },
-  { id: 'lea', name: 'Lea Brandt', color: '#f59e0b' },
-  { id: 'mara', name: 'Mara Kowalski', color: '#ec4899' },
-  { id: 'sam', name: 'Sam Okafor', color: '#84cc16' },
+  { id: 'jonas', name: 'Jonas Weber' },
+  { id: 'noah', name: 'Noah Lindqvist' },
+  { id: 'lea', name: 'Lea Brandt' },
+  { id: 'mara', name: 'Mara Kowalski' },
+  { id: 'sam', name: 'Sam Okafor' },
 ]
 
 export type WorkbenchCarrier = { readonly kind: 'memory' } | { readonly kind: 'mediator' } | { readonly kind: 'live'; readonly did: string; readonly insecure?: boolean }
