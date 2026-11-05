@@ -139,11 +139,11 @@ green, the artifact says `signed: false`. That is how the path is tested before 
 
 - **Tag.** As for Android: `git tag app-v3.x.y <commit>` on main, `git push origin app-v3.x.y` (both
   jobs run from one tag; release-please dispatches the same workflow).
-- **Once, after the first upload:** App Store Connect → the app → TestFlight → the build. Export
-  compliance: the build asks "Does your app use encryption?" until it is answered or Info.plist carries
-  `ITSAppUsesNonExemptEncryption`. The answer is a product decision (the app uses standard end-to-end
-  encryption, not only the system's), see the checklist in `rltp`. After the decision the key goes
-  into `apps/wot-v3/ios/App/App/Info.plist`, and no later build asks.
+- **Export compliance** is answered in `apps/wot-v3/ios/App/App/Info.plist`:
+  `ITSAppUsesNonExemptEncryption` is `false` (Anton, 04.11.2026: the app's encryption does not fall
+  under export restrictions), so no build asks "Does your app use encryption?" in App Store Connect.
+- **iPhone only** (`TARGETED_DEVICE_FAMILY = 1`): a release that supports iPad can never drop iPad
+  again, so iPad waits for its own decision.
 - **First external build:** Beta App Review is submitted when the build enters the group. If Apple
   asks for anything (test notes, a second device for the encounter), it appears in App Store Connect →
   TestFlight → the build. Anton answers there with the App Manager role from Tillmann's step 8.
