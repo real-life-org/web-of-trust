@@ -74,6 +74,9 @@ export interface WorkbenchWorld {
   /** each device's view of the other phones: the name and picture its contact list holds for them
    *  (#517: a person's camera draws from this, never from the other phone's own profile) */
   readonly seen: ReadStore<Readonly<Record<string, Readonly<Record<string, SeenPerson>>>>>
+  /** each phone's own name, as its profile holds it now; the frames and lists show this, so a rename
+   *  in the app shows on the frame at once */
+  readonly names: ReadStore<Readonly<Record<string, string>>>
   readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
   /** the phones' clock as the page shows it */
   readonly now: ReadStore<number>
@@ -337,6 +340,21 @@ export async function createWorkbenchWorld(opts: {
   }
   for (const d of devices.values()) d.port.stores.contacts.subscribe(() => (derive(), deriveSeen()))
 
+  // each phone's own name, from its profile
+  const names = writableStore<Readonly<Record<string, string>>>({})
+  const deriveNames = () => {
+    const next: Record<string, string> = {}
+    for (const [id, d] of devices) {
+      const p = d.port.stores.profile.get()
+      if (p.status === 'ready' && p.value.name) next[id] = p.value.name
+    }
+    const cur = names.get()
+    if (Object.keys(next).length === Object.keys(cur).length && Object.entries(next).every(([k, v]) => cur[k] === v)) return
+    names.set(next)
+  }
+  for (const d of devices.values()) d.port.stores.profile.subscribe(deriveNames)
+  deriveNames()
+
   // the phones' clock runs as a device's would (the library's due work, the continuity sweep that
   // joins a second encounter, the stars, all run on the holder's resume on that clock); the page's
   // buttons jump it. Over a live mediator it follows the wall clock already.
@@ -369,6 +387,7 @@ export async function createWorkbenchWorld(opts: {
     wire,
     graph,
     seen,
+    names,
     now,
     // over a live mediator the clock follows the wall clock: a jump would run ahead of the mediator's
     // token times (review 503), so there is none
