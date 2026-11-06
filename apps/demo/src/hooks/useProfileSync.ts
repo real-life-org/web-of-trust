@@ -4,7 +4,7 @@ import { useAdapters } from '../context'
 import { useIdentity } from '../context'
 import { protocolCrypto } from '../runtime/appRuntime'
 import { splitAcceptedAttestations } from '../lib/publish-split'
-import { applyContactProfile } from '../services/contactProfileWriter'
+import { applyContactProfile } from '@web_of_trust/core/application'
 
 /**
  * Hook for syncing profiles via the DiscoveryAdapter.

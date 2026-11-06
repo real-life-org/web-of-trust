@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import type { Contact } from '@web_of_trust/core/types'
-import { applyContactProfile } from '../src/services/contactProfileWriter'
-import { createProfileUpdateListener } from '../src/services/profileUpdateListener'
+import type { Contact } from '../src/types/contact'
+import { applyContactNameSummary, applyContactProfile } from '../src/application'
 
 /**
  * Review #390 Runde 2: Inbox (profile-update) und Discovery schreiben dasselbe
@@ -27,7 +26,7 @@ const baseContact: Contact = {
 describe('contact profile writer (review #390)', () => {
   it('a late discovery answer with an older profile keeps the newer inbox profile and its timestamp', async () => {
     const storage = storageWith(baseContact)
-    const inbox = createProfileUpdateListener({ storage })
+    const inbox = (u: { profile: { name: string; updatedAt: string }; senderDid: string; outerId: string }) => applyContactProfile(storage, u.senderDid, u.profile)
 
     // Discovery started earlier (old snapshot), answers after the inbox update.
     await inbox({ profile: { name: 'new inbox', updatedAt: '2026-10-01T12:00:00Z' }, senderDid: ANNA, outerId: crypto.randomUUID() })
@@ -67,11 +66,21 @@ describe('contact profile writer (review #390)', () => {
       if (next.name === 'old discovery') await new Promise((r) => setTimeout(r, 20))
       await realUpdate(next)
     }
-    const inbox = createProfileUpdateListener({ storage })
+    const inbox = (u: { profile: { name: string; updatedAt: string }; senderDid: string; outerId: string }) => applyContactProfile(storage, u.senderDid, u.profile)
     await Promise.all([
       applyContactProfile(storage, ANNA, { name: 'old discovery', updatedAt: '2026-09-01T12:00:00Z' }),
       inbox({ profile: { name: 'new inbox', updatedAt: '2026-10-01T12:00:00Z' }, senderDid: ANNA, outerId: crypto.randomUUID() }),
     ])
     expect(storage.contacts.get(ANNA)).toMatchObject({ name: 'new inbox', profileUpdatedAt: '2026-10-01T12:00:00Z' })
+  })
+
+  it('a name-only summary updates the name but keeps avatar and bio, and never beats a timestamped profile', async () => {
+    const storage = storageWith({ ...baseContact, bio: 'alt', avatar: 'data:image/png;base64,ALT' })
+    expect(await applyContactNameSummary(storage, ANNA, 'Anna aus Zusammenfassung')).toBe(true)
+    expect(storage.contacts.get(ANNA)).toMatchObject({ name: 'Anna aus Zusammenfassung', bio: 'alt', avatar: 'data:image/png;base64,ALT' })
+
+    storage.contacts.set(ANNA, { ...storage.contacts.get(ANNA)!, profileUpdatedAt: '2026-10-01T12:00:00Z' })
+    expect(await applyContactNameSummary(storage, ANNA, 'veraltet')).toBe(false)
+    expect(storage.contacts.get(ANNA)!.name).toBe('Anna aus Zusammenfassung')
   })
 })

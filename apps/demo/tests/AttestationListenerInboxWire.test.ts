@@ -18,7 +18,7 @@ import {
 import type { AttestationVcPayload, DidcommPlaintextMessage } from '@web_of_trust/core/protocol'
 import type { MessagingAdapter, WireMessage } from '@web_of_trust/core/ports'
 import type { Attestation, IdentitySession } from '@web_of_trust/core/types'
-import { InboxReceptionHost } from '../src/services/InboxReceptionHost'
+import { InboxReceptionHost } from '@web_of_trust/core/application'
 import {
   createAttestationListener,
   type AttestationListenerDeps,
