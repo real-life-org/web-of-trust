@@ -1,14 +1,14 @@
 // App Store screenshots of Web of Trust (store-assets/appstore/README.md): the workbench page (the real
 // app on the real library, the VTI mediator double, offline), five people who met and trusted each
 // other, so the graph and the shared contacts show a real network. German, light. One phone is shot
-// in its own frame of 440×956 CSS pixels; with device scale factor 3 every PNG is 1320×2868 (iPhone
-// 6.9"). Runs only with WOT_APPSTORE_DIR (the output folder).
+// in its own frame of 402×874 CSS pixels; with device scale factor 3 every PNG is 1206×2622 (iPhone
+// 6.3", the size App Store Connect asks for). Runs only with WOT_APPSTORE_DIR (the output folder).
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 
 test.skip(!process.env.WOT_APPSTORE_DIR, 'App Store screenshots only with WOT_APPSTORE_DIR')
 
 const OUT = process.env.WOT_APPSTORE_DIR ?? ''
-const FRAME = { width: 440, height: 956 }
+const FRAME = { width: 402, height: 874 }
 const PEOPLE = 'jonas,noah,lea,mara,sam'
 const MET = 'jonas-noah,jonas-lea,jonas-mara,jonas-sam,noah-lea,lea-mara,mara-sam,noah-sam'
 
