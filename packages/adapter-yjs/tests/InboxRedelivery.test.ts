@@ -136,4 +136,56 @@ describe('YjsReplicationAdapter — Message-ID-History erst bei konklusiver Vera
     await adapter.stop()
     InMemoryMessagingAdapter.resetAll()
   })
+
+  it('created_time too old → deterministisch-endgültig: ack räumt die Zombie-Nachricht (ACK-Vorbedingung 4)', async () => {
+    const { adapter, alice, admin, history, acks } = await setup()
+
+    const envelope = await deliverInboxMessage({
+      type: MEMBER_UPDATE_MESSAGE_TYPE,
+      body: { spaceId: 'space-zombie', action: 'added', memberDid: TARGET, effectiveKeyGeneration: 0 },
+      from: admin.getDid(),
+      to: alice.getDid(),
+      recipientEncryptionPublicKey: alice.x25519PublicKey,
+      sign: (input) => admin.signEd25519(input),
+      crypto: protocolCrypto,
+      // 25h alt: jenseits des 24h-Replay-Fensters — wird nur noch älter.
+      now: () => new Date(Date.now() - 25 * 60 * 60 * 1000),
+    })
+
+    await (adapter as any).handleInboxEnvelope(envelope)
+    // may-ack-invalid-and-drop räumt den Relay-Slot sofort — ohne das ack
+    // würde dieselbe Nachricht bis zur Relay-TTL bei jedem Connect erneut
+    // zugestellt und erneut verworfen (Zombie-Stau).
+    expect(acks()).toHaveLength(1)
+    expect((acks()[0] as { thid?: string }).thid).toBe(envelope.id)
+    // Die innere id wurde nie verifiziert und darf die History nicht vergiften.
+    expect(await history.has(envelope.id, new Date().toISOString())).toBe(false)
+
+    await adapter.stop()
+    InMemoryMessagingAdapter.resetAll()
+  })
+
+  it('created_time in der Zukunft (Clock-Skew) → transient: KEIN ack, Redelivery bleibt Heilungspfad', async () => {
+    const { adapter, alice, admin, history, acks } = await setup()
+
+    const envelope = await deliverInboxMessage({
+      type: MEMBER_UPDATE_MESSAGE_TYPE,
+      body: { spaceId: 'space-skew', action: 'added', memberDid: TARGET, effectiveKeyGeneration: 0 },
+      from: admin.getDid(),
+      to: alice.getDid(),
+      recipientEncryptionPublicKey: alice.x25519PublicKey,
+      sign: (input) => admin.signEd25519(input),
+      crypto: protocolCrypto,
+      // 25h in der Zukunft: mit fortschreitender Empfänger-Uhr wird die
+      // Nachricht gültig — ack-en hieße, sie endgültig zu verlieren.
+      now: () => new Date(Date.now() + 25 * 60 * 60 * 1000),
+    })
+
+    await (adapter as any).handleInboxEnvelope(envelope)
+    expect(acks()).toHaveLength(0)
+    expect(await history.has(envelope.id, new Date().toISOString())).toBe(false)
+
+    await adapter.stop()
+    InMemoryMessagingAdapter.resetAll()
+  })
 })
