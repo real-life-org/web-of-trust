@@ -67,7 +67,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   ob('showWords-screenshot', { name: 'showWords', run: 1, words, positions: [2, 6, 10], copy: 'copied', checklist: [true, true, true], termsVersion: TERMS }, { captured: true }),
   ob('lastWarning', { name: 'lastWarning', run: 1, words, positions: [2, 6, 10], termsVersion: TERMS }),
   ob('verifyWords', { name: 'verifyWords', run: 1, words, positions: [2, 6, 10], inputs: filledInputs, wrong: [1], termsVersion: TERMS }),
-  ob('profile', { name: 'profile', run: 1, words, positions: [2, 6, 10], displayName: 'Jonas Weber', termsVersion: TERMS }),
+  ob('profile', { name: 'profile', run: 1, words, positions: [2, 6, 10], displayName: 'Jonas Weber', image: null, termsVersion: TERMS }),
   ob('protect', { name: 'protect', run: 2, c: ctx('setup'), available: 'fingerprint' }),
   ob('protect-no-biometrics', { name: 'protect', run: 2, c: ctx('setup'), available: null }),
   ob('biometricOnlyExplain', { name: 'biometricOnlyExplain', run: 2, c: ctx('setup'), available: 'fingerprint' }),

@@ -85,6 +85,27 @@ describe('onboarding', () => {
     expect(again.runtime.state.get()).toMatchObject({ status: 'locked', protection: 'passphrase' })
   })
 
+  it('the profile step takes an optional picture: it travels with the name, survives a step back, and can be removed', async () => {
+    const d = testDevice()
+    const p = await d.restart()
+    const r = start(p)
+    await toProfile(r)
+    const pic = 'data:image/webp;base64,UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAAfQ//73v/+BiOh/AAA='
+    await drive(r, { type: 'name', value: 'Jonas Weber' }, { type: 'image', value: pic })
+    expect(r.get()).toMatchObject({ name: 'profile', image: pic })
+    // removing and choosing again
+    await drive(r, { type: 'image', value: null })
+    expect(r.get()).toMatchObject({ name: 'profile', image: null })
+    await drive(r, { type: 'image', value: pic }, { type: 'next' })
+    expect(r.get().name).toBe('protect')
+    // a step back keeps the picture
+    await drive(r, { type: 'back' })
+    expect(r.get()).toMatchObject({ name: 'profile', displayName: 'Jonas Weber', image: pic })
+    await drive(r, { type: 'next' }, { type: 'choosePassphrase' }, { type: 'p1', value: s('correct horse') }, { type: 'p2', value: s('correct horse') }, { type: 'next' })
+    expect(r.get()).toMatchObject({ name: 'done', flow: 'setup' })
+    expect([...d.holders.values()][0]).toMatchObject({ name: 'Jonas Weber', image: pic })
+  })
+
   it('copy failure is visible, never a crash (legacy de1644a7)', async () => {
     const d = testDevice({ faults: { clipboard: 'fails' } })
     const r = start(await d.restart())

@@ -16,7 +16,7 @@ export interface SetupCtx {
   readonly words: Words
   /** onboarding: the three checked positions (kept for going back) */
   readonly positions: readonly number[]
-  readonly profile: { readonly name: string } | null
+  readonly profile: { readonly name: string; readonly image?: string } | null
   /** version of the accepted content rules to record; null = a valid consent exists (recovery) */
   readonly termsVersion: string | null
   /** the current content-rules version */
@@ -60,6 +60,8 @@ export type SetupState =
       readonly words: Words
       readonly positions: readonly number[]
       readonly displayName: string
+      /** the chosen picture (a data URI from lib/avatar), optional */
+      readonly image: string | null
       readonly termsVersion: string
     }
   // recovery
@@ -143,6 +145,7 @@ export type SetupEvent =
   | { readonly type: 'input'; readonly index: number; readonly value: Secret<string> }
   | { readonly type: 'check' }
   | { readonly type: 'name'; readonly value: string }
+  | { readonly type: 'image'; readonly value: string | null }
   | { readonly type: 'words'; readonly text: Secret<string>; readonly words: Words | null; readonly count: number; readonly check: WordsCheck }
   | { readonly type: 'chooseBiometric' }
   | { readonly type: 'choosePassphrase' }
@@ -166,7 +169,7 @@ export type SetupEffect =
       readonly words: Words
       readonly mode: ProtectionMode
       readonly passphrase: Secret<string> | null
-      readonly profile: { readonly name: string } | null
+      readonly profile: { readonly name: string; readonly image?: string } | null
       readonly termsVersion: string | null
     } & Effect)
   | ({ readonly id: 'onb.bioUnusable' | 'rec.bioUnusable'; readonly ns: IdentityNs } & Effect)
@@ -205,6 +208,7 @@ export const ONBOARDING_TABLE: readonly Row[] = [
   row('verifyWords.check.wrong', 'check', 'verifyWords{wrong}', 'free', NOTHING, { guard: 'a position wrong' }),
   row('verifyWords.back', 'back', 'showWords', 'free', NOTHING),
   row('profile.name', 'name', 'profile', 'free', NOTHING),
+  row('profile.image', 'image', 'profile', 'free', NOTHING),
   row('profile.next', 'next', 'protect', 'free', NOTHING, { guard: 'name not empty; Next is the consent to the content rules (one sentence on the page, paper §6)', effects: ['onb.probe'] }),
   row('profile.back', 'back', 'verifyWords', 'free', NOTHING),
   row('protect.result.probe', 'result onb.probe', 'protect{available}', 'free', NOTHING),
@@ -422,20 +426,21 @@ export function setupTransition(s: S, e: E): Out {
           return typed === words[pos] ? [] : [i]
         })
         if (wrong.length > 0) return go({ ...s, wrong }, 'verifyWords.check.wrong')
-        return go({ name: 'profile', run: s.run, words: s.words, positions: s.positions, displayName: '', termsVersion: s.termsVersion }, 'verifyWords.check.right')
+        return go({ name: 'profile', run: s.run, words: s.words, positions: s.positions, displayName: '', image: null, termsVersion: s.termsVersion }, 'verifyWords.check.right')
       }
       if (e.type === 'back')
         return go({ name: 'showWords', run: s.run, words: s.words, positions: s.positions, copy: 'idle', checklist: [true, true, true], termsVersion: s.termsVersion }, 'verifyWords.back')
       return stay(s)
     case 'profile':
       if (e.type === 'name') return go({ ...s, displayName: e.value }, 'profile.name')
+      if (e.type === 'image') return go({ ...s, image: e.value }, 'profile.image')
       if (e.type === 'next') {
         if (s.displayName.trim() === '') return stay(s)
         const c: SetupCtx = {
           flow: 'setup',
           words: s.words,
           positions: s.positions,
-          profile: { name: s.displayName.trim() },
+          profile: s.image ? { name: s.displayName.trim(), image: s.image } : { name: s.displayName.trim() },
           termsVersion: s.termsVersion,
           currentTerms: s.termsVersion,
           termsValid: false,
@@ -498,7 +503,7 @@ export function setupTransition(s: S, e: E): Out {
       if (e.type === 'back') {
         if (s.c.flow === 'setup')
           return go(
-            { name: 'profile', run: s.run + 1, words: s.c.words, positions: s.c.positions, displayName: s.c.profile?.name ?? '', termsVersion: s.c.currentTerms },
+            { name: 'profile', run: s.run + 1, words: s.c.words, positions: s.c.positions, displayName: s.c.profile?.name ?? '', image: s.c.profile?.image ?? null, termsVersion: s.c.currentTerms },
             'protect.back',
           )
         return backToWords(s.c, s.run + 1, 'protect.back')
