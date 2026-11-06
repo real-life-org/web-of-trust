@@ -1,6 +1,6 @@
 // Onboarding (architecture §4.2): structure and copy of legacy OnboardingFlow.tsx, look of the
 // prototype. One screen per machine state; the screen holds no flow logic.
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { secret, type SetupEvent, type SetupState } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { avatarFromFile } from '../../lib/avatar'
@@ -264,9 +264,9 @@ function VerifyStep({ state: s, send, title, progress }: { state: Extract<SetupS
 }
 
 /** The profile step: the name, and optionally a picture (chosen from a file, cropped and scaled as on
- *  the profile page, lib/avatar.ts). Next waits for a picture being read; a later choice or a removal
- *  wins over an older conversion. */
-function ProfileStep({
+ *  the profile page, lib/avatar.ts). Next waits for a picture being read; a later choice, a removal or
+ *  leaving the step wins over an older conversion. */
+export function ProfileStep({
   state: s,
   send,
   title,
@@ -288,6 +288,9 @@ function ProfileStep({
   const [converting, setConverting] = useState(0)
   const [failed, setFailed] = useState(false)
   const ready = s.displayName.trim() !== '' && converting === 0
+  // leaving the step (back to the words, on to protect) ends every conversion still running: only the
+  // visit that chose a picture may set it (review 519, issue 520)
+  useEffect(() => () => void (choice.current += 1), [])
   const pick = async (f: File | undefined) => {
     if (!f) return
     setFailed(false)
