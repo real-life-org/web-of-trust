@@ -191,3 +191,18 @@ test('the wire can be dragged taller and shorter by its handle', async ({ page }
   await page.keyboard.press('ArrowDown')
   await expect.poll(async () => (await wire.boundingBox())!.height).toBeLessThan(before + 200)
 })
+
+test('a rename in the phone shows on its frame: the name, and the colour of the new name', async ({ page }) => {
+  const { jonas } = await bench(page)
+  const win = page.locator('[data-window=jonas]')
+  const colour = () => win.evaluate((el) => getComputedStyle(el).getPropertyValue('--wb-person'))
+  const before = await colour()
+  await jonas.getByRole('navigation').first().getByRole('button', { name: /^Profile/ }).click()
+  await jonas.getByRole('button', { name: 'Edit profile' }).click()
+  // a name in another slot of the avatar palette than "Jonas Weber"
+  await jonas.getByRole('textbox', { name: 'Name', exact: true }).fill('Mia Weber')
+  await jonas.getByRole('button', { name: 'Save' }).click()
+  await expect(win.locator('.wb-win-head .name')).toHaveText('Mia Weber')
+  await expect(page.locator('.wb-chip', { hasText: 'Mia' })).toBeVisible()
+  expect(await colour()).not.toBe(before)
+})

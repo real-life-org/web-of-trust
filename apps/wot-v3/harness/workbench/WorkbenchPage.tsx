@@ -247,9 +247,9 @@ function WireHandle({ height, onHeight }: { height: number; onHeight: (h: number
   )
 }
 
-function Wire({ world, entries, height }: { world: WorkbenchWorld; entries: readonly WireEntry[]; height: number }) {
+function Wire({ world, people, entries, height }: { world: WorkbenchWorld; people: readonly WorkbenchPerson[]; entries: readonly WireEntry[]; height: number }) {
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), hour: '2-digit', minute: '2-digit', second: '2-digit' }), [world])
-  const nameOf = (id: string | null) => (id ? (world.people.find((p) => p.id === id)?.name.split(' ')[0] ?? id) : '—')
+  const nameOf = (id: string | null) => (id ? (people.find((p) => p.id === id)?.name.split(' ')[0] ?? id) : '—')
   const cls = (d: WireEntry['disposition']) => (d === 'taken' ? 'wb-disp-taken' : d === 'in flight' ? 'wb-disp-flight' : 'wb-disp-later')
   return (
     <section className="wb-wire" aria-label="On the wire" style={{ height }}>
@@ -304,6 +304,9 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const graph = useSyncExternalStore(world.graph.subscribe, world.graph.get)
   const avatars = useAvatars(world)
   const seen = useSyncExternalStore(world.seen.subscribe, world.seen.get)
+  const names = useSyncExternalStore(world.names.subscribe, world.names.get)
+  // the people as their phones name themselves now (a rename in the app shows on the frame)
+  const people = useMemo(() => world.people.map((x) => (names[x.id] && names[x.id] !== x.name ? { ...x, name: names[x.id] as string } : x)), [world.people, names])
   const wire = useSyncExternalStore(world.wire.subscribe, world.wire.get)
   const ceremony = useSyncExternalStore(world.ceremony.subscribe, world.ceremony.get)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -407,7 +410,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
             <button type="button" className="wb-chip" aria-pressed={camera === 'god'} onClick={() => setCamera('god')}>
               God's eye
             </button>
-            {world.people.map((p) => (
+            {people.map((p) => (
               <button key={p.id} type="button" className="wb-chip" aria-pressed={camera === p.id} onClick={() => setCamera(p.id)}>
                 <i style={{ background: avatars.get(p.id)?.solid }} />
                 {p.name.split(' ')[0]}
@@ -430,7 +433,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
           <div className="wb-dock">
             <span className="wb-label">Docked</span>
             {docked.map((id) => {
-              const p = world.people.find((x) => x.id === id)
+              const p = people.find((x) => x.id === id)
               return p ? (
                 <button key={id} type="button" onClick={() => setLayout((s) => collapseDevice(s, id, false))}>
                   <i style={{ background: avatars.get(p.id)?.solid }} />
@@ -441,7 +444,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
           </div>
         )}
         {visible.map((id) => {
-          const p = world.people.find((x) => x.id === id)
+          const p = people.find((x) => x.id === id)
           const pos = layout.pos[id]
           if (!p || !pos) return null
           return (
@@ -466,7 +469,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
         })}
       </div>
       <WireHandle height={wireH} onHeight={(h) => setWireH(Math.max(WIRE_MIN, Math.min(Math.round(window.innerHeight * 0.7), h)))} />
-      <Wire world={world} entries={wire} height={wireH} />
+      <Wire world={world} people={people} entries={wire} height={wireH} />
     </div>
   )
 }
