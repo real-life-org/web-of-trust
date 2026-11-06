@@ -1,10 +1,12 @@
 // Onboarding (architecture §4.2): structure and copy of legacy OnboardingFlow.tsx, look of the
 // prototype. One screen per machine state; the screen holds no flow logic.
-import { useRef, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { secret, type SetupEvent, type SetupState } from '../../hooks'
 import { useI18n } from '../../i18n'
+import { avatarFromFile } from '../../lib/avatar'
 import {
   Callout,
+  CameraIcon,
   CheckIcon,
   Checklist,
   CopyIcon,
@@ -15,6 +17,7 @@ import {
   MnemonicGrid,
   NetworkIcon,
   OutlineAction,
+  PersonAvatar,
   PrimaryAction,
   QuietAction,
   StepProgress,
@@ -22,7 +25,7 @@ import {
   Working,
   AlertIcon,
 } from '../../ui/components'
-import { TextLink } from '../../ui/primitives'
+import { Button, TextLink } from '../../ui/primitives'
 import { isProtectState, ProtectSteps } from './protect'
 
 /** Content rules (architecture §10, Frage 10: text and place still open). */
@@ -170,42 +173,8 @@ export function OnboardingScreen({ state: s, send, hint, captured }: OnboardingS
       )
     case 'verifyWords':
       return <VerifyStep state={s} send={send} title={title} progress={progress} />
-    case 'profile': {
-      const ready = s.displayName.trim() !== ''
-      return (
-        <FlowPage
-          title={title}
-          onBack={back}
-          progress={progress}
-          footer={
-            <>
-              <PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} disabled={!ready} />
-              <TermsSentence />
-            </>
-          }
-        >
-          <Hero icon={<CheckIcon />} title={t.onboarding.profileTitle} body={t.onboarding.profileSubtitle} />
-          <Field label={t.onboarding.profileNameLabel}>
-            {(a) => (
-              <input
-                {...a}
-                type="text"
-                value={s.displayName}
-                placeholder={t.onboarding.profileNamePlaceholder}
-                autoComplete="name"
-                autoFocus
-                maxLength={64}
-                onChange={(e) => send({ type: 'name', value: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && ready) send({ type: 'next' })
-                }}
-                className="h-11 w-full rounded-lg border border-border bg-card px-4 text-[15px] outline-none focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            )}
-          </Field>
-        </FlowPage>
-      )
-    }
+    case 'profile':
+      return <ProfileStep state={s} send={send} title={title} progress={progress} onBack={back} />
     case 'initHolder':
     case 'activating':
       if (s.error)
@@ -288,6 +257,118 @@ function VerifyStep({ state: s, send, title, progress }: { state: Extract<SetupS
       {s.wrong.length > 0 ? (
         <Callout tone="danger" role="alert">
           {t.onboarding.errorVerifyMismatch}
+        </Callout>
+      ) : null}
+    </FlowPage>
+  )
+}
+
+/** The profile step: the name, and optionally a picture (chosen from a file, cropped and scaled as on
+ *  the profile page, lib/avatar.ts). Next waits for a picture being read; a later choice or a removal
+ *  wins over an older conversion. */
+function ProfileStep({
+  state: s,
+  send,
+  title,
+  progress,
+  onBack,
+  toAvatar = avatarFromFile,
+}: {
+  state: Extract<SetupState, { name: 'profile' }>
+  send: (e: SetupEvent) => void
+  title: string
+  progress: ReactNode
+  onBack: () => void
+  toAvatar?: (file: Blob) => Promise<string>
+}) {
+  const { t } = useI18n()
+  const x = t.profileName
+  const file = useRef<HTMLInputElement | null>(null)
+  const choice = useRef(0)
+  const [converting, setConverting] = useState(0)
+  const [failed, setFailed] = useState(false)
+  const ready = s.displayName.trim() !== '' && converting === 0
+  const pick = async (f: File | undefined) => {
+    if (!f) return
+    setFailed(false)
+    const mine = ++choice.current
+    setConverting((n) => n + 1)
+    try {
+      const uri = await toAvatar(f)
+      if (choice.current === mine) send({ type: 'image', value: uri })
+    } catch {
+      if (choice.current === mine) setFailed(true)
+    } finally {
+      setConverting((n) => n - 1)
+    }
+  }
+  return (
+    <FlowPage
+      title={title}
+      onBack={onBack}
+      progress={progress}
+      footer={
+        <>
+          <PrimaryAction label={t.common.next} onClick={() => send({ type: 'next' })} disabled={!ready} />
+          <TermsSentence />
+        </>
+      }
+    >
+      <Hero icon={<CheckIcon />} title={t.onboarding.profileTitle} body={t.onboarding.profileSubtitle} />
+      <div className="flex flex-col items-center gap-2 py-2">
+        <PersonAvatar name={s.displayName || '?'} image={s.image} size={96} />
+        <input
+          ref={file}
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          aria-label={x.pickImage}
+          onChange={(e) => {
+            void pick(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => file.current?.click()}>
+            <CameraIcon />
+            {s.image ? x.changeImage : x.pickImage}
+          </Button>
+          {s.image ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                choice.current += 1
+                send({ type: 'image', value: null })
+              }}
+            >
+              {x.removeImage}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <Field label={t.onboarding.profileNameLabel}>
+        {(a) => (
+          <input
+            {...a}
+            type="text"
+            value={s.displayName}
+            placeholder={t.onboarding.profileNamePlaceholder}
+            autoComplete="name"
+            autoFocus
+            maxLength={64}
+            onChange={(e) => send({ type: 'name', value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && ready) send({ type: 'next' })
+            }}
+            className="h-11 w-full rounded-lg border border-border bg-card px-4 text-[15px] outline-none focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        )}
+      </Field>
+      {failed ? (
+        <Callout tone="danger" role="alert">
+          {x.imageFailed}
         </Callout>
       ) : null}
     </FlowPage>
