@@ -104,10 +104,10 @@ const TONE_CIRCLE: Record<Tone, string> = {
 
 /** Icon circle, title and lead of a step (prototype: success and confirm screens). The page title
  *  in the header is the h1, the hero title an h2 below it. */
-export function Hero({ icon, tone = 'primary', title, body }: { icon: ReactNode; tone?: Tone; title: string; body?: ReactNode }) {
+export function Hero({ icon, tone = 'primary', title, body }: { icon?: ReactNode; tone?: Tone; title: string; body?: ReactNode }) {
   return (
     <div className="flex flex-none flex-col items-center gap-3 pt-2 text-center">
-      <span className={cn('flex size-16 items-center justify-center rounded-full [&_svg]:size-[30px]', TONE_CIRCLE[tone])}>{icon}</span>
+      {icon ? <span className={cn('flex size-16 items-center justify-center rounded-full [&_svg]:size-[30px]', TONE_CIRCLE[tone])}>{icon}</span> : null}
       <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-balance">{title}</h2>
       {body ? <div className="m-0 max-w-[40ch] text-sm text-pretty text-muted-foreground">{body}</div> : null}
     </div>
