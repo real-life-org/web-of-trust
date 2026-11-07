@@ -317,7 +317,6 @@ export function ProfileStep({
         </>
       }
     >
-      <Hero icon={<CheckIcon />} title={t.onboarding.profileTitle} body={t.onboarding.profileSubtitle} />
       <div className="flex flex-col items-center gap-2 py-2">
         <PersonAvatar name={s.displayName || '?'} image={s.image} size={96} />
         <input
@@ -351,6 +350,7 @@ export function ProfileStep({
           ) : null}
         </div>
       </div>
+      <Hero title={t.onboarding.profileTitle} body={t.onboarding.profileSubtitle} />
       <Field label={t.onboarding.profileNameLabel}>
         {(a) => (
           <input
