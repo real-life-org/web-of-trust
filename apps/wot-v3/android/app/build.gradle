@@ -77,8 +77,8 @@ dependencies {
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     // integration tests of BiometricStore on the real AtomicFile and SharedPreferences (JVM, no device)
-    testImplementation "org.robolectric:robolectric:4.14.1"
-    testImplementation "androidx.test:core:1.6.1"
+    testImplementation "org.robolectric:robolectric:4.17"
+    testImplementation "androidx.test:core:1.7.0"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
