@@ -10,8 +10,9 @@ android {
 apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
     implementation project(':capacitor-app')
-    implementation project(':real-life-org-capacitor-zxing-scanner')
+    implementation project(':capacitor-clipboard')
     implementation project(':capawesome-capacitor-live-update')
+    implementation project(':real-life-org-capacitor-zxing-scanner')
 
 }
 
