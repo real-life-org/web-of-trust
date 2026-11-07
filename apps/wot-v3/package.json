@@ -49,7 +49,7 @@
     "capacitor-email-composer": "^8.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "d3-force": "3.0.0",
+    "d3-force": "3.0.1",
     "fflate": "0.8.3",
     "html5-qrcode": "^2.3.8",
     "qrcode": "^1.5.4",
