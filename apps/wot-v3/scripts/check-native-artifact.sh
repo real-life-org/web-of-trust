@@ -8,8 +8,9 @@
 #           iOS: no LiveUpdatePlugin / CapawesomeCapacitorLiveUpdate in the executable, no LiveUpdate in
 #           capacitor.config.json (plugins or packageClassList, the iOS plugin registry); the bundle
 #           carries PrivacyInfo.xcprivacy with the file-timestamp reason of the filesystem plugin.
-#   ota    (fdroid): the plugin is in the dex and in capacitor.plugins.json. Android only: no iOS build
-#           carries live update.
+#   ota    (every v3 release build): the plugin is in the dex and in capacitor.plugins.json (Android), or
+#           LiveUpdatePlugin is in the executable and in packageClassList (iOS); in both the Capacitor
+#           configuration carries LiveUpdate with a publicKey, so no bundle runs unsigned.
 # Positive control in both cases: the app's own plugins and the Capacitor bridge are found in the same
 # dex files or the same executable, so a check that reads nothing cannot pass. apkanalyzer (Android SDK
 # cmdline-tools) is used for an APK when it is on PATH or under $ANDROID_HOME; the dex strings are read
@@ -65,14 +66,20 @@ if (!ts.some((d) => /<key>NSPrivacyAccessedAPITypeReasons<\/key>[ \t\r\n]*<array
 
   echo "- $(basename "$app"): $(wc -l < "$WORK/classes.txt") bridge/plugin classes read from the executable $name"
   echo "- live-update classes in the executable: $lu_classes; LiveUpdate in capacitor.config.json (plugins, packageClassList): $lu_config"
-  [ "$lu_classes" = 0 ] || abort "live-update plugin classes in $(basename "$app")"
-  [ "$lu_config" = 0 ] || abort "LiveUpdate in the Capacitor configuration of $(basename "$app")"
-  echo "✓ native artifact check passed: no live-update plugin in $(basename "$1")"
+  if [ "$MODE" = no-ota ]; then
+    [ "$lu_classes" = 0 ] || abort "live-update plugin classes in $(basename "$app")"
+    [ "$lu_config" = 0 ] || abort "LiveUpdate in the Capacitor configuration of $(basename "$app")"
+    echo "✓ native artifact check passed: no live-update plugin in $(basename "$1")"
+  else
+    [ "$lu_classes" != 0 ] || abort "ota expected, but no live-update classes in the executable of $(basename "$app")"
+    grep -q '"LiveUpdatePlugin"' <<<"$config" || abort "ota expected, but LiveUpdatePlugin is not in packageClassList of $(basename "$app")"
+    grep -q '"publicKey"' <<<"$config" || abort "ota expected, but the LiveUpdate configuration of $(basename "$app") names no publicKey (bundles would run unsigned)"
+    echo "✓ native artifact check passed: live-update plugin with a public key in $(basename "$1")"
+  fi
 }
 
 case "$FILE" in
   *.ipa|*.app)
-    [ "$MODE" = no-ota ] || abort "ota is Android only (F-Droid); no iOS build carries live update"
     if [ -d "$FILE" ]; then
       check_ios_bundle "$FILE"
     else
@@ -140,5 +147,6 @@ if [ "$MODE" = no-ota ]; then
 else
   [ "$LU_CLASSES" != 0 ] || abort "ota expected, but no live-update classes in $FILE"
   [ "$LU_PLUGINS" != 0 ] || abort "ota expected, but the live-update plugin is not registered in $FILE"
-  echo "✓ native artifact check passed: live-update plugin present in $(basename "$FILE")"
+  grep -q '"publicKey"' <<<"$CONFIG" || abort "ota expected, but the LiveUpdate configuration of $FILE names no publicKey (bundles would run unsigned)"
+  echo "✓ native artifact check passed: live-update plugin with a public key in $(basename "$FILE")"
 fi

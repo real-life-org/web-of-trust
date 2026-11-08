@@ -17,6 +17,7 @@ dependencies {
     implementation project(':capacitor-share')
     implementation project(':real-life-org-capacitor-zxing-scanner')
     implementation project(':capacitor-email-composer')
+    implementation project(':capawesome-capacitor-live-update')
 
 }
 

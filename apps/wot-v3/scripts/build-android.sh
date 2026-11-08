@@ -8,16 +8,17 @@
 # What it guarantees:
 #   1. Exactly the given tag is built (HEAD carries it); versionName from the tag, versionCode
 #      major*10000 + minor*100 + patch (3.0.0 -> 30000), passed to Gradle (-PwotVersionName).
-#   2. Play web bundle (VITE_TARGET=play: no live update, VITE_MEDIATOR_DID required), store-build
-#      check on the bundle and on the synced assets (scripts/check-build.mjs), and on the AAB and the
-#      APK: no live-update plugin in code or configuration (scripts/check-native-artifact.sh no-ota).
+#   2. Play web bundle (VITE_TARGET=play, live-update channel v3-android, VITE_MEDIATOR_DID required),
+#      store-build check on the bundle and on the synced assets (scripts/check-build.mjs), and on the
+#      AAB and the APK: the live-update plugin with the public key of the OTA signing key
+#      (scripts/check-native-artifact.sh ota).
 #   3. Unsigned (no signing config in android/app/build.gradle); the service signs the AAB with the
 #      Play upload key and the APK with the F-Droid key (GitHub release and F-Droid index).
-#      build-info.json: signed false, otaChannels.aab and .apk "disabled", commit = the tag's commit.
+#      build-info.json: signed false, otaChannels.aab and .apk "v3-android", commit = the tag's commit.
 #
-# The APK is built from the same Play web bundle, so it carries no live update: the F-Droid OTA channel
-# android-foss serves Gen-2 web bundles, which a v3 shell must never load. Signed and published, this
-# APK moves Gen-2 F-Droid and Obtainium users to v3 (the cutover); the app shows them the Gen-2 notice.
+# The APK is built from the same Play web bundle and reads the same channel v3-android, never the Gen-2
+# channels (android-foss serves Gen-2 web bundles). Signed and published, this APK moves Gen-2 F-Droid
+# and Obtainium users to v3 (the cutover); the app shows them the Gen-2 notice.
 set -euo pipefail
 
 APP_ID=org.reallife.weboftrust
@@ -76,7 +77,7 @@ AAB="${AABS[0]}"
 APK="${APKS[0]}"
 for f in "$AAB" "$APK"; do
   if unzip -Z1 "$f" | grep -qiE '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then abort "$f carries a signature; the release artifact must be unsigned"; fi
-  "$APP_DIR/scripts/check-native-artifact.sh" "$f" no-ota
+  "$APP_DIR/scripts/check-native-artifact.sh" "$f" ota
   cp "$f" "$OUT/"
 done
 
@@ -95,11 +96,11 @@ require("fs").writeFileSync(process.argv[1], JSON.stringify({
   versionName: e.BI_VNAME, versionCode: Number(e.BI_VCODE),
   gradleTask: e.BI_TASK,
   artifacts: { aab: e.BI_AAB, apk: e.BI_APK },
-  otaChannels: { aab: "disabled", apk: "disabled" },
+  otaChannels: { aab: "v3-android", apk: "v3-android" },
   mediator: e.BI_MEDIATOR,
   toolchain: { node: e.BI_NODE, pnpm: e.BI_PNPM, java: e.BI_JAVA },
   signed: false,
-  note: "v3 app (apps/wot-v3): AAB for Play and APK for GitHub and F-Droid, both without live update, unsigned. Signed separately (key custody)."
+  note: "v3 app (apps/wot-v3): AAB for Play and APK for GitHub and F-Droid, both on live-update channel v3-android (signed bundles only), unsigned. Signed separately (key custody)."
 }, null, 2) + "\n");
 ' "$OUT/build-info.json"
 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$OUT/build-info.json"
