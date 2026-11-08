@@ -220,7 +220,7 @@ Limits of the shell:
 | Command | What it does |
 |---|---|
 | `VITE_MEDIATOR_DID=did:… JAVA_HOME=<JDK 21> scripts/build-debug-apk.sh` | play bundle, store-build check on the bundle and on the synced assets, `cap sync android`, `testDebugUnitTest` (JUnit of `BiometricPolicy`), `assembleDebug`, native artifact check (no live-update plugin in the dex or the Capacitor configuration); prints the APK path |
-| `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB, `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
+| `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB and APK (both without live update), `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
 | `scripts/check-native-artifact.sh <apk/aab/ipa/.app> no-ota/ota` | the OTA check on a native artifact (architecture §8.2 step 3); `ota` is Android only |
 
 The CI job `android` in `wot-v3.yml` builds the debug APK as the artifact `wot-v3-debug-apk` (skipped
