@@ -32,7 +32,7 @@ import {
   DuplicateAttestationError,
   type AttestationStoragePort,
 } from '../src/services/AttestationService'
-import { InboxReceptionHost } from '../src/services/InboxReceptionHost'
+import { InboxReceptionHost } from '@web_of_trust/core/application'
 import { createAttestationListener, type AttestationListenerDeps } from '../src/services/attestationListener'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()

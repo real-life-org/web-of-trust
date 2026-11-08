@@ -11,7 +11,7 @@ import { INBOX_MESSAGE_TYPE, isDidcommMessage } from '@web_of_trust/core/protoco
 import type { MessagingAdapter, WireMessage } from '@web_of_trust/core/ports'
 import type { Contact, IdentitySession } from '@web_of_trust/core/types'
 import { AttestationService, type AttestationStoragePort } from '../src/services/AttestationService'
-import { InboxReceptionHost } from '../src/services/InboxReceptionHost'
+import { InboxReceptionHost } from '@web_of_trust/core/application'
 import { createProfileUpdateListener } from '../src/services/profileUpdateListener'
 
 const cryptoAdapter = new WebCryptoProtocolCryptoAdapter()
