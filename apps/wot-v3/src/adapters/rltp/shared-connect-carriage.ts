@@ -40,7 +40,7 @@ export const SC_LINGER_MS = 120_000
 /** the waits (device time) between attempts to open a wire that did not open; the last one repeats */
 export const SC_OPEN_RETRY_MS = [1000, 5000, 30_000] as const
 
-export type SharedConnectDiagnostic = 'wire-frame-refused' | 'wire-deposit-refused' | 'shared-connect-refused' | 'shared-connect-wire'
+export type SharedConnectDiagnostic = 'wire-frame-refused' | 'wire-deposit-refused' | 'shared-connect-refused' | 'shared-connect-wire' | 'shared-connect-failed' | 'shared-connect-step-refused'
 
 export interface SharedConnectCarriageDeps {
   /** a wire at the build's carrier (the custody lease's `sharedConnect`); rejects while it cannot open */
@@ -414,6 +414,9 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         if (!e.type.startsWith('sharedconnect.')) continue
         mine = true
         if (e.type === 'sharedconnect.send' && e.to !== '' && e.docs.length > 0) owed.set(e.id, [...(owed.get(e.id) ?? []), { to: e.to, docs: e.docs }])
+        // how an enactment went wrong, for the diagnostics: codes and step names, never a document
+        if (e.type === 'sharedconnect.failed') deps.diagnose?.('shared-connect-failed', e.code.slice(0, 120))
+        if (e.type === 'sharedconnect.refused') deps.diagnose?.('shared-connect-step-refused', `${e.docType.split('/').slice(-2).join('/').slice(0, 60)}/${e.reason.slice(0, 40)}`)
       }
       if (mine) reconcile()
     },

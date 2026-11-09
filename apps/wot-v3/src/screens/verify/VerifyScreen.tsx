@@ -2,7 +2,7 @@
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
-import { useBackInFlow, useContact, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useConnections, useContact, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
 import { useI18n } from '../../i18n'
@@ -58,6 +58,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const v = t.verify
   const fmt = useFormat()
   const profile = useProfile()
+  const connections = useConnections()
   const copy = useCopy()
   const toast = useToast()
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
@@ -68,6 +69,10 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     </FlowPage>
   )
   const nameOf = (n: string | null) => n ?? t.contacts.unnamed
+  // the newest closed ceremony, when the other side ended it with an error: its code and text (the
+  // other side's words, unverified) stay readable here, since the error screen is gone after "try again"
+  const newestClosed = connections.status === 'ready' ? [...connections.value].filter((c) => c.closedAt !== null).sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))[0] : undefined
+  const recentFailure = newestClosed?.status === 'failed' && newestClosed.failure ? newestClosed : undefined
   const link = 'hit-target relative rounded-sm text-[13px] text-muted-foreground underline underline-offset-[3px] hover:text-foreground'
   /** the shown code with its actions; also behind the camera sheet. Artboard 3: the rule under the
    *  code; copy and enter as small links, the scan in the footer */
@@ -85,6 +90,13 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         {hint ? (
           <div className="mt-4 w-full text-left">
             <Callout tone="info">{hint === 'nothing-open' ? v.nothingOpen : v.alreadyCaptured}</Callout>
+          </div>
+        ) : null}
+        {recentFailure ? (
+          <div className="mt-4 w-full text-left">
+            <Callout tone="danger" role="status">
+              {f(v.recentFailure, { time: fmt.time(recentFailure.closedAt ?? 0) })} <span className="font-mono text-xs">{recentFailure.failure?.code}{recentFailure.failure?.message ? `: ${recentFailure.failure.message}` : ''}</span>
+            </Callout>
           </div>
         ) : null}
         <div className="min-h-4 flex-1" />

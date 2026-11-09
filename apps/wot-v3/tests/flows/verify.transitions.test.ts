@@ -912,12 +912,12 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
       await fa.until('confirm')
       fa.send({ type: 'yes' })
       await fa.until('connecting')
-      connections.set(ready([{ id: 'e1' as never, role: 'responder', name: 'Bea', met: false, ...end }], revision(1, 2, 1)))
+      connections.set(ready([{ id: 'e1' as never, role: 'responder', name: 'Bea', met: false, failure: null, closedAt: null, ...end }], revision(1, 2, 1)))
       return fa
     }
     const failed = await run({ status: 'failed', contactId: null })
     await failed.until('scanError')
-    expect(failed.state()).toMatchObject({ code: 'failed' })
+    expect(failed.state()).toMatchObject({ code: 'connect-failed' })
     const foreign = await run({ status: 'complete', contactId: null })
     await foreign.until('exit')
     expect(foreign.state()).toMatchObject({ to: 'back', contactId: null })

@@ -412,7 +412,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: connections.map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null, met: v.met })),
+    connections: connections.map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null, met: v.met, failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null, closedAt: v.closedAt })),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

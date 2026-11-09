@@ -36,7 +36,8 @@ export interface ProposalRef {
 /** where a connection ceremony stands, from the last published bundle */
 export type ConnectionState = Pick<Connection, 'status' | 'contactId'>
 
-export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used'> | 'failed'
+/** `connect-failed`: the other side ended the connection ceremony with an error (its code is in the diagnostics) */
+export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used'> | 'failed' | 'connect-failed'
 
 /** Where a card came in (#489, kept up to the issuance for #487): the app's own camera, a link the
  *  app was opened with (another camera, a messenger), or typed. */
@@ -259,7 +260,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connecting.bundle.complete', 'bundle', 'success', 'free', '–', { guard: 'the ceremony is complete with a contact' }),
   row('connecting.bundle.foreign', 'bundle', 'exit(back)', 'free', '–', { guard: 'complete without a contact (a counterpart whose app gives no channel)' }),
   row('connecting.bundle.declined', 'bundle', 'declined', 'free', '–', { guard: 'the other side declined' }),
-  row('connecting.bundle.failed', 'bundle', 'scanError{failed}', 'free', '–', { guard: 'the other side ended the ceremony with an error' }),
+  row('connecting.bundle.failed', 'bundle', 'scanError{connect-failed}', 'free', '–', { guard: 'the other side ended the ceremony with an error' }),
   row('connecting.result.long', 'result ver.wait', 'connecting{waitLong}', 'free', '–'),
   row('connecting.keepWaiting', 'keepWaiting', 'connecting', 'free', '–', { effects: ['ver.wait'] }),
   row('connecting.leave', 'leave', 'exit(back)', 'free', 'the ceremony goes on in the core'),
@@ -550,7 +551,7 @@ function connectionEnd(s: S, connection: ConnectionId, name2: string | null): Ou
   if (!c || c.status === 'open') return null
   if (c.status === 'complete') return c.contactId ? goto(s, { name: 'success', contactId: c.contactId, name2, isNew: true }, 'connecting.bundle.complete') : exit(s, 'back', null, 'connecting.bundle.foreign')
   if (c.status === 'declined') return goto(s, { name: 'declined', name2 }, 'connecting.bundle.declined')
-  return goto(s, { name: 'scanError', code: 'failed' }, 'connecting.bundle.failed')
+  return goto(s, { name: 'scanError', code: 'connect-failed' }, 'connecting.bundle.failed')
 }
 
 const pick = (s: Extract<S, { name: 'confirmationRequired' }>) => ({ name: s.name, contactId: s.contactId, decision: s.decision, name2: s.name2 })

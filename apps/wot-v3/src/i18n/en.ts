@@ -224,6 +224,8 @@ export const en = {
     'error.code-expired': 'This code has expired. Ask for a new one.',
     'error.code-used': 'This code was used already. Ask for a new one.',
     'error.failed': 'Something went wrong. Please try again.',
+    recentFailure: 'The other app ended the last connection ({time}) with an error:',
+    'error.connect-failed': 'The other person’s app ended the connection with an error. Nothing was created; the error code is in the developer area.',
     committing: 'Verifying…',
     capturing: 'Taking over the encounter…',
     waitTitle: '{name} verified',
