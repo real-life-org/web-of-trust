@@ -12,6 +12,9 @@
 //    D5): the messaging seed, under the same two HKDF labels `partyFromSeeds` applies, gives the
 //    Ed25519 signing key and the X25519 key of the did:peer:2; the wire checks the public keys
 //    against the DID the holder wrote, so a derivation that drifted never signs under it;
+//  - the responder's session is at the relay the inviter's identifier names (the inviter collects
+//    there; a frame sent to any other mediator never reaches it), the inviter's at the carrier it put
+//    into its link;
 //  - the mediator session authenticates under the X25519 method of the did:peer:2 (`#key-…` as the
 //    document writes it), as Keyring's `vtiClientIdentityFromDid` does;
 //  - the responder forms the TSP relationship first: an XRFI to the inviter on every socket open,
@@ -128,7 +131,12 @@ export interface SharedConnectWireConfig {
 }
 
 /** what the opening gives for a wire; the carrier adds its own part (C, the device clock, the network below) */
-export type SharedConnectWireOpening = Omit<SharedConnectWireConfig, 'mediatorDid' | 'clock' | 'net'>
+export type SharedConnectWireOpening = Omit<SharedConnectWireConfig, 'mediatorDid' | 'clock' | 'net'> & {
+  /** the responder's wire: the relay the inviter's identifier names (the inviter listens there, not
+   *  at this build's carrier); absent for the inviter's wire, which listens at the carrier it put into
+   *  its link */
+  readonly mediatorDid?: string
+}
 
 export interface SharedConnectWire {
   readonly did: string

@@ -932,9 +932,10 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         if (!live()) throw new Error('shared-connect: the opening is not in use')
         const g = gen
         const here = () => g === gen && live()
+        // the inviter's relay for a responder's wire, this build's carrier for an inviter's
         const wire = await openSharedConnectWire({
           ...wcfg,
-          mediatorDid: C,
+          mediatorDid: wcfg.mediatorDid ?? C,
           clock,
           ...(cfg.net ? { net: cfg.net } : {}),
           // a document reaches the opening only in the generation that opened the wire (rule 3); outside

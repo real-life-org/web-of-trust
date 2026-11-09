@@ -9,6 +9,9 @@
 //  - Which enactments have a wire is read from the view, never from an event alone (`wantedUntil`):
 //    an open one that nobody answered or decided only around its link's life; a decided one until
 //    it closes; a closed one until its last documents were handed to the carrier and a moment more.
+//  - The responder's wire is at the inviter's relay (the link's `_from` names it), the inviter's at
+//    this build's carrier: each side collects where its own identifier says, so a counterpart on
+//    another mediator (Keyring on mediator.ic3.dev) is reached.
 //    Three decisions stay apart: the holder decides that an enactment is complete; a timeout decides
 //    that a socket closes (a resource); nothing but delivery evidence or the explicit rule of
 //    SC_OWED_MS ends the retries. Closed on this side is not delivered on the other, and a frame on
@@ -234,10 +237,14 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         }
         // the counterpart once known is the only sender heard (the enactment belongs to the first issuer)
         const peerDid = v.theirDid
+        // the responder listens and sends where the inviter's identifier says (its relay), as the inviter
+        // listens at the carrier it put into its link; a link naming no mediator relay falls back to ours
+        const relay = v.role === 'responder' ? (await sc.parsePeer(v.link.from))?.relays.find((x) => x.kind === 'tsp-mediator')?.address : undefined
         const wire = await deps.open({
           did: v.did,
           keys,
           exp: v.link.exp,
+          ...(relay ? { mediatorDid: relay } : {}),
           ...(peerDid !== null ? { peerDid } : {}),
           onDocument: (doc, sender) => track(receive(doc, sender)),
           onState: (s) => {
