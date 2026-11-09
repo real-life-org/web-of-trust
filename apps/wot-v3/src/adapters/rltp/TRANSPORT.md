@@ -509,16 +509,18 @@ did:peer:2 the holder wrote into the link or made for its proposal. The wire ope
 opening is in use and ends with the generation (rule 3); a document it reads reaches the holder only
 in that generation.
 
-The session keeps one carriage per opening (`shared-connect-carriage.ts`). Which enactments have a
-wire is read from the holder's view: a code nobody answered while it is live; a proposal nobody
-decided two minutes more; a decided one until it closes; a closed one until its last documents (the
-receipt of a complete one, the inviter's decline) were handed to the carrier and two minutes more.
-Closed on this side is not delivered on the other, and a frame on the socket is not one the mediator
-carries: the hand-over counts once the mediator kept the frame two minutes without refusing it (its
-problem report) over a socket that stayed open; it is then a mark in the opening's app-db
-(`connect-sent`), and an enactment without the mark gets its wire again after every restart, for
-thirty days after it closed. A frame is acknowledged at the mediator only after the holder took its
-document; one it could not take comes again at the next connect. Documents of a commit
+The session keeps one carriage per opening (`shared-connect-carriage.ts`). Three decisions stay
+apart: the holder decides that an enactment is complete; a timeout decides that a socket closes;
+only delivery evidence or an explicit rule ends the retries. Which enactments have a wire is read
+from the holder's view: a code nobody answered while it is live; a proposal nobody decided two
+minutes more; a decided one until it closes; a closed one with its last documents owed (the receipt
+of a complete one, the inviter's decline) in attempts of two minutes each, at every resume and poke
+but paced (ten minutes at least, then as long as the obligation was old at the last attempt), until thirty days after the close (the library's
+retention of the counterpart's unfinished enactment); a closed one owing nothing two minutes.
+Closed on this side is not delivered on the other, and a frame on the socket is not one the
+mediator confirmed: the opening keeps only the time of the last attempt (`connect-attempts`), to
+pace them. A frame is acknowledged at the mediator only after the holder took its document; one it
+could not take comes again at the next connect. Documents of a commit
 (`sharedconnect.send`) go out in order; after a send that did not reach the socket, a reconnect or a
 restart, the whole `outbox` of the view goes out again, and the counterpart's machine answers a
 duplicate without acting twice. The carriage starts from the view whenever the opening becomes the

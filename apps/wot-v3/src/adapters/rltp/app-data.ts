@@ -126,7 +126,8 @@ export const KV = {
   acks: 'ack/',
   /** the cards displayed with a carrier offer, by challenge, until their challenge ends (`DisplayedCards`) */
   displayed: 'displayed',
-  /** per shared-connect enactment that closed: when its last documents were handed to the carrier
-   *  (shared-connect-carriage.ts; `Record<enactment id, device time>`) */
-  connectSent: 'connect-sent',
+  /** per shared-connect enactment that closed with documents owed: when they last went to a socket
+   *  (shared-connect-carriage.ts; `Record<enactment id, device time>`; the pace of the attempts, no
+   *  evidence of delivery) */
+  connectAttempts: 'connect-attempts',
 } as const
