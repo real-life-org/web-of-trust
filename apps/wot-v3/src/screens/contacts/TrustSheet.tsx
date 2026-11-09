@@ -120,7 +120,8 @@ export function TrustSheet({
           </Callout>
         ) : null}
         <div className="flex flex-col gap-2">
-          <PrimaryAction label={mode === 'on' ? s.onConfirm : s.offConfirm} busy={act.busy} onClick={() => void confirm()} />
+          {/* giving trust is green everywhere (the success screen, the mutual sheet, here); withdrawing is not */}
+          <PrimaryAction label={mode === 'on' ? s.onConfirm : s.offConfirm} {...(mode === 'on' ? { variant: 'success' as const } : {})} busy={act.busy} onClick={() => void confirm()} />
           <QuietAction label={t.common.cancel} onClick={onClose} />
         </div>
       </SheetContent>
