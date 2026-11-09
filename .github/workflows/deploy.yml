@@ -17,6 +17,10 @@ on:
       - 'packages/adapter-yjs/**'
       - 'packages/adapter-automerge/**'
       - '.github/workflows/deploy.yml'
+  # a v3 live-update release (ota-v3-<n>, published by the signing service wot-release): the deploy
+  # takes its signed pointers (scripts/release/v3-ota-pointers.sh)
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       rollback_tag:
@@ -35,6 +39,8 @@ concurrency:
 
 jobs:
   build:
+    # of the releases only a v3 live-update release deploys (app, core and Gen-2 releases do not)
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'ota-v3-')
     runs-on: ubuntu-latest
     # vNext-Backend auf web-of-trust.de (gilt fuer alle Demo-Builds: OTA-Bundles
     # + Pages). Ohne das nutzt die App die appRuntime-Defaults
@@ -48,6 +54,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # a release deploy builds the site from main, never from the release's tag: an ota-v3 tag
+          # published late must not reset newer Pages content to its own state (#527)
+          ref: ${{ github.event_name == 'release' && 'main' || github.ref }}
           # the Gen-2 OTA decision diffs against the commit of the live bundle
           fetch-depth: 0
 
@@ -56,7 +65,8 @@ jobs:
       # content. The base is the live bundle, not the previous push: a cancelled deploy loses nothing.
       - name: Gen-2 OTA needed?
         id: ota
-        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        # the commit checked out (on a release: main), not the event commit (on a release: the tag)
+        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -209,6 +219,13 @@ jobs:
             mkdir -p combined/updates/${channel}
             curl -fsS "https://web-of-trust.de/updates/${channel}/latest.json" -o combined/updates/${channel}/latest.json
           done
+
+      # v3 live update: the signed pointers of the newest ota-v3 release, checked against the bundle and
+      # the public key in the app; none before the first ota-v3 release
+      - name: v3 live-update pointers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release/v3-ota-pointers.sh combined/updates
 
       # The v3 web app (apps/wot-v3, target web) at web-of-trust.de/app/, with the mediator of the
       # store builds; the store-build check runs inside build:web

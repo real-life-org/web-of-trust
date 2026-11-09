@@ -24,11 +24,12 @@ function resolveTarget(): Target | null {
   return raw as Target
 }
 
-/** Over-the-air updates may only ship in the F-Droid build, and not with the legacy kill switch
- *  VITE_DISABLE_LIVE_UPDATE=true (architecture §5 table, apps/demo #238). scripts/check-build.mjs rejects
+/** Over-the-air updates ship in the native builds (fdroid, play, appstore: signed web bundles, which
+ *  Play and the App Store allow for code that runs in the web view), never in the web build, and not
+ *  with the kill switch VITE_DISABLE_LIVE_UPDATE=true (apps/demo #238). scripts/check-build.mjs rejects
  *  live-update code in every other build. */
 function liveUpdateAllowed(target: Target | null): boolean {
-  return target === 'fdroid' && process.env.VITE_DISABLE_LIVE_UPDATE !== 'true'
+  return (target === 'fdroid' || target === 'play' || target === 'appstore') && process.env.VITE_DISABLE_LIVE_UPDATE !== 'true'
 }
 
 /** The interop probe of the developer area only in a web build with VITE_INTEROP_PROBE=true

@@ -1,0 +1,57 @@
+# Live-update bundles of the v3 app (apps/wot-v3/scripts/build-ota.sh): on an OTA tag ota-v3-<n>, one
+# zip per channel (v3-android, v3-ios), unsigned, as the artifact ota-<tag>. Nothing reaches a phone
+# from here: the signing service wot-release signs an envelope per zip (its checksum among it) with the
+# OTA key and publishes zips and manifests as the GitHub release <tag>; that release starts the Pages
+# deploy (deploy.yml), which checks envelopes and checksums and serves the manifests under /updates/<channel>/.
+#
+# Live updates are for fixes and small changes; a new feature goes through the stores (App Store
+# Review Guideline 3.3.2, the same line for Play). Start the signing by hand:
+#   gh workflow run sign-on-dispatch.yml -R real-life-org/wot-release -f app=wot -f tag=ota-v3-<n>
+name: OTA v3
+
+on:
+  push:
+    tags: ['ota-v3-[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'OTA tag to build (e.g. ota-v3-1)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bundles:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          # minNative: the newest app-v3.* tag in the history of this commit
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Build bundles
+        env:
+          VITE_MEDIATOR_DID: ${{ vars.VITE_MEDIATOR_DID }}
+        run: apps/wot-v3/scripts/build-ota.sh "$TAG"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-${{ env.TAG }}
+          path: out/ota/
+          if-no-files-found: error
+          retention-days: 30

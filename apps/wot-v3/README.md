@@ -165,6 +165,37 @@ state, back button, deep links and live update over the Capacitor plugins of `ap
 `@capacitor/share`, `@capacitor/filesystem`, `@capacitor/local-notifications` and
 `capacitor-email-composer` (only in `platform/capacitor`). Their native side is checked on the device.
 
+## Live update
+
+Every native build (Play, App Store, the APK) takes signed web bundles over the air
+(`@capawesome/capacitor-live-update`, `src/platform/capacitor/live-update.ts`); the web build does not.
+
+- **Channels**: `v3-android` (Play AAB and APK, the web bundle of `VITE_TARGET=play`) and `v3-ios`
+  (`VITE_TARGET=appstore`). The Gen-2 channels (`ios`, `android`, `android-foss`, `android-box`) are
+  never read by a v3 shell.
+- **Signed only**: the app carries the public key `ota/live-update-public.pem`. Each manifest holds a
+  signed envelope (app, channel, bundle id, sequence, the zip's SHA-256 checksum, `minNative`); the app
+  verifies it before it downloads anything and takes a bundle only for its own app and channel. The
+  plugin then refuses a zip whose checksum differs from the envelope's. The plugin gets no `publicKey`
+  on purpose: with one it checks only a zip signature and skips the checksum, so any other validly
+  signed zip would pass. The private key stays with the signing service wot-release.
+- **Never back**: the sequence `<n>` of `ota-v3-<n>` only goes up; a shell takes no bundle at or below
+  the one it runs.
+- **Fits the shell**: the envelope names `minNative`, the newest `app-v3.*` tag in the history of the
+  bundle's commit. A shell older than that keeps its bundle. A change to the native side (a plugin, a
+  permission, Swift or Kotlin) needs a store release before an OTA tag that relies on it.
+- **Applied at the next start**, never under a running session; a bundle that does not reach
+  `LiveUpdate.ready()` within 10 s is rolled back to the shipped one.
+- **What may go over the air**: fixes and small changes. A new feature goes through the stores (App
+  Store Review Guideline 3.3.2; the same line for Play).
+- **Publishing**: tag `ota-v3-<n>` on main → `ota-v3.yml` builds the zips (`scripts/build-ota.sh`) →
+  start the signing (`gh workflow run sign-on-dispatch.yml -R real-life-org/wot-release -f app=wot -f
+  tag=ota-v3-<n>`) → wot-release signs and publishes the release `ota-v3-<n>` → that release starts the
+  Pages deploy, which verifies every manifest against the bundle and the public key
+  (`scripts/release/v3-ota-pointers.sh`) and serves it at `web-of-trust.de/updates/<channel>/latest.json`.
+- **Off switch**: `VITE_DISABLE_LIVE_UPDATE=true` at build time; or delete the release, after which the
+  next deploy serves the previous `ota-v3` release's pointers.
+
 ## Android shell
 
 `android/` and `capacitor.config.ts` are the v3 app's own native shell, taken from `apps/demo` without
@@ -220,7 +251,7 @@ Limits of the shell:
 | Command | What it does |
 |---|---|
 | `VITE_MEDIATOR_DID=did:… JAVA_HOME=<JDK 21> scripts/build-debug-apk.sh` | play bundle, store-build check on the bundle and on the synced assets, `cap sync android`, `testDebugUnitTest` (JUnit of `BiometricPolicy`), `assembleDebug`, native artifact check (no live-update plugin in the dex or the Capacitor configuration); prints the APK path |
-| `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB, `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
+| `scripts/build-android.sh app-v3.x.y` | release build from a tag (`build-on-tag.yml` on `app-v3.*`): unsigned Play AAB and APK (both without live update), `build-info.json`, `SHA256SUMS` in `out/release/` in the format of the Gen-2 build, signed and uploaded by the signing service. No F-Droid APK before the cutover |
 | `scripts/check-native-artifact.sh <apk/aab/ipa/.app> no-ota/ota` | the OTA check on a native artifact (architecture §8.2 step 3); `ota` is Android only |
 
 The CI job `android` in `wot-v3.yml` builds the debug APK as the artifact `wot-v3-debug-apk` (skipped
@@ -252,6 +283,7 @@ texts in `en.lproj`/`de.lproj/InfoPlist.strings`. Card links are Universal Links
 |---|---|
 | `scripts/version-from-tag.sh app-v3.x.y` | `VERSION_NAME` and `BUILD_NUMBER` from the tag, the Android formula |
 | `scripts/build-ios.sh app-v3.x.y` (macOS) | release build from a tag (`build-on-tag.yml` job `ios`): appstore bundle, `cap sync ios`, store-build check, plugin completeness, archive, signed IPA with the workflow secrets or unsigned archive without them, native artifact check, `build-info.json`, `SHA256SUMS` in `out/release-ios/` |
+| `scripts/build-ota.sh ota-v3-<n>` | live-update bundles from an OTA tag (`ota-v3.yml`): one zip per channel, `build-info.json` with `minNative`, `SHA256SUMS` in `out/ota/`, unsigned |
 | `scripts/upload-testflight.sh app-v3.x.y` (macOS) | fastlane `pilot` upload with the App Store Connect API key, into the external group `IOS_TESTFLIGHT_GROUP` |
 
 The Swift compiles only in the `ios` job (no Mac here); `tests/ios-shell.test.ts` checks the project

@@ -19,7 +19,8 @@ let package = Package(
         .package(name: "CapacitorLocalNotifications", path: "../../../../../node_modules/.pnpm/@capacitor+local-notifications@8.3.1_@capacitor+core@8.5.3/node_modules/@capacitor/local-notifications"),
         .package(name: "CapacitorShare", path: "../../../../../node_modules/.pnpm/@capacitor+share@8.0.3_@capacitor+core@8.5.3/node_modules/@capacitor/share"),
         .package(name: "RealLifeOrgCapacitorZxingScanner", path: "../../../../../node_modules/.pnpm/@real-life-org+capacitor-zxing-scanner@1.1.3_@capacitor+core@8.5.3/node_modules/@real-life-org/capacitor-zxing-scanner"),
-        .package(name: "CapacitorEmailComposer", path: "../../../../../node_modules/.pnpm/capacitor-email-composer@8.0.0_@capacitor+core@8.5.3/node_modules/capacitor-email-composer")
+        .package(name: "CapacitorEmailComposer", path: "../../../../../node_modules/.pnpm/capacitor-email-composer@8.0.0_@capacitor+core@8.5.3/node_modules/capacitor-email-composer"),
+        .package(name: "CapawesomeCapacitorLiveUpdate", path: "../../../../../node_modules/.pnpm/@capawesome+capacitor-live-update@8.2.1_@capacitor+core@8.5.3/node_modules/@capawesome/capacitor-live-update")
     ],
     targets: [
         .target(
@@ -34,7 +35,8 @@ let package = Package(
                 .product(name: "CapacitorLocalNotifications", package: "CapacitorLocalNotifications"),
                 .product(name: "CapacitorShare", package: "CapacitorShare"),
                 .product(name: "RealLifeOrgCapacitorZxingScanner", package: "RealLifeOrgCapacitorZxingScanner"),
-                .product(name: "CapacitorEmailComposer", package: "CapacitorEmailComposer")
+                .product(name: "CapacitorEmailComposer", package: "CapacitorEmailComposer"),
+                .product(name: "CapawesomeCapacitorLiveUpdate", package: "CapawesomeCapacitorLiveUpdate")
             ]
         )
     ]

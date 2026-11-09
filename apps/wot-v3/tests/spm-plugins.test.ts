@@ -50,7 +50,7 @@ describe('check-spm-plugins.sh', () => {
     const f = fixture('real')
     try {
       const r = run(f.app)
-      expect(r.out).toContain('8 plugins in CapApp-SPM/Package.swift, each product declared by its package')
+      expect(r.out).toContain('9 plugins in CapApp-SPM/Package.swift, each product declared by its package')
       expect(r.ok).toBe(true)
     } finally {
       f.cleanup()
@@ -62,7 +62,7 @@ describe('check-spm-plugins.sh', () => {
     try {
       const r = run(f.app)
       expect(r.ok).toBe(false)
-      expect(r.out).toContain('links 8 plugins, capacitor.config.ts names 9')
+      expect(r.out).toContain('links 9 plugins, capacitor.config.ts names 10')
     } finally {
       f.cleanup()
     }

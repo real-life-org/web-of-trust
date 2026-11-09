@@ -70,12 +70,12 @@ async function interopProbe(mediator: string, platform: Platform) {
   }
 }
 
-/** Live update only on F-Droid (architecture §5 table; Play and App Store forbid code updates outside
- *  the store) and never with VITE_DISABLE_LIVE_UPDATE=true (legacy #238 kill switch). Vite replaces both
- *  constants, so every other build drops the import and its chunk; scripts/check-build.mjs verifies
- *  that no live-update module is in their graph. Without an update channel it stays off. */
+/** Live update in the native builds (fdroid, play, appstore), never with VITE_DISABLE_LIVE_UPDATE=true
+ *  (legacy #238 kill switch). Vite replaces the constants, so the web build drops the import and its
+ *  chunk; scripts/check-build.mjs verifies that. Without an update channel it stays off. */
 async function liveUpdate() {
-  if (import.meta.env.VITE_TARGET !== 'fdroid' || import.meta.env.VITE_DISABLE_LIVE_UPDATE === 'true') return undefined
+  const target = import.meta.env.VITE_TARGET
+  if ((target !== 'fdroid' && target !== 'play' && target !== 'appstore') || import.meta.env.VITE_DISABLE_LIVE_UPDATE === 'true') return undefined
   const channel = import.meta.env.VITE_UPDATE_CHANNEL
   if (!channel) return undefined
   const { capacitorLiveUpdate } = await import('../platform/capacitor/live-update')

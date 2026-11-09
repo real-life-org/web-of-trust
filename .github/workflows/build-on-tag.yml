@@ -54,7 +54,7 @@ jobs:
       # Zwei Apps, ein Workflow (der Signierdienst wot-release bindet an genau
       # diesen Workflow-Pfad und das Artefakt android-<tag>):
       #   app-v0.* / app-v1.* / app-v2.*  → apps/demo (Gen 2), wie bisher
-      #   app-v3.* und spaeter            → apps/wot-v3 (nur Play-AAB, kein OTA)
+      #   app-v3.* und spaeter            → apps/wot-v3 (Play-AAB und APK, beide ohne OTA)
       # Gen 2 und v3 teilen den Tag-Namensraum app-v*, die Weiche ist die
       # Hauptversion: Gen 2 (apps/demo, release-please) muss deshalb unter 3.0.0
       # bleiben; ein Gen-2-Tag >= 3.0.0 liefe in den v3-Build und baute die

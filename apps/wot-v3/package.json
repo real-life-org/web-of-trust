@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "VITE_TARGET=harness vite",
     "build:web": "VITE_TARGET=web vite build && node scripts/check-build.mjs dist",
-    "build:fdroid": "VITE_TARGET=fdroid vite build --outDir dist-fdroid && node scripts/check-build.mjs dist-fdroid",
-    "build:play": "VITE_TARGET=play VITE_DISABLE_LIVE_UPDATE=true vite build --outDir dist-play && node scripts/check-build.mjs dist-play",
-    "build:appstore": "VITE_TARGET=appstore VITE_DISABLE_LIVE_UPDATE=true vite build --outDir dist-appstore && node scripts/check-build.mjs dist-appstore",
+    "build:fdroid": "VITE_TARGET=fdroid VITE_UPDATE_CHANNEL=v3-android vite build --outDir dist-fdroid && node scripts/check-build.mjs dist-fdroid",
+    "build:play": "VITE_TARGET=play VITE_UPDATE_CHANNEL=v3-android vite build --outDir dist-play && node scripts/check-build.mjs dist-play",
+    "build:appstore": "VITE_TARGET=appstore VITE_UPDATE_CHANNEL=v3-ios vite build --outDir dist-appstore && node scripts/check-build.mjs dist-appstore",
     "build:harness": "VITE_TARGET=harness vite build --outDir dist-harness",
     "check:build": "node scripts/check-build.mjs dist",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.node.json --noEmit",

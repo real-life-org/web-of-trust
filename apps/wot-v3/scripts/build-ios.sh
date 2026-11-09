@@ -9,10 +9,10 @@
 #   1. Exactly the given tag is built (HEAD carries it); MARKETING_VERSION from the tag, CURRENT_PROJECT_VERSION
 #      (the build number) major*10000 + minor*100 + patch, the versionCode formula of the Android shell
 #      (scripts/version-from-tag.sh), passed to xcodebuild as build settings.
-#   2. App Store web bundle (VITE_TARGET=appstore: no live update, VITE_MEDIATOR_DID required), store-build
-#      check on the bundle and on the synced assets (scripts/check-build.mjs), every plugin of
-#      capacitor.config.ts in the generated Swift package, and on the IPA or the archived .app: no
-#      live-update plugin in the executable or the configuration (scripts/check-native-artifact.sh no-ota).
+#   2. App Store web bundle (VITE_TARGET=appstore, live-update channel v3-ios, VITE_MEDIATOR_DID required),
+#      store-build check on the bundle and on the synced assets (scripts/check-build.mjs), every plugin of
+#      capacitor.config.ts in the generated Swift package, and on the IPA or the archived .app: the
+#      live-update plugin with the public key of the OTA signing key (scripts/check-native-artifact.sh ota).
 #   3. Signing only with the secrets of the workflow (deploy/ios/README.md): IOS_TEAM_ID,
 #      IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD, IOS_PROVISIONING_PROFILE_BASE64. They live in a
 #      temporary keychain for this run and are removed at the end. Without them the archive is built
@@ -173,11 +173,11 @@ PLIST
     || { tail -80 "$WORK/export.log"; abort "xcodebuild -exportArchive failed (full log: $WORK/export.log)"; }
   shopt -s nullglob; IPAS=("$WORK"/export/*.ipa); shopt -u nullglob
   [ ${#IPAS[@]} -eq 1 ] || abort "expected exactly one IPA in $WORK/export, found: ${IPAS[*]:-none}"
-  "$APP_DIR/scripts/check-native-artifact.sh" "${IPAS[0]}" no-ota
+  "$APP_DIR/scripts/check-native-artifact.sh" "${IPAS[0]}" ota
   ARTIFACT_KIND=ipa; ARTIFACT="$SCHEME-$VERSION_NAME.ipa"
   cp "${IPAS[0]}" "$OUT/$ARTIFACT"
 else
-  "$APP_DIR/scripts/check-native-artifact.sh" "$APP_BUNDLE" no-ota
+  "$APP_DIR/scripts/check-native-artifact.sh" "$APP_BUNDLE" ota
   ARTIFACT_KIND=xcarchive; ARTIFACT="$SCHEME-unsigned.xcarchive.zip"
   ( cd "$WORK" && ditto -c -k --keepParent "$SCHEME.xcarchive" "$OUT/$ARTIFACT" )
 fi

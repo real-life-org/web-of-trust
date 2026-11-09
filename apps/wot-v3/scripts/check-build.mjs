@@ -7,11 +7,12 @@
 //    library testing entry or fake-indexeddb in any output chunk (static or dynamic).
 // 2. Every shipped file: no source maps, no sourceMappingURL, no paths from step 1, no simulation
 //    marker, no scenario titles, no scenario-player page (harness.html).
-// 3. Live update (OTA): only the F-Droid build without VITE_DISABLE_LIVE_UPDATE=true may contain the
-//    live-update plugin or its client (graph flag `liveUpdate`, written by vite.config.ts); every other
-//    build (play, appstore, web) is rejected when either is in the graph or the plugin's name is in a
-//    shipped file. The OTA configuration of a native artifact (APK/AAB) is checked on the artifact
-//    by scripts/check-native-artifact.sh (build-debug-apk.sh, build-android.sh); IPA follows with iOS.
+// 3. Live update (OTA): only a native build (fdroid, play, appstore) without
+//    VITE_DISABLE_LIVE_UPDATE=true may contain the live-update plugin or its client (graph flag
+//    `liveUpdate`, written by vite.config.ts); the web build and a native build with the kill switch are
+//    rejected when either is in the graph or the plugin's name is in a shipped file. The OTA
+//    configuration of a native artifact (APK/AAB/IPA) is checked on the artifact by
+//    scripts/check-native-artifact.sh (build-debug-apk.sh, build-android.sh, build-ios.sh).
 // 4. Carrier: the native store builds (fdroid, play, appstore) name their VTI mediator (graph field
 //    `mediator`, VITE_MEDIATOR_DID): without it no card carries a delivery hint and every relationship
 //    of such a build stays uncarried for good (RLTP-VTI-1230, 1235). The web build may run without.
@@ -34,6 +35,8 @@ const MAX_HINT = 512
 const STORE_TARGETS = new Set(['fdroid', 'play', 'appstore', 'web'])
 /** the store targets that must name their mediator */
 const CARRIED_TARGETS = new Set(['fdroid', 'play', 'appstore'])
+/** the native targets, which may carry live update (signed web bundles) */
+const NATIVE_TARGETS = new Set(['fdroid', 'play', 'appstore'])
 const FORBIDDEN_MODULES = [
   /(^|\/)src\/adapters\/sim\//,
   /(^|\/)src\/platform\/fake\//,
@@ -86,7 +89,7 @@ export async function checkBuild(distDir, graphFile = path.join(distDir, '..', '
   // 1. module graph
   const graph = JSON.parse(readFileSync(graphFile, 'utf8'))
   if (!STORE_TARGETS.has(graph.target)) errors.push(`target ${JSON.stringify(graph.target)} is not a store target`)
-  const ota = graph.liveUpdate === true && graph.target === 'fdroid'
+  const ota = graph.liveUpdate === true && NATIVE_TARGETS.has(graph.target)
   const probe = graph.interopProbe === true && graph.target === 'web'
   for (const id of graph.modules ?? []) {
     const hit = FORBIDDEN_MODULES.find((re) => re.test(id))
@@ -129,7 +132,7 @@ export async function checkBuild(distDir, graphFile = path.join(distDir, '..', '
   } else notes.push(`no mediator (${graph.target}: documents stay on the device)`)
 
   // 3. OTA configuration on native artifacts
-  notes.push(ota ? 'live update allowed (fdroid)' : `no live-update code (${graph.target})`)
+  notes.push(ota ? `live update allowed (${graph.target})` : `no live-update code (${graph.target})`)
   notes.push(probe ? 'interop probe in the developer area (web, VITE_INTEROP_PROBE)' : `no interop probe (${graph.target})`)
   notes.push('OTA check of the native artifact: scripts/check-native-artifact.sh after the native build')
   return { errors, notes, target: graph.target, liveUpdate: ota, modules: (graph.modules ?? []).length }

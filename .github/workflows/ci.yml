@@ -40,6 +40,9 @@ jobs:
       - name: Gen-2-OTA-Entscheidung + Pages-Vertrag (v3 unter /app/)
         run: node scripts/release/test-gen2-ota-needed.mjs
 
+      - name: v3-Live-Update-Zeiger (Auswahl über alle Seiten, Umschlag + Prüfsumme)
+        run: node scripts/release/test-v3-ota-pointers.mjs
+
   test:
     runs-on: ubuntu-latest
     steps:

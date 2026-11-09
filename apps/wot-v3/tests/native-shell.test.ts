@@ -2,7 +2,7 @@
 // capacitor.config.ts per target, and scripts/check-native-artifact.sh on synthetic APK/AAB/IPA
 // archives: a store artifact with the live-update plugin must be refused, one without it passes.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { strToU8, zipSync } from 'fflate'
@@ -25,7 +25,7 @@ describe('capacitor.config.ts per target', () => {
     return (await import('../capacitor.config')).default
   }
 
-  it.each(['play', 'appstore'])('%s lists every plugin except live update and configures only the keyboard', async (target) => {
+  it.each(['fdroid', 'play', 'appstore'])('%s lists every plugin with live update, a nonzero readyTimeout and no plugin public key', async (target) => {
     const c = await load(target)
     expect(c.includePlugins).toEqual([
       '@capacitor/app',
@@ -36,19 +36,22 @@ describe('capacitor.config.ts per target', () => {
       '@capacitor/share',
       '@real-life-org/capacitor-zxing-scanner',
       'capacitor-email-composer',
+      '@capawesome/capacitor-live-update',
     ])
-    expect(c.includePlugins).not.toContain('@capawesome/capacitor-live-update')
-    expect(c.plugins).not.toHaveProperty('LiveUpdate')
+    const lu = c.plugins?.LiveUpdate as { readyTimeout?: number; publicKey?: string }
+    expect(lu.readyTimeout).toBeGreaterThan(0)
+    // a plugin public key would switch off the checksum check, which binds the zip to the signed
+    // envelope (#526); the envelope key is the client's (src/platform/capacitor/ota-public-key.ts)
+    expect(lu).not.toHaveProperty('publicKey')
     // iOS: the web view shrinks to the space above the keyboard, so the header of a screen stays in view
-    expect(c.plugins).toEqual({ Keyboard: { resize: 'native' } })
+    expect(c.plugins?.Keyboard).toEqual({ resize: 'native' })
     expect(c.webDir).toBe(`dist-${target}`)
   })
 
-  it('fdroid adds the live-update plugin with a nonzero readyTimeout', async () => {
-    const c = await load('fdroid')
-    expect(c.includePlugins).toContain('@capawesome/capacitor-live-update')
-    expect((c.plugins?.LiveUpdate as { readyTimeout?: number }).readyTimeout).toBeGreaterThan(0)
-    expect(c.plugins?.Keyboard).toEqual({ resize: 'native' })
+  it('the client verifies envelopes with the committed OTA public key', async () => {
+    const { OTA_PUBLIC_KEY } = await import('../src/platform/capacitor/ota-public-key')
+    expect(OTA_PUBLIC_KEY).toBe(readFileSync(path.join(APP, 'ota', 'live-update-public.pem'), 'utf8').trim())
+    expect(OTA_PUBLIC_KEY).toMatch(/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----$/)
   })
 
   it.each([undefined, 'web', 'harness', 'Play'])('refuses the target %s', async (target) => {
@@ -119,9 +122,15 @@ describe('check-native-artifact.sh on synthetic artifacts', () => {
     expect(r.out).toContain('live-update plugin registered')
   })
 
-  it('an fdroid artifact needs the plugin, and a check that reads nothing fails', () => {
-    expect(run(artifact('fdroid', { classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE] }), 'ota').ok).toBe(true)
-    expect(run(artifact('fdroid-missing', {}), 'ota').out).toContain('no live-update classes')
+  it.each(['apk', 'aab'] as const)('a release %s needs the plugin without a plugin public key, and a check that reads nothing fails', (kind) => {
+    const signed = { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } } }
+    expect(run(artifact(`ota-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: signed }), 'ota').ok).toBe(true)
+    // with a plugin public key the plugin skips the checksum from the signed envelope (#526)
+    const keyed = { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x', readyTimeout: 10000, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } } }
+    expect(run(artifact(`ota-keyed-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: keyed }), 'ota').out).toContain('names a publicKey')
+    // without readyTimeout a broken bundle is never rolled back
+    expect(run(artifact(`ota-no-timeout-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('no readyTimeout')
+    expect(run(artifact(`ota-missing-${kind}`, { kind, config: signed }), 'ota').out).toContain('no live-update classes')
     expect(run(artifact('no-dex', { dex: false }), 'no-ota').out).toContain('no dex files')
     expect(run(artifact('no-own', { classes: [LIVE_UPDATE_CLASS] }), 'no-ota').out).toContain('positive control')
   })
@@ -200,10 +209,20 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
     expect(run(ipa('manifest-other-reason', { manifest: timestamp('<string>DDA9.1</string>') }), 'no-ota').out).toContain('without the reason C617.1')
   })
 
-  it('a check that reads nothing fails, and ota is Android only', () => {
+  it('a check that reads nothing fails', () => {
     expect(run(ipa('no-exe', { executable: false }), 'no-ota').out).toContain('no executable')
     expect(run(ipa('no-own', { symbols: ['CAPBridgeViewController'] }), 'no-ota').out).toContain('positive control')
     expect(run(ipa('no-scanner-class', { config: { appId: 'org.reallife.weboftrust', plugins: {}, packageClassList: ['AppPlugin'] } }), 'no-ota').out).toContain('positive control')
-    expect(run(ipa('ota', {}), 'ota').out).toContain('Android only')
+  })
+
+  it('an app-store IPA with ota needs the plugin in the executable and the registry, without a plugin public key', () => {
+    const lu = { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } }
+    const config = { appId: 'org.reallife.weboftrust', plugins: lu, packageClassList: [...CLASS_LIST, 'LiveUpdatePlugin'] }
+    expect(run(ipa('ota-ok', { symbols: [...OWN, 'LiveUpdatePlugin'], config }), 'ota').ok).toBe(true)
+    expect(run(ipa('ota-no-class', { config }), 'ota').out).toContain('no live-update classes')
+    expect(run(ipa('ota-unregistered', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, packageClassList: CLASS_LIST } }), 'ota').out).toContain('not in packageClassList')
+    const keyed = { LiveUpdate: { ...lu.LiveUpdate, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } }
+    expect(run(ipa('ota-keyed', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, plugins: keyed } }), 'ota').out).toContain('names a publicKey')
+    expect(run(ipa('ota-no-timeout', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('no readyTimeout')
   })
 })

@@ -141,7 +141,11 @@ for (const path of [...inputs, 'scripts/release/gen2-ota-needed.sh', 'scripts/re
 check(/paths:\n(?:\s+- '.*'\n)*?\s+- 'apps\/wot-v3\/\*\*'/.test(DEPLOY), 'deploy.yml runs on changes of apps/wot-v3')
 check(/paths:\n(?:\s+- '.*'\n)*?\s+- 'pnpm-lock\.yaml'/.test(DEPLOY), 'and on lockfile changes (a dependency of the Gen-2 demo can change there alone)')
 check(/fetch-depth: 0/.test(DEPLOY), 'the checkout has the history the decision diffs against')
-check(DEPLOY.includes('scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.sha }}"'), 'deploy.yml asks gen2-ota-needed.sh with the commit it builds')
+check(DEPLOY.includes('scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "$(git rev-parse HEAD)"'), 'deploy.yml asks gen2-ota-needed.sh with the commit it checked out')
+check(!DEPLOY.includes('github.sha'), 'nothing in deploy.yml builds from github.sha (on a release: the tag, not main)')
+// a release deploy (ota-v3-<n>) builds from main: tag A, newer Pages state B, publishing A late must not
+// reset B (#527)
+check(DEPLOY.includes("ref: ${{ github.event_name == 'release' && 'main' || github.ref }}"), 'a release deploy checks out main, not the tag')
 for (const step of ['Build OTA bundle (ios)', 'Build OTA bundle (android)', 'Build OTA bundle (android-foss)', 'Build OTA bundle (android-box)', 'Create GitHub Release with OTA bundles', 'Generate latest.json (normal deploy)']) {
   const at = DEPLOY.indexOf(`- name: ${step}\n`)
   const block = at < 0 ? '' : DEPLOY.slice(at, DEPLOY.indexOf('\n      - name:', at + 1))

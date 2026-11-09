@@ -30,6 +30,7 @@ const SPM_PRODUCTS: Record<string, string> = {
   '@capacitor/share': 'CapacitorShare',
   '@real-life-org/capacitor-zxing-scanner': 'RealLifeOrgCapacitorZxingScanner',
   'capacitor-email-composer': 'CapacitorEmailComposer',
+  '@capawesome/capacitor-live-update': 'CapawesomeCapacitorLiveUpdate',
 }
 
 describe('Xcode project', () => {
@@ -93,10 +94,10 @@ describe('Xcode project', () => {
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })
 
-  it('links every plugin of capacitor.config.ts and not the live-update plugin', async () => {
+  it('links every plugin of capacitor.config.ts, the live-update plugin included', async () => {
     process.env.VITE_TARGET = 'appstore'
     const { PLUGINS, LIVE_UPDATE_PLUGIN } = await import('../capacitor.config')
-    for (const npm of PLUGINS) {
+    for (const npm of [...PLUGINS, LIVE_UPDATE_PLUGIN]) {
       const product = SPM_PRODUCTS[npm]
       expect(product, `no SPM product known for ${npm}`).toBeDefined()
       expect(packageSwift, `${npm} is not in CapApp-SPM/Package.swift (cap sync ios skipped it)`).toContain(`.product(name: "${product}", package: "${product}")`)
@@ -105,7 +106,6 @@ describe('Xcode project', () => {
       expect(own, `${npm}: its Package.swift declares no library "${product}"`).toMatch(new RegExp(`\\.library\\(\\s*name: "${product}"`))
     }
     expect(LIVE_UPDATE_PLUGIN).toBe('@capawesome/capacitor-live-update')
-    expect(packageSwift).not.toMatch(/LiveUpdate/)
   })
 })
 
