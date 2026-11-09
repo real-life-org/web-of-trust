@@ -21,6 +21,7 @@ import { applyEncounterEvents, ingest, statusFinal } from './ingest'
 import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
 import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
+import { createSharedConnectCarriage, type SharedConnectCarriage } from './shared-connect-carriage'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
@@ -578,8 +579,32 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => {
     stopped = true
   })
+  // ── shared-connect (shared-connect-carriage.ts): a wire per enactment at the build's carrier ──
+  // The holder runs the ceremony; the carriage moves its documents. Only with a carrier that has such
+  // wires (the VTI mediator) and never in a dereg-only opening.
+  const keys = keysFromRootIkm(deps.rootIkm)
+  const lease = deps.transport
+  const sharedConnect: SharedConnectCarriage | null =
+    lease.kind === 'custody' && !deregOnly
+      ? createSharedConnectCarriage({
+          open: (cfg) => lease.sharedConnect(cfg),
+          keys,
+          views: () => gate.run((h) => h.sharedConnect()),
+          receive: async (doc, sender) => {
+            const r = await gate.run((h) => h.sharedConnectReceive(doc, sender, when()))
+            if (r.ok) schedule(r.nextDueAt)
+            return r
+          },
+          now,
+          setTimer,
+          diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
+        })
+      : null
+  undo.push(() => sharedConnect?.stop())
   const unsubscribe = holder.subscribe(({ events }) => {
     if (stopped) return
+    // every commit's events, also those of a document the carriage itself handed to the holder
+    sharedConnect?.events(events)
     for (const e of events) {
       if (seen.has(e.eventId)) continue
       seen.add(e.eventId)
@@ -1593,6 +1618,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         const online = deps.transport.status.get().network === 'online'
         if (online && !wasOnline) {
           void track(replayOpen()).catch(() => undefined)
+          sharedConnect?.poke()
           // what waited for the network goes over again from the holder
           parked.clear()
           void offer()
@@ -1604,6 +1630,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
       void track(due())
+      sharedConnect?.poke()
       void track(replayOpen()).catch(() => undefined)
     }) ?? (() => undefined)
   undo.push(() => offLifecycle())
@@ -1631,6 +1658,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     (ending ??= (async () => {
       stopped = true
       gate.close()
+      sharedConnect?.stop()
       // the generation ends at once: an answer computed from now on is `later` (rule 3)
       deps.transport.deactivate()
       offStatus()
@@ -1683,12 +1711,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 0))
       })
     },
-    transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0),
+    transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0) + (sharedConnect?.busy() ?? 0),
     timerBusy: () => background,
     offer() {
       if (deregOnly) return
       parked.clear()
       void offer()
+      // the wires of the open shared-connect enactments, from the holder's view
+      sharedConnect?.resume()
     },
     queued,
     carriage: deps.transport.kind === 'custody' ? deps.transport.carriage : writableStore<Carriage>({ contacts: {}, open: 0, lastReceiveAt: null }),

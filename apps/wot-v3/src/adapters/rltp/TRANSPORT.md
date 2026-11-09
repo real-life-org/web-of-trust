@@ -498,3 +498,22 @@ version more per card and would bring the sent card back to version 16.
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 
+
+## The wires of shared-connect
+
+A shared-connect enactment (shared-connect 0.1, lib 0.16.0 `shared-connect-holder`) is carried
+outside the custody: its documents are the holder's flow machine's, not entries of
+`pendingTransport`. The custody lease opens a wire per enactment (`sharedConnect(cfg)`,
+`shared-connect-wire.ts`): a TSP session at `C` under the enactment's own messaging identity, the
+did:peer:2 the holder wrote into the link or made for its proposal. The wire opens only while the
+opening is in use and ends with the generation (rule 3); a document it reads reaches the holder only
+in that generation.
+
+The session keeps one carriage per opening (`shared-connect-carriage.ts`). Which enactments have a
+wire is read from the holder's view: an open one (an inviter's without a counterpart only while its
+link is live), and a closed one for two minutes after it closed. Documents of a commit
+(`sharedconnect.send`) go out in order; after a send that did not reach the socket, a reconnect or a
+restart, the whole `outbox` of the view goes out again, and the counterpart's machine answers a
+duplicate without acting twice. The carriage starts from the view whenever the opening becomes the
+one in use (`Session.offer`), and stops with the opening. A build without a mediator has no such
+wires: an enactment opened there stays in the holder until a carrier is configured.

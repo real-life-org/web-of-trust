@@ -43,6 +43,12 @@ export const DIAGNOSTIC_CODES = [
   'holder-state-refused',
   /** the personal community could not be founded at the opening (the library's refusal in detail) */
   'community-not-founded',
+  // the holder refused a document of a shared-connect enactment the wire delivered, or could not take
+  // it: the detail is the library's refusal code (`enactment-unknown`, `concurrent`) or `not-received`
+  'shared-connect-refused',
+  // the wire of a shared-connect enactment did not come up: `keys` when no nonce of the enactment gives
+  // the keys of its messaging identity
+  'shared-connect-wire',
   'unknown-code',
 ] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]

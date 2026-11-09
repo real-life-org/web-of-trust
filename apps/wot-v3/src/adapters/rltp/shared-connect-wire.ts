@@ -89,6 +89,9 @@ export interface SharedConnectWireConfig {
   readonly net?: WireConfig['net']
 }
 
+/** what the opening gives for a wire; the carrier adds its own part (C, the device clock, the network below) */
+export type SharedConnectWireOpening = Omit<SharedConnectWireConfig, 'mediatorDid' | 'clock' | 'net'>
+
 export interface SharedConnectWire {
   readonly did: string
   /** send the holder's documents to `to` (a peer DID; the long form of a did:peer:4 must have been

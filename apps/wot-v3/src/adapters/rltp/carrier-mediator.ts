@@ -41,6 +41,7 @@ import type { ReadStore } from '../../port'
 import { writableStore } from '../../port'
 import type { NetworkPort } from '../../platform/ports'
 import { challengeEnd, challengeOpen, DRAIN_LIMIT_MS, type AckStore, type Carriage, type CarrierOpening, type ContactCarriage, type CustodyLease, type DeviceTimers, type DisplayedCard, type TransportHandlers, type TransportStatus } from './transport'
+import { openSharedConnectWire, type SharedConnectWire } from './shared-connect-wire'
 import { createVtiWire, type VtiWire, type WireConfig } from './wire'
 
 /** how often (device time) the carrier advances its instances while the opening is in use */
@@ -166,6 +167,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     /** the drain waits of card instances closing after their last collection (cancelled at the end of
      *  the generation) */
     const drains = new Set<() => void>()
+    /** the wires of shared-connect enactments this generation opened (`sharedConnect`) */
+    const scWires = new Set<SharedConnectWire>()
     /** digests of entries not carried, reported awaiting-transport once per generation */
     const held = new Set<string>()
     let lastReceiveAt: number | null = null
@@ -311,6 +314,8 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
     }
     const closeAll = () => {
       for (const i of [...instances.values(), ...cards.values()]) close(i, false)
+      for (const w of [...scWires]) w.close()
+      scWires.clear()
       building.clear()
       buildingCards.clear()
       cardTimer?.()
@@ -922,6 +927,31 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         let cancel: () => void = () => undefined
         await Promise.race([Promise.all([...persisting]), new Promise<void>((r) => (cancel = clock.setTimer(clock.now() + DRAIN_LIMIT_MS, r)))])
         cancel()
+      },
+      async sharedConnect(wcfg) {
+        if (!live()) throw new Error('shared-connect: the opening is not in use')
+        const g = gen
+        const here = () => g === gen && live()
+        const wire = await openSharedConnectWire({
+          ...wcfg,
+          mediatorDid: C,
+          clock,
+          ...(cfg.net ? { net: cfg.net } : {}),
+          // a document reaches the opening only in the generation that opened the wire (rule 3)
+          onDocument: (doc, sender) => (here() ? wcfg.onDocument(doc, sender) : undefined),
+        })
+        if (!here()) {
+          wire.close()
+          throw new Error('shared-connect: the opening is not in use')
+        }
+        scWires.add(wire)
+        return {
+          ...wire,
+          close() {
+            scWires.delete(wire)
+            wire.close()
+          },
+        }
       },
       reconcile(view: TransportView) {
         if (!live() || !opening || !h) return
