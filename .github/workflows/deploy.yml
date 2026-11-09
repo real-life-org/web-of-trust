@@ -217,7 +217,7 @@ jobs:
           done
 
       # v3 live update: the signed pointers of the newest ota-v3 release, checked against the bundle and
-      # the public key in the shells; none before the first ota-v3 release
+      # the public key in the app; none before the first ota-v3 release
       - name: v3 live-update pointers
         env:
           GH_TOKEN: ${{ github.token }}

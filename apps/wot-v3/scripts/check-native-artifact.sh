@@ -10,7 +10,9 @@
 #           carries PrivacyInfo.xcprivacy with the file-timestamp reason of the filesystem plugin.
 #   ota    (every v3 release build): the plugin is in the dex and in capacitor.plugins.json (Android), or
 #           LiveUpdatePlugin is in the executable and in packageClassList (iOS); in both the Capacitor
-#           configuration carries LiveUpdate with a publicKey, so no bundle runs unsigned.
+#           configuration carries LiveUpdate with a readyTimeout and WITHOUT a publicKey: with one set the
+#           plugin checks only the zip's signature and skips the checksum, which binds the zip to the
+#           envelope the app verified (web-of-trust#526).
 # Positive control in both cases: the app's own plugins and the Capacitor bridge are found in the same
 # dex files or the same executable, so a check that reads nothing cannot pass. apkanalyzer (Android SDK
 # cmdline-tools) is used for an APK when it is on PATH or under $ANDROID_HOME; the dex strings are read
@@ -27,6 +29,14 @@ command -v unzip >/dev/null || abort "unzip is needed"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+
+# the LiveUpdate configuration of an ota build: a readyTimeout (rollback) and no publicKey (#526)
+ota_config() {
+  grep -q '"readyTimeout"' <<<"$1" || abort "ota expected, but the LiveUpdate configuration of $2 has no readyTimeout (a broken bundle would never roll back)"
+  if grep -q '"publicKey"' <<<"$1"; then
+    abort "ota expected, but the LiveUpdate configuration of $2 names a publicKey (the plugin would skip the checksum from the signed envelope)"
+  fi
+}
 
 # ---- iOS: IPA or .app bundle ------------------------------------------------------------------------
 check_ios_bundle() {
@@ -73,8 +83,8 @@ if (!ts.some((d) => /<key>NSPrivacyAccessedAPITypeReasons<\/key>[ \t\r\n]*<array
   else
     [ "$lu_classes" != 0 ] || abort "ota expected, but no live-update classes in the executable of $(basename "$app")"
     grep -q '"LiveUpdatePlugin"' <<<"$config" || abort "ota expected, but LiveUpdatePlugin is not in packageClassList of $(basename "$app")"
-    grep -q '"publicKey"' <<<"$config" || abort "ota expected, but the LiveUpdate configuration of $(basename "$app") names no publicKey (bundles would run unsigned)"
-    echo "✓ native artifact check passed: live-update plugin with a public key in $(basename "$1")"
+    ota_config "$config" "$(basename "$app")"
+    echo "✓ native artifact check passed: live-update plugin, checksum-bound, in $(basename "$1")"
   fi
 }
 
@@ -147,6 +157,6 @@ if [ "$MODE" = no-ota ]; then
 else
   [ "$LU_CLASSES" != 0 ] || abort "ota expected, but no live-update classes in $FILE"
   [ "$LU_PLUGINS" != 0 ] || abort "ota expected, but the live-update plugin is not registered in $FILE"
-  grep -q '"publicKey"' <<<"$CONFIG" || abort "ota expected, but the LiveUpdate configuration of $FILE names no publicKey (bundles would run unsigned)"
-  echo "✓ native artifact check passed: live-update plugin with a public key in $(basename "$FILE")"
+  ota_config "$CONFIG" "$FILE"
+  echo "✓ native artifact check passed: live-update plugin, checksum-bound, in $(basename "$FILE")"
 fi

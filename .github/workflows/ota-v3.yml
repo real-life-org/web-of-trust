@@ -1,8 +1,8 @@
 # Live-update bundles of the v3 app (apps/wot-v3/scripts/build-ota.sh): on an OTA tag ota-v3-<n>, one
 # zip per channel (v3-android, v3-ios), unsigned, as the artifact ota-<tag>. Nothing reaches a phone
-# from here: the signing service wot-release signs the zips with the OTA key and publishes them with
-# their signed manifests as the GitHub release <tag>; that release starts the Pages deploy
-# (deploy.yml), which checks the signatures and serves the manifests under /updates/<channel>/.
+# from here: the signing service wot-release signs an envelope per zip (its checksum among it) with the
+# OTA key and publishes zips and manifests as the GitHub release <tag>; that release starts the Pages
+# deploy (deploy.yml), which checks envelopes and checksums and serves the manifests under /updates/<channel>/.
 #
 # Live updates are for fixes and small changes; a new feature goes through the stores (App Store
 # Review Guideline 3.3.2, the same line for Play). Start the signing by hand:

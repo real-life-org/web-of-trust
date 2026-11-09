@@ -38,20 +38,6 @@ function target(): NativeTarget {
 }
 
 const t = target()
-/** the PEM public key of the OTA signing key (RSA 2048), the same as ota/live-update-public.pem (a
- *  test checks it); inline, because Capacitor loads this file without module imports */
-export const LIVE_UPDATE_PUBLIC_KEY = [
-  '-----BEGIN PUBLIC KEY-----',
-  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2Z4h5nO/kpbo+BTCQtrI',
-  'InXU8IeEK9HZCvTzGk7X405EC1fr8NV5tzyyUa91XjjmZkI8aedNdyuE2GcB+O5J',
-  'xrxXlPr94IWWC8zbSX8Kyo9thWV5WO2Zi6sdKGxfLs9JOpXZ57w5TNoNfLBuVzjP',
-  'WsMG07u3VuyYjFPrLakToTGPeAEUYG1iFp98OpPQWfi0zKIWSMYMfmXR/1b9LyvS',
-  'dLUkuL0wL6jz3dSQWe5WtkRFbjCS5/rAB9Z4hw5dbfYAjhQT3JLzv8s+hAOZyzOl',
-  'ZC6zL3gGfs2lVuukDg0XmomTmFzKanmejGLt4lfz9axUIu4rCf14YJO/3+ZxlcEr',
-  'cQIDAQAB',
-  '-----END PUBLIC KEY-----',
-].join('\n')
-
 const config: CapacitorConfig = {
   appId: 'org.reallife.weboftrust',
   appName: 'Web of Trust',
@@ -62,7 +48,11 @@ const config: CapacitorConfig = {
     // and the header of a conversation leaves the screen; Tillmann's device test of #494). The plugin
     // resizes after the keyboard animation, a short delay. Android resizes by itself.
     Keyboard: { resize: 'native' },
-    LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000, publicKey: LIVE_UPDATE_PUBLIC_KEY },
+    // No publicKey here, on purpose (#526): with one set, the plugin checks only the zip's signature and
+    // skips the checksum, so any validly signed zip (the other platform's, an older one) would pass
+    // under a valid envelope. Without it the plugin checks the SHA-256 checksum, which the app takes
+    // from the envelope it verified against ota/live-update-public.pem (src/platform/capacitor/live-update.ts).
+    LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 },
   },
 }
 

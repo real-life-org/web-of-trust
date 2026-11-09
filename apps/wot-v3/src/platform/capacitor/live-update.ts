@@ -8,8 +8,10 @@
 // verifies it against the public key the build was made with (ota/live-update-public.pem) before it
 // downloads anything (#526). So a manifest host cannot lower minNative, hand this platform the other
 // platform's bundle, relabel a bundle or replay an older one: the sequence only goes up. The plugin
-// then recomputes the zip's checksum from the envelope and verifies the zip's own signature against
-// the same key in the shell configuration. The shell sets a nonzero `readyTimeout`: a bundle that never
+// then checks the downloaded zip against the envelope's SHA-256 checksum, so only the exact zip the
+// envelope names is staged. The shell configuration sets no plugin publicKey on purpose: with one, the
+// plugin checks only a zip signature and skips the checksum, and any other validly signed zip would
+// pass under a valid envelope. The shell sets a nonzero `readyTimeout`: a bundle that never
 // reaches check() is rolled back. A new bundle is applied at the next start, never under a running
 // session.
 
@@ -108,16 +110,14 @@ export function capacitorLiveUpdate(opts: {
         // never back: a bundle at or below the running one's sequence is not taken
         const current = await LiveUpdate.getCurrentBundle()
         if (env.seq <= sequenceOf(current.bundleId)) return
-        // the file: where it lies is not signed (the checksum binds its bytes), its own signature is
-        // checked by the plugin
-        const { url, signature } = raw
+        // the file: where it lies is not signed, the signed checksum binds its bytes; the plugin checks it
+        const { url } = raw
         if (typeof url !== 'string' || !url.startsWith('https://')) return
-        if (typeof signature !== 'string' || !signature) return
-        await LiveUpdate.downloadBundle({ bundleId: env.bundleId, url, checksum: env.checksum, signature })
+        await LiveUpdate.downloadBundle({ bundleId: env.bundleId, url, checksum: env.checksum })
         await LiveUpdate.setNextBundle({ bundleId: env.bundleId })
       } catch {
         // no network, no server, a manifest that does not parse, or a bundle the plugin refused
-        // (checksum, signature): the running bundle stays
+        // (checksum): the running bundle stays
       }
     },
   }

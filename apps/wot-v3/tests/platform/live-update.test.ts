@@ -2,7 +2,8 @@
 // stands in a signed envelope (app, channel, bundle id, sequence, checksum, minNative), verified against
 // the shell's public key before anything is downloaded (#526): a manifest host can neither lower the
 // minimum shell, nor hand one platform the other's bundle, nor relabel or replay an older bundle. The
-// plugin then verifies the zip against the checksum from the envelope and its own signature.
+// plugin then checks the zip against the checksum from the envelope, and only against that (no zip
+// signature: with a plugin publicKey the plugin would skip the checksum, see tests/native-shell.test.ts).
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const plugin = vi.hoisted(() => ({
@@ -43,7 +44,6 @@ async function manifest(env: Partial<Env> = {}, opts: { signer?: (t: string) => 
     envelope: opts.tamper ? opts.tamper(envelope) : envelope,
     envelopeSignature,
     url: 'https://github.com/real-life-org/web-of-trust/releases/download/ota-v3-7/v3-android.zip',
-    signature: 'emlwLXNpZ25hdHVyZQ==',
   }
 }
 
@@ -65,8 +65,9 @@ describe('live update', () => {
     await lu.check()
     expect(fetch).toHaveBeenCalledWith('https://web-of-trust.de/updates/v3-android/latest.json')
     expect(plugin.ready).toHaveBeenCalled()
-    // the checksum the plugin checks the zip against comes from the signed envelope
-    expect(plugin.downloadBundle).toHaveBeenCalledWith({ bundleId: 'ota-v3-7', url: m.url, checksum: CHECKSUM, signature: m.signature })
+    // the checksum the plugin checks the zip against comes from the signed envelope, and nothing else
+    // is handed to the plugin: a zip signature would not bind the zip to this envelope (#526)
+    expect(plugin.downloadBundle).toHaveBeenCalledWith({ bundleId: 'ota-v3-7', url: m.url, checksum: CHECKSUM })
     expect(plugin.setNextBundle).toHaveBeenCalledWith({ bundleId: 'ota-v3-7' })
   })
 
@@ -90,7 +91,6 @@ describe('live update', () => {
 
   it.each([
     ['no envelope signature', (m: Record<string, unknown>) => ({ ...m, envelopeSignature: undefined })],
-    ['no zip signature', (m: Record<string, unknown>) => ({ ...m, signature: undefined })],
     ['a plain http url', (m: Record<string, unknown>) => ({ ...m, url: 'http://example.org/b.zip' })],
   ])('takes nothing with %s', async (_, edit) => {
     await client(edit(await manifest())).lu.check()
@@ -109,7 +109,7 @@ describe('live update', () => {
   it('stays quiet when the server answers an error or the plugin refuses the zip', async () => {
     await client(await manifest(), '3.2.0', 404).lu.check()
     expect(plugin.downloadBundle).not.toHaveBeenCalled()
-    plugin.downloadBundle.mockRejectedValueOnce(new Error('signature verification failed'))
+    plugin.downloadBundle.mockRejectedValueOnce(new Error('Checksum mismatch.'))
     await expect(client(await manifest()).lu.check()).resolves.toBeUndefined()
     expect(plugin.setNextBundle).not.toHaveBeenCalled()
   })

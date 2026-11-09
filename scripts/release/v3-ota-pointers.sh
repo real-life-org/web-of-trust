@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The live-update pointers of the v3 app for the Pages deploy (deploy.yml): reads the newest published
 # GitHub release ota-v3-<n> (made by the signing service wot-release), checks every channel manifest in
-# it, its signed envelope (app, channel, bundle id, sequence, checksum, minNative) and its zip, against
-# the public key compiled into the shells
-# (apps/wot-v3/ota/live-update-public.pem), and writes <out>/<channel>/latest.json. A manifest that
+# it: its signed envelope (app, channel, bundle id, sequence, checksum, minNative) against the public key
+# compiled into the app (apps/wot-v3/ota/live-update-public.pem), and the zip against the envelope's
+# checksum; then writes <out>/<channel>/latest.json. A manifest that
 # does not verify stops the deploy, rather than publishing a pointer the phones would refuse anyway.
 # No ota-v3 release yet: nothing is written, the phones keep their own bundle.
 #
@@ -52,13 +52,8 @@ for channel in "${CHANNELS[@]}"; do
     if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.minNative ?? "")) throw new Error("minNative is not major.minor.patch")
     const url = `https://github.com/${e.REPO}/releases/download/${e.TAG}/${e.CH}.zip`
     if (m.url !== url) throw new Error(`url ${m.url} != ${url}`)
-    if (typeof m.signature !== "string" || !m.signature) throw new Error("no zip signature")
   ' || abort "envelope of $channel in $TAG"
-  # the zip's own signature, which the plugin checks
-  node -e 'process.stdout.write(Buffer.from(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).signature, "base64"))' "$m" > "$WORK/$channel.sig"
-  openssl dgst -sha256 -verify "$KEY" -signature "$WORK/$channel.sig" "$zip" >/dev/null \
-    || abort "$channel.zip in $TAG: the signature does not verify against apps/wot-v3/ota/live-update-public.pem"
   mkdir -p "$OUT/$channel"
   cp "$m" "$OUT/$channel/latest.json"
-  echo "  ok: $channel → $TAG (envelope and zip signature verified)"
+  echo "  ok: $channel → $TAG (envelope verified, zip matches its checksum)"
 done

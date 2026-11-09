@@ -2,7 +2,7 @@
 # Live-update bundles of the v3 app from an OTA tag (ota-v3-<n>). Called by .github/workflows/ota-v3.yml,
 # runs the same locally. Writes out/ota/ (repository root): one zip per channel, build-info.json and
 # SHA256SUMS (`sha256sum ./*`); the workflow uploads it as ota-<tag>. The signing service wot-release
-# signs each zip with the OTA key, publishes the zips and the signed manifests as the GitHub release
+# signs an envelope per zip (its checksum among it) with the OTA key, publishes the zips and the manifests as the GitHub release
 # <tag>, and the Pages deploy serves the manifests under web-of-trust.de/updates/<channel>/latest.json.
 #
 # What it guarantees:
@@ -65,7 +65,7 @@ require("fs").writeFileSync(process.argv[1], JSON.stringify({
   mediator: e.BI_MEDIATOR,
   toolchain: { node: e.BI_NODE, pnpm: e.BI_PNPM },
   signed: false,
-  note: "v3 live-update bundles, unsigned. The signing service signs each zip with the OTA key (RSA, PKCS#1 v1.5 over SHA-256) and publishes the manifests."
+  note: "v3 live-update bundles, unsigned. The signing service signs an envelope per zip (app, channel, bundle id, sequence, the SHA-256 of the zip, minNative) with the OTA key and publishes the manifests."
 }, null, 2) + "\n");
 ' "$OUT/build-info.json"
 ( cd "$OUT" && sha256sum ./* > SHA256SUMS )

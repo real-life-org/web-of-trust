@@ -25,7 +25,7 @@ describe('capacitor.config.ts per target', () => {
     return (await import('../capacitor.config')).default
   }
 
-  it.each(['fdroid', 'play', 'appstore'])('%s lists every plugin with live update, the public key and a nonzero readyTimeout', async (target) => {
+  it.each(['fdroid', 'play', 'appstore'])('%s lists every plugin with live update, a nonzero readyTimeout and no plugin public key', async (target) => {
     const c = await load(target)
     expect(c.includePlugins).toEqual([
       '@capacitor/app',
@@ -40,14 +40,18 @@ describe('capacitor.config.ts per target', () => {
     ])
     const lu = c.plugins?.LiveUpdate as { readyTimeout?: number; publicKey?: string }
     expect(lu.readyTimeout).toBeGreaterThan(0)
-    // the key the plugin verifies every bundle against is the committed one
-    expect(lu.publicKey).toBe(readFileSync(path.join(APP, 'ota', 'live-update-public.pem'), 'utf8').trim())
-    expect(lu.publicKey).toMatch(/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----$/)
-    // the client verifies the signed envelope with the same key (src/platform/capacitor/ota-public-key.ts)
-    expect(lu.publicKey).toBe((await import('../src/platform/capacitor/ota-public-key')).OTA_PUBLIC_KEY)
+    // a plugin public key would switch off the checksum check, which binds the zip to the signed
+    // envelope (#526); the envelope key is the client's (src/platform/capacitor/ota-public-key.ts)
+    expect(lu).not.toHaveProperty('publicKey')
     // iOS: the web view shrinks to the space above the keyboard, so the header of a screen stays in view
     expect(c.plugins?.Keyboard).toEqual({ resize: 'native' })
     expect(c.webDir).toBe(`dist-${target}`)
+  })
+
+  it('the client verifies envelopes with the committed OTA public key', async () => {
+    const { OTA_PUBLIC_KEY } = await import('../src/platform/capacitor/ota-public-key')
+    expect(OTA_PUBLIC_KEY).toBe(readFileSync(path.join(APP, 'ota', 'live-update-public.pem'), 'utf8').trim())
+    expect(OTA_PUBLIC_KEY).toMatch(/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----$/)
   })
 
   it.each([undefined, 'web', 'harness', 'Play'])('refuses the target %s', async (target) => {
@@ -118,11 +122,14 @@ describe('check-native-artifact.sh on synthetic artifacts', () => {
     expect(r.out).toContain('live-update plugin registered')
   })
 
-  it.each(['apk', 'aab'] as const)('a release %s needs the plugin with a public key, and a check that reads nothing fails', (kind) => {
-    const signed = { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } } }
+  it.each(['apk', 'aab'] as const)('a release %s needs the plugin without a plugin public key, and a check that reads nothing fails', (kind) => {
+    const signed = { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } } }
     expect(run(artifact(`ota-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: signed }), 'ota').ok).toBe(true)
-    // without a public key the plugin would run any bundle the server hands out
-    expect(run(artifact(`ota-unsigned-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('names no publicKey')
+    // with a plugin public key the plugin skips the checksum from the signed envelope (#526)
+    const keyed = { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x', readyTimeout: 10000, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } } }
+    expect(run(artifact(`ota-keyed-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: keyed }), 'ota').out).toContain('names a publicKey')
+    // without readyTimeout a broken bundle is never rolled back
+    expect(run(artifact(`ota-no-timeout-${kind}`, { kind, classes: [...OWN, LIVE_UPDATE_CLASS], plugins: [SCANNER, LIVE_UPDATE], config: { appId: 'org.reallife.weboftrust', plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('no readyTimeout')
     expect(run(artifact(`ota-missing-${kind}`, { kind, config: signed }), 'ota').out).toContain('no live-update classes')
     expect(run(artifact('no-dex', { dex: false }), 'no-ota').out).toContain('no dex files')
     expect(run(artifact('no-own', { classes: [LIVE_UPDATE_CLASS] }), 'no-ota').out).toContain('positive control')
@@ -208,12 +215,14 @@ describe('check-native-artifact.sh on synthetic iOS artifacts', () => {
     expect(run(ipa('no-scanner-class', { config: { appId: 'org.reallife.weboftrust', plugins: {}, packageClassList: ['AppPlugin'] } }), 'no-ota').out).toContain('positive control')
   })
 
-  it('an app-store IPA with ota needs the plugin in the executable and the registry, with a public key', () => {
-    const lu = { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } }
+  it('an app-store IPA with ota needs the plugin in the executable and the registry, without a plugin public key', () => {
+    const lu = { LiveUpdate: { appId: 'org.reallife.weboftrust', readyTimeout: 10000 } }
     const config = { appId: 'org.reallife.weboftrust', plugins: lu, packageClassList: [...CLASS_LIST, 'LiveUpdatePlugin'] }
     expect(run(ipa('ota-ok', { symbols: [...OWN, 'LiveUpdatePlugin'], config }), 'ota').ok).toBe(true)
     expect(run(ipa('ota-no-class', { config }), 'ota').out).toContain('no live-update classes')
     expect(run(ipa('ota-unregistered', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, packageClassList: CLASS_LIST } }), 'ota').out).toContain('not in packageClassList')
-    expect(run(ipa('ota-unsigned', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('names no publicKey')
+    const keyed = { LiveUpdate: { ...lu.LiveUpdate, publicKey: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----' } }
+    expect(run(ipa('ota-keyed', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, plugins: keyed } }), 'ota').out).toContain('names a publicKey')
+    expect(run(ipa('ota-no-timeout', { symbols: [...OWN, 'LiveUpdatePlugin'], config: { ...config, plugins: { LiveUpdate: { appId: 'x' } } } }), 'ota').out).toContain('no readyTimeout')
   })
 })

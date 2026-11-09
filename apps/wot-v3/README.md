@@ -173,11 +173,12 @@ Every native build (Play, App Store, the APK) takes signed web bundles over the 
 - **Channels**: `v3-android` (Play AAB and APK, the web bundle of `VITE_TARGET=play`) and `v3-ios`
   (`VITE_TARGET=appstore`). The Gen-2 channels (`ios`, `android`, `android-foss`, `android-box`) are
   never read by a v3 shell.
-- **Signed only**: the shell carries the public key `ota/live-update-public.pem`. Each manifest holds a
+- **Signed only**: the app carries the public key `ota/live-update-public.pem`. Each manifest holds a
   signed envelope (app, channel, bundle id, sequence, the zip's SHA-256 checksum, `minNative`); the app
   verifies it before it downloads anything and takes a bundle only for its own app and channel. The
-  plugin then refuses a zip whose checksum or own RSA signature does not verify. The private key stays
-  with the signing service wot-release.
+  plugin then refuses a zip whose checksum differs from the envelope's. The plugin gets no `publicKey`
+  on purpose: with one it checks only a zip signature and skips the checksum, so any other validly
+  signed zip would pass. The private key stays with the signing service wot-release.
 - **Never back**: the sequence `<n>` of `ota-v3-<n>` only goes up; a shell takes no bundle at or below
   the one it runs.
 - **Fits the shell**: the envelope names `minNative`, the newest `app-v3.*` tag in the history of the
