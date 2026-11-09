@@ -64,3 +64,43 @@ describe('rltp projection: messages', () => {
     ])
   })
 })
+
+describe('rltp projection: contacts of the connection ceremony', () => {
+  const connection = (id: string, over: Record<string, unknown> = {}) =>
+    ({
+      id, role: 'inviter', status: 'complete', link: { from: 'did:peer:2.x', id, exp: 1, label: null }, did: 'did:peer:2.me', theirDid: 'did:peer:2.x', theirPair: 'did:key:z6Mkx',
+      name: 'Day', channel: 'displayed', theirChannel: 'scan', met: true, promptId: null, contactId: null, theirCredential: {}, myCredential: {}, outbox: [], openedAt: T - 5000, closedAt: T - 1000, carrierNonce: null, ...over,
+    }) as never
+
+  it('a contact connected over a link reads as link and gets no trust; one that met reads as the core says, with the ceremony’s end as the meeting', () => {
+    const m = project(input([], {
+      contacts: [contact('bea', { sharedConnect: { enactmentId: 'e-1', channel: 'displayed', theirChannel: 'link', met: false } }), contact('cem', { sharedConnect: { enactmentId: 'e-2', channel: 'displayed', theirChannel: 'scan', met: true } })],
+      connections: [connection('e-1', { contactId: 'bea', met: false, theirChannel: 'link' }), connection('e-2', { contactId: 'cem', closedAt: T - 42 })],
+    }))
+    const bea = m.contactDetails.get('bea')
+    expect(bea).toMatchObject({ verification: 'link', channel: true, actions: { giveTrust: { ok: false, reason: 'not-verified' } } })
+    // without a profile the contact bears the name its code or proposal stated
+    const m2 = project(input([], {
+      contacts: [contact('dan', { displayName: undefined, sharedConnect: { enactmentId: 'e-9', channel: 'scan', theirChannel: 'displayed', met: true } })],
+      connections: [connection('e-9', { contactId: 'dan', name: 'Dan Stated' })],
+    }))
+    expect(m2.contacts.find((c) => c.id === 'dan')?.name).toBe('Dan Stated')
+    expect(m2.conversations.get('c:dan')?.title).toBe('Dan Stated')
+    const cem = m.contactDetails.get('cem')
+    expect(cem).toMatchObject({ verification: 'mutual', channel: true, metAt: T - 42, actions: { giveTrust: { ok: true } } })
+  })
+
+  it('a complete ceremony whose counterpart gave no card (another app) is a contact without a channel: listed with its class, no conversation, no trust', () => {
+    const m = project(input([], { connections: [connection('e-3'), connection('e-4', { met: false, theirChannel: null, name: 'Kay', status: 'complete' }), connection('e-5', { status: 'declined' })] }))
+    const ids = m.contacts.map((c) => c.id)
+    expect(ids).toEqual(expect.arrayContaining(['connect:e-3', 'connect:e-4']))
+    expect(ids).not.toContain('connect:e-5')
+    expect(m.contacts.find((c) => c.id === 'connect:e-3')).toMatchObject({ name: 'Day', verification: 'mutual', channel: false, conversation: { lastActivityAt: T - 1000 } })
+    expect(m.contactDetails.get('connect:e-4')).toMatchObject({ name: 'Kay', verification: 'link', channel: false, metAt: T - 1000, actions: { giveTrust: { ok: false, reason: 'not-verified' }, block: { ok: false, reason: 'not-supported' } } })
+    expect(m.contactDetails.get('connect:e-3')?.actions.giveTrust).toEqual({ ok: false, reason: 'not-supported' })
+    expect(m.conversations.has('c:connect:e-3')).toBe(false)
+    // the ceremony names the contact it stands for
+    expect(m.connections.find((c) => c.id === 'e-3')?.contactId).toBe('connect:e-3')
+    expect(m.connections.find((c) => c.id === 'e-5')?.contactId).toBeNull()
+  })
+})

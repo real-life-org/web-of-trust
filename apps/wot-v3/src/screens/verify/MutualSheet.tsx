@@ -15,6 +15,8 @@ export function MutualSheet({ contactId, name, onOpenChat, onClose }: { contactI
   const profile = useProfile()
   const contact = useContact(contactId)
   const given = contact.status === 'ready' && contact.value?.trust.given === true
+  // a contact of another app: no conversation, no trust yet
+  const channel = contact.status !== 'ready' || contact.value?.channel !== false
   const [trust, setTrust] = useState(false)
   const content = useRef<HTMLDivElement | null>(null)
   const me = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : t.contacts.unnamed
@@ -35,7 +37,9 @@ export function MutualSheet({ contactId, name, onOpenChat, onClose }: { contactI
           <MutualMoment me={me} name={name} Title={DialogTitle} />
         </div>
         <div className="relative flex flex-col gap-1">
-          {given ? (
+          {!channel ? (
+            <PrimaryAction label={t.common.close} onClick={onClose} />
+          ) : given ? (
             <PrimaryAction label={t.verify.openChat} onClick={onOpenChat} />
           ) : (
             <>

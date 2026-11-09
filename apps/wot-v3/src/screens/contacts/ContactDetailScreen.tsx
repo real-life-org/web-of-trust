@@ -54,7 +54,11 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
   const verLine = (() => {
     switch (c.verification) {
       case 'mutual':
+        // a contact of another app: connected in the connection ceremony, no encounter record
+        if (!c.channel) return { main: f(d['ver.connected'], { date }), sub: d['ver.connectedSub'] }
         return { main: f(d['ver.mutual'], { date }), sub: c.lastMetAt !== null && c.metAt !== null && c.lastMetAt > c.metAt ? f(d['ver.mutualRemet'], { date: fmt.date(c.lastMetAt) }) : d['ver.mutualSub'] }
+      case 'link':
+        return { main: f(d['ver.link'], { date }), sub: d['ver.linkSub'] }
       case 'incoming':
         return { main: f(d['ver.incoming'], { name, date }), sub: d['ver.incomingSub'] }
       case 'outgoing':
@@ -87,6 +91,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
           </div>
           <DetailSection title={d.verification} icon={<CheckIcon />}>
             <DetailLine main={verLine.main} sub={verLine.sub} />
+            {!c.channel ? <p className="m-0 text-xs text-pretty text-muted-foreground">{d.noChannel}</p> : null}
             {c.actions.counterVerify.ok ? (
               <div className="flex">
                 <Button onClick={() => setCounter(true)}>{d.counterVerify}</Button>
@@ -109,7 +114,7 @@ export function ContactDetailView({ contact: c, onBack }: { contact: ContactDeta
             <h2 id={`${c.id}-actions`} className="m-0 px-1 text-[11px] font-semibold tracking-[.08em] text-muted-foreground uppercase">{d.actions}</h2>
             <ActionList
               rows={[
-                { icon: <MessageIcon />, label: d.openChat, onClick: () => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } }) },
+                ...(c.channel ? [{ icon: <MessageIcon />, label: d.openChat, onClick: () => send({ type: 'open', route: { kind: 'chat', key: `c:${c.id}` } }) }] : []),
                 ...(c.actions.verifyAgain.ok && c.verification !== 'incoming' ? [{ icon: <VerifyIcon />, label: d.verifyAgain, onClick: () => send({ type: 'push', route: { kind: 'verify' } }) }] : []),
                 ...(c.actions.unblock.ok ? [{ icon: <BanIcon />, label: t.block.unblockAction, onClick: () => setBlockSheet('unblock') }] : []),
               ]}

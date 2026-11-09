@@ -22,9 +22,9 @@
 
 import { useState, useSyncExternalStore } from 'react'
 import type { Composition, HarnessPage } from '../src/app/compose'
-import { writableStore, type ReadStore } from '../src/port'
+import { writableStore, type ContactId, type ReadStore } from '../src/port'
 import { virtualClock, type FakeMail, type FakeScanner, type VirtualClock } from '../src/platform/fake'
-import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, meetOverCeremony, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
 import { exposeDevice } from './device'
 import { mediatorDouble, phoneNet, type MediatorDouble } from './mediator-double'
 
@@ -76,30 +76,10 @@ function settler(jonas: LoopbackDevice, noah: LoopbackDevice, carrier: MemoryCar
 }
 
 /** The two phones meet and write, through real acts only (architecture §3.3: no seeded state). Over the
- *  mediator Noah learns Jonas's delivery hint from Jonas's sent card (the optical leg): the bundle waits
- *  at the mediator until then (TRANSPORT.md "The VTI mediator"). */
+ *  mediator they meet in the connection ceremony (shared-connect), as the store builds do; on the
+ *  in-memory carrier with the card. */
 async function seedConversation(settle: () => Promise<void>, optical: boolean, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice, block: boolean): Promise<void> {
-  const shown = await noah.port.trust.showCard().done
-  if (!shown.ok) throw new Error('harness: show')
-  const scanned = await jonas.port.trust.confirmCard(shown.value.qr).done
-  if (!scanned.ok) throw new Error('harness: scan')
-  await settle()
-  const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
-  if (optical && scannedContact) {
-    const sent = await jonas.port.trust.sentCardFor(scannedContact)
-    if (!sent.ok) throw new Error('harness: sent card')
-    const captured = await noah.port.trust.confirmCard(sent.value.qr).done
-    if (!captured.ok) throw new Error('harness: capture')
-    await settle()
-  }
-  const decisions = noah.port.stores.decisions.get()
-  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm') : undefined
-  if (!open || open.kind !== 'encounter-confirm') throw new Error('harness: no confirmation at noah')
-  await noah.port.trust.counterVerify(open.contactId).done
-  await settle()
-  const noahAtJonas = scannedContact
-  const jonasAtNoah = open.contactId
-  if (!noahAtJonas) throw new Error('harness: no contact at jonas')
+  const { noahAtJonas, jonasAtNoah } = optical ? await meetOverCeremony(jonas, noah, settle).then((m) => ({ noahAtJonas: m.bAtA, jonasAtNoah: m.aAtB })) : await meetOverCards(settle, jonas, noah)
   clock.advance(4 * 60_000)
   await jonas.port.trust.send(`c:${noahAtJonas}`, 'Great to meet you at the session on offline verification!', 'seed-1').done
   await settle()
@@ -108,6 +88,30 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
   await settle()
   clock.advance(60_000)
   await jonas.port.trust.send(`c:${noahAtJonas}`, 'Yes, see you at the stall.', 'seed-3').done
+  await seedRest(settle, clock, noah, block, jonasAtNoah)
+}
+
+/** the encounter with the card (the in-memory carrier): shown, scanned, the counter-step */
+async function meetOverCards(settle: () => Promise<void>, jonas: LoopbackDevice, noah: LoopbackDevice): Promise<{ noahAtJonas: ContactId; jonasAtNoah: ContactId }> {
+  const shown = await noah.port.trust.showCard().done
+  if (!shown.ok) throw new Error('harness: show')
+  const scanned = await jonas.port.trust.confirmCard(shown.value.qr).done
+  if (!scanned.ok) throw new Error('harness: scan')
+  await settle()
+  const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
+  const decisions = noah.port.stores.decisions.get()
+  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm') : undefined
+  if (!open || open.kind !== 'encounter-confirm') throw new Error('harness: no confirmation at noah')
+  await noah.port.trust.counterVerify(open.contactId).done
+  await settle()
+  const noahAtJonas = scannedContact
+  const jonasAtNoah = open.contactId
+  if (!noahAtJonas) throw new Error('harness: no contact at jonas')
+  return { noahAtJonas, jonasAtNoah }
+}
+
+/** what follows the first three messages */
+async function seedRest(settle: () => Promise<void>, clock: VirtualClock, noah: LoopbackDevice, block: boolean, jonasAtNoah: ContactId): Promise<void> {
   await settle()
   if (block) {
     clock.advance(60_000)
@@ -143,6 +147,8 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
       clock,
       seed: (seed += 17),
       language: lang,
+      // over a mediator the phones run the connection ceremony, as the store builds do
+      ...(carrier ? {} : { ceremony: 'shared-connect' as const }),
     })
     switches.set(p.id, (on) => {
       if (carrier) return carrier.setOnline(p.id, on)

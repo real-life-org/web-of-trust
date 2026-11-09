@@ -361,11 +361,15 @@ function SuccessActions({ contactId, name, onChat }: { contactId: ContactId; nam
   const { t, f } = useI18n()
   const contact = useContact(contactId)
   const given = contact.status === 'ready' && contact.value?.trust.given === true
+  // a contact of another app (the connection ceremony without a card): no conversation, no trust yet
+  const channel = contact.status !== 'ready' || contact.value?.channel !== false
   const [sheet, setSheet] = useState(false)
   const focus = useRef<HTMLElement | null>(null)
   return (
     <>
-      {given ? (
+      {!channel ? (
+        <PrimaryAction label={t.common.close} onClick={onChat} />
+      ) : given ? (
         <PrimaryAction label={t.verify.openChat} onClick={onChat} />
       ) : (
         <>

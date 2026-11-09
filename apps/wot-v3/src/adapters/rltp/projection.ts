@@ -72,6 +72,9 @@ export interface ReadModels {
   readonly intents: readonly IntentView[]
 }
 
+/** the contact id of a connection ceremony's counterpart that gave no card: the ceremony's, prefixed */
+export const foreignContactId = (connection: string): ContactId => `connect:${connection}` as ContactId
+
 const NO = (reason: Exclude<Availability, { ok: true }>['reason']): Availability => ({ ok: false, reason })
 const OK: Availability = { ok: true }
 
@@ -197,8 +200,17 @@ function shownProfile(c: ContactView, shown: LedgerContact | undefined): Contact
   return { ...rest, ...(name !== undefined ? { displayName: name } : {}), ...(image !== undefined ? { profile: { revision: '0', image } } : {}) }
 }
 
+/** The name a contact of a connection ceremony stated in its code or its proposal, while no profile
+ *  came: the self-declared name, as a card's `name` is for an encounter's contact (the library keeps it
+ *  in the enactment, not on the entry). */
+function namedByCeremony(c: ContactView, connections: readonly SharedConnectView[]): ContactView {
+  if (c.displayName !== undefined || c.blocked || c.sharedConnect === undefined) return c
+  const name = connections.find((v) => v.id === c.sharedConnect?.enactmentId)?.name
+  return name ? { ...c, displayName: name } : c
+}
+
 export function project(raw: ProjectionInput): ReadModels {
-  const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => shownProfile(c, raw.shown[c.id])) }
+  const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => namedByCeremony(shownProfile(c, raw.shown[c.id]), raw.connections ?? [])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
   const byId = new Map(input.contacts.map((c) => [c.id, c] as const))
@@ -287,15 +299,19 @@ export function project(raw: ProjectionInput): ReadModels {
   }
 
   const contactDetails = new Map<string, ContactDetail>()
+  const connections = input.connections ?? []
   const contacts: ContactListItem[] = input.contacts.map((c) => {
     const key: ConversationKey = `c:${c.id}`
+    // a contact from a connection ceremony over a link, not in person: its class is 'link' (no trust)
+    const link = c.sharedConnect !== undefined && !c.sharedConnect.met
     const summary = {
       id: c.id as ContactId,
       name: c.displayName ?? null,
       image: c.profile?.image ?? null,
-      verification: c.provenance === 'introduced' && c.verification === 'met' ? ('introduced' as const) : c.verification,
+      verification: link ? ('link' as const) : c.provenance === 'introduced' && c.verification === 'met' ? ('introduced' as const) : c.verification,
       trust: { ...c.trust },
       blocked: c.blocked,
+      channel: true,
       aliases: c.aliases.map((a) => a as ContactId),
     }
     const counterRunning = running.has(`counterVerify|${key}`)
@@ -314,7 +330,8 @@ export function project(raw: ProjectionInput): ReadModels {
       counterVerify,
       verifyAgain: OK,
       // trust toward a blocked contact stays as it is (the block pauses; paper §7.1)
-      giveTrust: c.blocked ? NO('blocked') : c.trust.given ? NO('already-done') : running.has(`giveTrust|${key}`) ? NO('in-flight') : OK,
+      // no trust toward a contact connected over a link until the two scan each other (A3)
+      giveTrust: c.blocked ? NO('blocked') : link ? NO('not-verified') : c.trust.given ? NO('already-done') : running.has(`giveTrust|${key}`) ? NO('in-flight') : OK,
       withdrawTrust: c.blocked ? NO('blocked') : !c.trust.given ? NO('already-done') : running.has(`withdrawTrust|${key}`) ? NO('in-flight') : OK,
       pause: c.blocked ? NO('blocked') : OK,
       invite: NO('not-supported'),
@@ -326,13 +343,15 @@ export function project(raw: ProjectionInput): ReadModels {
       remove: NO('not-supported'),
     }
     const met = input.encounters.met[c.id]
+    // a contact of a connection ceremony has no encounter record: the ceremony's end is the meeting
+    const ceremony = c.sharedConnect ? connections.find((v) => v.id === c.sharedConnect?.enactmentId) : undefined
     const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
     contactDetails.set(c.id, {
       ...summary,
       classes: { anchorMapping: cls('anchorMapping'), profile: cls('profile'), star: cls('star'), groupStar: cls('groupStar'), sealedGroupStar: cls('sealedGroupStar') },
       introducedBy: (c.via ?? null) as ContactId | null,
-      metAt: met?.metAt ?? null,
-      lastMetAt: met?.lastMetAt ?? null,
+      metAt: met?.metAt ?? ceremony?.closedAt ?? null,
+      lastMetAt: met?.lastMetAt ?? ceremony?.closedAt ?? null,
       sharedGroups: null,
       // the contact's star tested against the anchors this holder holds (lib sharedContacts, entry ids)
       sharedContacts: c.sharedContacts === undefined ? null : c.sharedContacts.map((id) => ({ id: id as ContactId, name: names.get(id) ?? null })),
@@ -341,6 +360,36 @@ export function project(raw: ProjectionInput): ReadModels {
     const conversation = summaries.get(key) ?? { key, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false }
     return { ...summary, conversation }
   })
+  // contacts of other apps: a complete connection ceremony whose counterpart gave no card (Keyring,
+  // Consensual) opens no contact in the core; its credential is held in the ceremony. Listed by the
+  // ceremony, with its class, without a conversation and without trust (no channel yet)
+  const NONE: Availability = NO('not-supported')
+  for (const v of connections) {
+    if (v.status !== 'complete' || v.contactId !== null) continue
+    const id = foreignContactId(v.id)
+    const summary = {
+      id,
+      name: v.name,
+      image: null,
+      verification: v.met ? ('mutual' as const) : ('link' as const),
+      trust: { given: false, received: false, paused: false, pending: false },
+      blocked: false,
+      channel: false,
+      aliases: [],
+    }
+    const off = { setting: 'default' as const, on: false }
+    contactDetails.set(id, {
+      ...summary,
+      classes: { anchorMapping: off, profile: off, star: off, groupStar: off, sealedGroupStar: off },
+      introducedBy: null,
+      metAt: v.closedAt,
+      lastMetAt: v.closedAt,
+      sharedGroups: null,
+      sharedContacts: null,
+      actions: { counterVerify: NONE, verifyAgain: OK, giveTrust: v.met ? NONE : NO('not-verified'), withdrawTrust: NONE, pause: NONE, invite: NONE, introduce: NONE, report: NONE, block: NONE, unblock: NONE, remove: NONE },
+    })
+    contacts.push({ ...summary, conversation: { key: `c:${id}`, preview: null, unread: 0, openDecisions: 0, lastActivityAt: v.closedAt, muted: false } })
+  }
   contacts.sort((a, b) => (b.conversation.lastActivityAt ?? 0) - (a.conversation.lastActivityAt ?? 0) || (a.name ?? '').localeCompare(b.name ?? '') || (a.id < b.id ? -1 : 1))
 
   // open intents only; a showCard (policy discard) is never shown: a new card needs a new gesture
@@ -363,7 +412,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: (input.connections ?? []).map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? null) as ContactId | null, met: v.met })),
+    connections: connections.map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null, met: v.met })),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

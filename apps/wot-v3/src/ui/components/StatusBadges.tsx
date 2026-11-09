@@ -15,7 +15,9 @@ export function VerificationBadge({ verification, size = 'sm' }: { verification:
         size === 'sm' ? 'px-[7px] py-px text-[11px]' : 'px-2.5 py-0.5 text-xs',
         verification === 'introduced'
           ? 'bg-[color-mix(in_oklab,var(--warning)_18%,transparent)] text-warning-strong'
-          : 'bg-[color-mix(in_oklab,var(--primary)_12%,transparent)] text-primary-strong',
+          : verification === 'link'
+            ? 'bg-[color-mix(in_oklab,var(--destructive)_14%,transparent)] text-destructive'
+            : 'bg-[color-mix(in_oklab,var(--primary)_12%,transparent)] text-primary-strong',
       )}
     >
       <span aria-hidden>{VERIFICATION_GLYPH[verification]}</span>

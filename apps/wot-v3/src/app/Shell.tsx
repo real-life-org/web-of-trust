@@ -90,8 +90,14 @@ export function Shell({ links }: { links: LinkInbox }) {
   const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
     if (s.deferred) queue.send({ type: 'defer', id: s.deferred })
     if (s.recognized) toast.show(t.verify.recognized)
-    if (s.to === 'chat' && s.contactId) send({ type: 'open', route: { kind: 'chat', key: `c:${s.contactId}` } })
+    if (s.to === 'chat' && s.contactId) openContact(s.contactId)
     else send({ type: 'back' })
+  }
+  /** the conversation of a contact, or the details of one that has no conversation (another app's) */
+  const openContact = (id: ContactId) => {
+    const c = port.stores.contact(id).get()
+    if (c.status === 'ready' && c.value && !c.value.channel) send({ type: 'push', route: { kind: 'contact', id } })
+    else send({ type: 'open', route: { kind: 'chat', key: `c:${id}` } })
   }
   const onReportExit = (to: 'back' | 'chat', contactId: ContactId) => {
     if (to === 'chat') send({ type: 'open', route: { kind: 'chat', key: `c:${contactId}` } })
@@ -204,7 +210,7 @@ export function Shell({ links }: { links: LinkInbox }) {
           onOpenChat={() => {
             const id = moments.current?.contactId
             moments.dismiss()
-            if (id) send({ type: 'open', route: { kind: 'chat', key: `c:${id}` } })
+            if (id) openContact(id)
           }}
         />
       ) : queue.state.name === 'asking' ? (

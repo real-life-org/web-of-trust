@@ -4,8 +4,9 @@ import type { ActId, CardRef, ConnectionId, ContactId, ConversationKey, Decision
 import type { CardPreview, CommandName, SafetyTarget } from './commands'
 
 // ── Contacts ────────────────────────────────────────────────────────────────
-/** 'introduced': came through an introduction, no encounter (design ◇). */
-export type Verification = 'mutual' | 'outgoing' | 'incoming' | 'met' | 'introduced'
+/** 'introduced': came through an introduction, no encounter (design ◇). 'link': connected over a link in
+ *  a connection ceremony, not in person (no trust until the two scan each other). */
+export type Verification = 'mutual' | 'outgoing' | 'incoming' | 'met' | 'introduced' | 'link'
 
 export interface TrustState {
   /** I gave trust */
@@ -58,6 +59,9 @@ export interface ContactSummary {
   readonly verification: Verification
   readonly trust: TrustState
   readonly blocked: boolean
+  /** false: a contact of another app from a connection ceremony, whose credential is held but which
+   *  gives no channel: no conversation, no trust, until messages across apps exist */
+  readonly channel: boolean
   /** ids that now resolve to this contact: a second encounter joined into it (Trust 6a.4), entries
    *  merged into it (2140). A flow that holds such an id follows it here */
   readonly aliases: readonly ContactId[]

@@ -120,8 +120,10 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
     await w.settle()
     await w.tick()
     const [cA] = value(w.A.port.stores.contacts)
-    expect(cA?.verification).not.toBe('mutual')
+    expect(cA).toMatchObject({ verification: 'link', channel: true })
     expect(value(w.A.port.stores.connections)).toMatchObject([{ status: 'complete', met: false }])
+    // no trust toward it: the detail says so before the act, the core refuses the act
+    expect(value(w.A.port.stores.contact(cA!.id))?.actions.giveTrust).toEqual({ ok: false, reason: 'not-verified' })
     expect(await w.A.port.trust.giveTrust(cA!.id).done).toEqual({ ok: false, error: { kind: 'refused', code: 'not-met' } })
   })
 })

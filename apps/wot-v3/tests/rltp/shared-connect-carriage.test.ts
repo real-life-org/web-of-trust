@@ -342,4 +342,17 @@ describe('shared-connect carriage', () => {
     A.carriage.stop()
     B.carriage.stop()
   })
+
+  it('an enactment that closes long after its run began gets its attempt from the close: the receipt leaves without a resume', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    await untilPending(x)
+    // the inviter decides late; both runs are far older than the linger by then
+    clock.advance(SC_LINGER_MS * 3)
+    expect((await A.h.decide(String(of(A, 'sharedconnect.pending')[0]?.promptId), 'accept', opts(clock))).ok).toBe(true)
+    await flush(med, A, B)
+    expect([(await A.h.sharedConnect())[0]?.status, (await B.h.sharedConnect())[0]?.status]).toEqual(['complete', 'complete'])
+    A.carriage.stop()
+    B.carriage.stop()
+  })
 })

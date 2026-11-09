@@ -17,6 +17,7 @@ export const VERIFICATION_GLYPH: Record<Verification, string> = {
   incoming: '←',
   introduced: '◇',
   met: '⇄',
+  link: '⚠',
 }
 
 export type TrustKind = 'both' | 'given' | 'received'

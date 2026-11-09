@@ -7,7 +7,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createRltpPort, mediatorTransport, memoryCarrier, type MediatorCarrier, type MemoryCarrier, type RltpFaults, type RltpPort } from '../src/adapters/rltp'
 import type { WireConfig } from '../src/adapters/rltp/wire'
 import type { DeviceTimers } from '../src/adapters/rltp/transport'
-import type { IdentityNs, Mnemonic, Secret } from '../src/port'
+import type { ContactId, IdentityNs, Mnemonic, Secret } from '../src/port'
 import { secret } from '../src/port'
 import { createFakePlatform, fakeDevice, fakeEntropy, fakeIdentityPlatform, type FakeDevice, type VirtualClock } from '../src/platform/fake'
 import type { Language } from '../src/platform/ports'
@@ -127,4 +127,29 @@ export async function loopbackDevice(opts: {
   const a = await rt.setup.activate(ns)
   if (!a.ok) throw new Error('loopback: activate')
   return { id: opts.id, port, platform, device, faults }
+}
+
+/** Two phones meet in the connection ceremony (shared-connect; the phones were made with
+ *  `ceremony: 'shared-connect'`): B shows the code, A reads it with its camera and proposes, B accepts
+ *  the proposal. Returns each phone's id of the other, once both ceremonies are complete. */
+export async function meetOverCeremony(A: LoopbackDevice, B: LoopbackDevice, settle: () => Promise<void>): Promise<{ bAtA: ContactId; aAtB: ContactId }> {
+  const shown = await B.port.trust.showCard().done
+  if (!shown.ok) throw new Error('harness: show')
+  await settle()
+  const proposed = await A.port.trust.confirmCard(shown.value.qr, 'camera').done
+  if (!proposed.ok || proposed.value.kind !== 'proposed') throw new Error('harness: propose')
+  await settle()
+  const decisions = B.port.stores.decisions.get()
+  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'connect-confirm') : undefined
+  if (!open) throw new Error('harness: no proposal at the shower')
+  const accepted = await B.port.trust.decide(open.id, 'accept').done
+  if (!accepted.ok) throw new Error('harness: accept')
+  await settle()
+  const contactOf = (d: LoopbackDevice): ContactId => {
+    const c = d.port.stores.connections.get()
+    const id = c.status === 'ready' ? c.value.find((x) => x.status === 'complete')?.contactId : null
+    if (!id) throw new Error(`harness: the ceremony did not complete at ${d.id}`)
+    return id
+  }
+  return { bAtA: contactOf(A), aAtB: contactOf(B) }
 }

@@ -152,7 +152,11 @@ function wantedUntil(v: SharedConnectView, now: number, lastAttempt: number | un
     return now < end ? end : null
   }
   if (now >= closedAt + SC_OWED_MS) return null
-  if (attempt) return attempt.startedAt + SC_LINGER_MS > now ? attempt.startedAt + SC_LINGER_MS : null
+  // a run that was open long before the close: its attempt at the owed documents starts at the close
+  if (attempt) {
+    const end = Math.max(attempt.startedAt, closedAt) + SC_LINGER_MS
+    return end > now ? end : null
+  }
   // the pace grows with the age of the obligation: the gap to the next attempt is at least the time
   // from the close to the last one (a day after a day, a week after a week), never under SC_RETRY_MIN_MS
   if (lastAttempt === undefined) return now + SC_LINGER_MS
@@ -323,7 +327,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     }
     // the owed documents of a closed enactment went to the socket: that is the attempt's time, not a
     // delivery; the next attempt comes SC_RETRY_MIN_MS later at the earliest, until SC_OWED_MS
-    if (owes(v) && attempts?.[v.id] !== r.startedAt) await record(v.id, r.startedAt)
+    const at = Math.max(r.startedAt, v.closedAt ?? 0)
+    if (owes(v) && attempts?.[v.id] !== at) await record(v.id, at)
   }
 
   const reconcileOnce = async (): Promise<void> => {
