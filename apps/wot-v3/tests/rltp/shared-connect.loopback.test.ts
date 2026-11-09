@@ -22,8 +22,8 @@ const messages = (d: LoopbackDevice, id: ContactId): MessageItem[] =>
 async function world() {
   const med = mediatorDouble()
   const clock = virtualClock(Date.now(), 'UTC')
-  const A = await loopbackDevice({ carrier: { mediator: med }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31 })
-  const B = await loopbackDevice({ carrier: { mediator: med }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37 })
+  const A = await loopbackDevice({ carrier: { mediator: med }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31, ceremony: 'shared-connect' })
+  const B = await loopbackDevice({ carrier: { mediator: med }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37, ceremony: 'shared-connect' })
   const settle = async () => {
     let last = ''
     let calm = 0

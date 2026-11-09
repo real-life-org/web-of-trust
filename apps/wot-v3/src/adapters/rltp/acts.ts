@@ -21,6 +21,8 @@ export interface ActContext {
   /** where the documents of a connection ceremony travel (shared-connect 0.1): the build's carrier as
    *  the relay of the per-encounter messaging identity; null without a carrier that has such wires */
   readonly relays: readonly { readonly kind: string; readonly address: string }[] | null
+  /** the shown code starts the connection ceremony (the build names it and `relays` is there); else the card */
+  readonly showsLink: boolean
 }
 
 /** how long a shown code is valid (shared-connect 0.1 caps a code read in person at ten minutes) */
@@ -158,7 +160,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: async (h, i, o, ctx) => {
       const carrier = await ctx.offer(i.carrier)
       // the offer makes the relationship the ceremony opens a carried one (lib 0.17.0)
-      if (ctx.relays) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
+      if (ctx.relays && ctx.showsLink) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
       return h.show(carrier ? { ...o, carrier } : o)
     },
     outcome: (events, i) => {

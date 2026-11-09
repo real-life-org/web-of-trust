@@ -44,6 +44,8 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent */
+  readonly ceremony?: 'shared-connect' | 'card'
   /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
    *  in use */
   readonly diagnose?: (entry: Omit<DiagnosticEntry, 'id'>) => void
@@ -1287,8 +1289,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       : input
   const actContext: ActContext = {
     offer: (raw) => carrierOffer(deps.rootIkm, raw),
-    // the code of a connection ceremony only with a carrier that has wires for it (the VTI mediator)
+    // a trigger link that was read is answered over the carrier's address, where the carrier has wires
+    // for it (the VTI mediator); the shown code is such a link only where the build names it
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
+    showsLink: deps.ceremony === 'shared-connect',
   }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {

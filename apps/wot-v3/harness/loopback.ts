@@ -84,6 +84,8 @@ export async function loopbackDevice(opts: {
   seed: number
   language?: Language
   /** tests: the carrier as the adapter sees it (a lease that records what the session hands it) */
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony) */
+  ceremony?: 'shared-connect' | 'card'
   wrap?: (t: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier) => ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier
 }): Promise<LoopbackDevice> {
   const device = fakeDevice()
@@ -101,6 +103,7 @@ export async function loopbackDevice(opts: {
   const transport = opts.wrap ? opts.wrap(made) : made
   const port = createRltpPort({
     faults,
+    ...(opts.ceremony ? { ceremony: opts.ceremony } : {}),
     identity,
     idb,
     transport,
