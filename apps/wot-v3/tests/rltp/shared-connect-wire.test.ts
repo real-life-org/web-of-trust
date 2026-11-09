@@ -147,11 +147,11 @@ describe('shared-connect wire', () => {
     for (const ws of [...med.sockets.values()]) ws.close()
     await flush(med, inviter, responder)
     // the backoff runs on the device clock
-    for (let i = 0; i < 6 && !inviter.isOpen(); i++) {
+    for (let i = 0; i < 12 && !(inviter.isOpen() && responder.isOpen()); i++) {
       clock.advance(1000)
       await flush(med, inviter, responder)
     }
-    expect(inviter.isOpen()).toBe(true)
+    expect(inviter.isOpen() && responder.isOpen()).toBe(true)
     await responder.send(I.did, [{ type: sc.TASK_PROPOSE, id: 'p-after' }])
     await flush(med, inviter, responder)
     expect(atI.map((x) => (x.doc as { id: string }).id)).toEqual(['p-after'])

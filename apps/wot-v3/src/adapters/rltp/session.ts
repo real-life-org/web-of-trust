@@ -600,6 +600,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
             if (r.ok) schedule(r.nextDueAt)
             return r
           },
+          sent: {
+            read: async () => (await app.get<Record<string, number>>('kv', KV.connectSent)) ?? {},
+            write: (next) => queue(() => app.write([{ store: 'kv', key: KV.connectSent, value: next }])),
+          },
           now,
           setTimer,
           diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),

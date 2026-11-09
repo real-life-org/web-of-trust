@@ -12,7 +12,7 @@ import { virtualClock, type VirtualClock } from '../../src/platform/fake'
 // the library itself (the lint rule keeps tests away from a direct import)
 type Ev = { type: string; [k: string]: unknown }
 type Res = { ok: boolean; code?: string; events?: Ev[] }
-type View = { id: string; link: { exp: number }; role: string; status: string; did: string; theirDid: string | null; contactId: string | null; outbox: unknown[]; promptId: string | null; name: string | null }
+type View = { id: string; link: { exp: number }; theirPair: string | null; role: string; status: string; did: string; theirDid: string | null; contactId: string | null; outbox: unknown[]; promptId: string | null; name: string | null }
 type H = {
   sharedConnectShow(input: object, opts: object): Promise<Res>
   sharedConnectPropose(input: object, opts: object): Promise<Res>
@@ -37,6 +37,12 @@ interface Side {
   diagnosed: string[]
   /** the next receives of the holder fail (storage) */
   failReceives: number
+  /** the wire's sends fail while set (the socket takes nothing) */
+  failSends: boolean
+  /** wires opened so far */
+  opened: number
+  /** the hand-over marks as the opening's app-db keeps them (they survive a restart) */
+  marks: Record<string, number>
   /** a new holder and carriage over the same store and root (the app restarted) */
   restart(): Promise<void>
 }
@@ -44,11 +50,16 @@ interface Side {
 async function side(med: MediatorDouble, clock: VirtualClock): Promise<Side> {
   const store = new InMemoryStore()
   const keys = lib.seedKeys(rand(64))
-  const s = { events: [] as Ev[], diagnosed: [] as string[], failReceives: 0 } as Side
+  const s = { events: [] as Ev[], diagnosed: [] as string[], failReceives: 0, failSends: false, opened: 0, marks: {} } as Side
   const start = async () => {
     const h = await lib.createHolder({ store, keys })
     const carriage = createSharedConnectCarriage({
-      open: (cfg) => openSharedConnectWire({ ...cfg, mediatorDid: med.did, clock, net: med.net }),
+      open: async (cfg) => {
+        const wire = await openSharedConnectWire({ ...cfg, mediatorDid: med.did, clock, net: med.net })
+        s.opened++
+        return { ...wire, send: (to, docs) => (s.failSends ? Promise.reject(new Error('down')) : wire.send(to, docs)) }
+      },
+      sent: { read: async () => s.marks, write: async (next) => void (s.marks = { ...next }) },
       keys: keys as never,
       views: () => h.sharedConnect() as never,
       receive: (doc, sender) => {
@@ -249,6 +260,47 @@ describe('shared-connect carriage', () => {
     clock.advance(600_000 + 60_000 + SC_LINGER_MS + 5000)
     await flush(med, A, B)
     expect(med.sockets.has(String(vA?.did)) || med.sockets.has(String(vB?.did))).toBe(false)
+    A.carriage.stop()
+    B.carriage.stop()
+  })
+
+  it('closed here is not delivered there: a last receipt that never left keeps the wire wanted across the linger and a restart, until it is handed over', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    await untilPending(x)
+    // the inviter's sends fail from its acceptance on... its acceptance and issue must leave first
+    expect((await A.h.decide(String(of(A, 'sharedconnect.pending')[0]?.promptId), 'accept', opts(clock))).ok).toBe(true)
+    // let the acceptance out, then cut the inviter's sends before its receipt of the responder's issue
+    for (let i = 0; i < 200 && (await B.h.sharedConnect())[0]?.theirPair === null; i++) await new Promise((r) => setTimeout(r, 1))
+    A.failSends = true
+    await flush(med, A, B)
+    const [vA] = await A.h.sharedConnect()
+    expect(vA?.status).toBe('complete')
+    expect((await B.h.sharedConnect())[0]?.status).toBe('open')
+    expect(A.marks[String(vA?.id)]).toBeUndefined()
+    // past the linger the wire is still wanted: nothing was handed over
+    clock.advance(SC_LINGER_MS + 5000)
+    await flush(med, A, B)
+    expect(med.sockets.has(String(vA?.did))).toBe(true)
+    // the app restarts, later: the wire opens again and the receipt leaves; the counterpart completes
+    A.failSends = false
+    clock.advance(3_600_000)
+    await A.restart()
+    await B.restart()
+    for (let i = 0; i < 8 && (await B.h.sharedConnect())[0]?.status !== 'complete'; i++) {
+      clock.advance(1000)
+      await flush(med, A, B)
+    }
+    expect((await B.h.sharedConnect())[0]?.status).toBe('complete')
+    expect(A.marks[String(vA?.id)]).toEqual(expect.any(Number))
+    // handed over and the linger past: no wire, and none after another restart
+    clock.advance(SC_LINGER_MS + 5000)
+    await flush(med, A, B)
+    expect(med.sockets.has(String(vA?.did))).toBe(false)
+    const opened = A.opened
+    await A.restart()
+    await flush(med, A, B)
+    expect(A.opened).toBe(opened)
     A.carriage.stop()
     B.carriage.stop()
   })

@@ -3,12 +3,14 @@
 // its commits name the documents to send (`sharedconnect.send`) and its view names them again after
 // a restart (`outbox`). This module only keeps a wire per enactment (shared-connect-wire.ts) and
 // moves documents between that wire and the holder. It holds no state of an enactment that the
-// holder's view does not give back.
+// holder's view does not give back, except one mark per closed enactment: that its last documents
+// were handed to the carrier.
 //
-//  - Which enactments have a wire is read from the view, never from an event alone: an open
-//    enactment within the bounds of its link (`wantedUntil`: no socket outlives a code nobody
-//    answered or decided by more than a moment), and a closed one for SC_LINGER_MS after it closed,
-//    so the last documents leave and a counterpart that sends its own again is answered again.
+//  - Which enactments have a wire is read from the view, never from an event alone (`wantedUntil`):
+//    an open one that nobody answered or decided only around its link's life; a decided one until
+//    it closes; a closed one until its last documents were handed to the carrier and a moment more.
+//    Closed on this side is not delivered on the other: the hand-over is marked durably
+//    (`deps.sent`), and without the mark the wire is wanted again after every restart.
 //  - A document reaches the mediator's acknowledgement only after the holder took it: one it could
 //    not take now stays there and comes again at the next connect.
 //  - The messaging keys come from the KeyProvider under the nonce this side minted: the inviter's
@@ -43,6 +45,9 @@ export interface SharedConnectCarriageDeps {
   readonly views: () => Promise<SharedConnectView[]>
   /** a document for the holder with its verified sender (`holder.sharedConnectReceive`) */
   readonly receive: (doc: unknown, sender: string) => Promise<ActResult>
+  /** when the last documents of a closed enactment were handed to the carrier, by enactment id: kept
+   *  by the opening (app-db), so a restart knows what is still owed. `write` replaces the whole map. */
+  readonly sent: { read(): Promise<Readonly<Record<string, number>>>; write(next: Readonly<Record<string, number>>): Promise<void> }
   readonly now: () => number
   readonly setTimer: (at: number, cb: () => void) => () => void
   /** codes only: a refusal's code, never a document, a name or an identifier */
@@ -94,24 +99,40 @@ function nonceCandidates(v: SharedConnectView): string[] {
   return [...new Set(own.filter((c): c is string => c !== null && sc.canonicalChallenge(c)))]
 }
 
-/** how long (device time) past its link's end an enactment both sides agreed on keeps its wire for
- *  the documents that complete it; they follow the acceptance within moments */
-export const SC_FINISH_MS = 3_600_000
+/** how long (device time) an enactment that closed with documents still owed to the counterpart is
+ *  tried: the library keeps a declined or failed enactment that long (its RETENTION), a counterpart
+ *  that has not come back by then has dropped its own */
+export const SC_OWED_MS = 30 * 24 * 3_600_000
+/** the longest wait a timer of the carriage is set for; a later end is looked at again at the next
+ *  event, resume or poke (a browser timer overflows past 24.8 days) */
+const TIMER_MAX_MS = 24 * 3_600_000
 
-/** Until when the view wants a wire for this enactment (device time); null: no wire. An open
- *  enactment is bounded by its link: nobody answered the inviter's link, it listens while the link is
- *  live; a proposal nobody decided is asked only while the code is valid, so both sides wait for the
- *  decision that long and a moment more; once the acceptance is out or in, the rest may take SC_FINISH_MS.
- *  A decision taken past the code's end opens the wire again within that time. */
-function wantedUntil(v: SharedConnectView, now: number): number | null {
+/** The last documents of an enactment that closed on this side are owed to the counterpart: the
+ *  receipt of a complete one, the inviter's decline. Closed here says nothing about there: the
+ *  counterpart completes only when it has them. */
+const owes = (v: SharedConnectView): boolean => v.outbox.length > 0 && (v.status === 'complete' || (v.status === 'declined' && v.role === 'inviter'))
+
+/** Until when the view wants a wire for this enactment (device time); null: no wire.
+ *  - Open, nobody answered the inviter's link: while the link is live. Open, a proposal nobody
+ *    decided: it is asked only while the code is valid, so both sides wait that long and a moment more.
+ *  - Open and decided (the acceptance is out or in): until it closes. The documents that complete it
+ *    may wait at the carrier while either app is away; the library ends an enactment that never
+ *    completes at its own retention.
+ *  - Closed with documents owed: until they were handed to the carrier (`sentAt`, kept across
+ *    restarts) and SC_LINGER_MS more, in which a counterpart that sends its own again is answered
+ *    again; never handed over, SC_OWED_MS after it closed.
+ *  - Closed otherwise: SC_LINGER_MS. */
+function wantedUntil(v: SharedConnectView, now: number, sentAt: number | undefined): number | null {
   if (v.status === 'open') {
     const live = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
     const answered = v.theirDid !== null
     const decided = v.role === 'inviter' ? answered && v.promptId === null : v.theirPair !== null
-    const end = live + (decided ? SC_FINISH_MS : answered ? SC_LINGER_MS : 0)
+    if (decided) return Infinity
+    const end = live + (answered ? SC_LINGER_MS : 0)
     return now < end ? end : null
   }
-  const end = (v.closedAt ?? 0) + SC_LINGER_MS
+  const closedAt = v.closedAt ?? 0
+  const end = owes(v) ? (sentAt === undefined ? closedAt + SC_OWED_MS : sentAt + SC_LINGER_MS) : closedAt + SC_LINGER_MS
   return now < end ? end : null
 }
 
@@ -120,6 +141,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
   /** documents of commits not sent yet, by enactment, in commit order */
   const owed = new Map<string, { to: string; docs: readonly unknown[] }[]>()
   let stopped = false
+  /** the hand-over marks (deps.sent), read once per carriage; null until then */
+  let sent: Record<string, number> | null = null
   let inFlight = 0
   const track = <T>(p: Promise<T>): Promise<T> => {
     inFlight++
@@ -224,12 +247,27 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     )
   }
 
+  const mark = async (id: string): Promise<void> => {
+    if (!sent || stopped) return
+    const next = { ...sent, [id]: deps.now() }
+    try {
+      await deps.sent.write(next)
+    } catch {
+      return
+    }
+    sent = next
+    // the wire's end follows the mark
+    reconcile()
+  }
+
   /** `covered`: how many of the owed commits the view was read after (its outbox holds their documents) */
   const flush = async (r: Run, v: SharedConnectView, covered: number): Promise<void> => {
     const wire = r.wire
     if (!wire?.isOpen()) return
     const list = owed.get(r.id) ?? []
+    let handed = list.length > 0
     if (r.resync) {
+      handed = true
       if (v.theirDid !== null && v.outbox.length > 0) {
         try {
           await wire.send(v.theirDid, v.outbox)
@@ -252,6 +290,9 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       }
       list.shift()
     }
+    // everything this side owes of a closed enactment is with the carrier now: the mark is durable
+    // before the wire may end (a failed write leaves it unmarked, and it is handed over again)
+    if (owes(v) && (handed || sent?.[v.id] === undefined)) await mark(v.id)
   }
 
   const reconcileOnce = async (): Promise<void> => {
@@ -266,10 +307,27 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       return
     }
     if (stopped) return
+    if (!sent) {
+      try {
+        sent = { ...(await deps.sent.read()) }
+      } catch {
+        return
+      }
+      if (stopped) return
+    }
+    // marks of enactments the holder no longer keeps leave with them
+    const gone = Object.keys(sent).filter((id) => !views.some((v) => v.id === id))
+    if (gone.length > 0) {
+      const next = Object.fromEntries(Object.entries(sent).filter(([id]) => !gone.includes(id)))
+      await deps.sent.write(next).then(
+        () => (sent = next),
+        () => undefined,
+      )
+    }
     const now = deps.now()
     const wanted = new Map<string, { v: SharedConnectView; until: number }>()
     for (const v of views) {
-      const until = wantedUntil(v, now)
+      const until = wantedUntil(v, now, sent[v.id])
       if (until !== null) wanted.set(v.id, { v, until })
     }
     for (const r of [...runs.values()]) if (!wanted.has(r.id)) closeRun(r)
@@ -283,7 +341,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       }
       if (r.until?.at !== until) {
         r.until?.cancel()
-        r.until = Number.isFinite(until) ? { at: until, cancel: deps.setTimer(until, () => reconcile()) } : null
+        // a far end is looked at again by then anyway: a timer only for one within a day
+        r.until = until - now <= TIMER_MAX_MS ? { at: until, cancel: deps.setTimer(until, () => reconcile()) } : null
       }
       if (!r.wire && !r.opening && !r.dead && !r.retry) openRun(r, v)
       await flush(r, v, covered.get(v.id) ?? 0)

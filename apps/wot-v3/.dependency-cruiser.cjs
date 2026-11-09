@@ -31,9 +31,9 @@ module.exports = {
     },
     {
       name: 'vti-only-in-rltp-wire',
-      comment: 'Only the wire of src/adapters/rltp may import the VTI libraries and their curves (TSP 1.0, ATM; architecture §3.1 transport/).',
+      comment: 'Only the two wires of src/adapters/rltp may import the VTI libraries and their curves (TSP 1.0, ATM; architecture §3.1 transport/): wire.ts, the session of a carried relationship, and shared-connect-wire.ts, the session of one shared-connect enactment.',
       severity: 'error',
-      from: { path: P, pathNot: `${P}adapters/rltp/wire\\.ts$` },
+      from: { path: P, pathNot: `${P}adapters/rltp/(wire|shared-connect-wire)\\.ts$` },
       to: { path: VTI },
     },
     {
