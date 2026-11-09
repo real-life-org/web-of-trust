@@ -325,7 +325,11 @@ describe('shared-connect carriage', () => {
     // the mediator refuses the next direct frame of anyone: the inviter's acceptance
     med.faults.refuseNextDirect = 'e.p.test.refused'
     expect((await A.h.decide(String(of(A, 'sharedconnect.pending')[0]?.promptId), 'accept', opts(clock))).ok).toBe(true)
-    await flush(med, A, B)
+    // the problem report is unpacked off the event loop, outside what the wires count as busy
+    for (let i = 0; i < 50 && ![...A.diagnosed, ...B.diagnosed].includes('wire-deposit-refused:direct/e.p.test.refused'); i++) {
+      await flush(med, A, B)
+      await new Promise((r) => setTimeout(r, 5))
+    }
     expect([...A.diagnosed, ...B.diagnosed]).toContain('wire-deposit-refused:direct/e.p.test.refused')
     // the refusal sent the outbox again; both complete, and the mark comes after the linger
     for (let i = 0; i < 8 && !((await A.h.sharedConnect())[0]?.status === 'complete' && (await B.h.sharedConnect())[0]?.status === 'complete'); i++) {
