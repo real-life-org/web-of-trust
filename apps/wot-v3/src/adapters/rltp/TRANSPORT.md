@@ -1,6 +1,6 @@
 # Transport adapter: contract with the carrier
 
-Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts` and `wire.ts` (the
+Applies to `transport.ts` (`shareTransport`, its leases), to `carrier-mediator.ts`, `wire.ts` and `shared-connect-wire.ts` (the
 VTI mediator, below) and to the transport part of `session.ts`. Delivery 0.85 RLTP-DEL-6120 to
 RLTP-DEL-6150, lib 0.10.0 (`pendingTransport`, `handOver`, `close`, `./adapters/vti-mediator`), VTI
 Mediator Adapter Profile 0.29 (TSP 1.0, the carried document in the Trust Tasks TSP binding, one wire
@@ -135,7 +135,7 @@ store-build workflow (with the cutover to `apps/demo`) must set it. Its custody 
 (`wire.ts`): one session per relationship and side.
 
 **Wire.** `wire.ts` is the binding of trust-protocol `binding/vti-wire.mjs` for the browser
-(`@openvtc/vti-tsp-js` 0.4.0, `@openvtc/vti-didcomm-js` 0.13.0; only it imports them). It speaks TSP
+(`@openvtc/vti-tsp-js` 0.4.0, `@openvtc/vti-didcomm-js` 0.13.0; only it and `shared-connect-wire.ts`, the wire of a shared-connect enactment, import them). It speaks TSP
 1.0 (`YTSP-BAA`, HPKE-Base, the sender's VID in the confidential payload; profile 0.29 §7), and the
 mediator `C` must be a 1.0 instance (mediator 0.45 or later). It derives the raw wire key with the
 library's HKDF and info prefix, so its DID is the adapter's connection DID. One wire identity, the
