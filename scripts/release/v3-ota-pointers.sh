@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The live-update pointers of the v3 app for the Pages deploy (deploy.yml): reads the newest published
 # GitHub release ota-v3-<n> (made by the signing service wot-release), checks every channel manifest in
-# it against the bundle it names and against the public key compiled into the shells
+# it, its signed envelope (app, channel, bundle id, sequence, checksum, minNative) and its zip, against
+# the public key compiled into the shells
 # (apps/wot-v3/ota/live-update-public.pem), and writes <out>/<channel>/latest.json. A manifest that
 # does not verify stops the deploy, rather than publishing a pointer the phones would refuse anyway.
 # No ota-v3 release yet: nothing is written, the phones keep their own bundle.
@@ -29,23 +30,35 @@ for channel in "${CHANNELS[@]}"; do
   [ -f "$m" ] || abort "$TAG has no latest-$channel.json"
   zip="$WORK/$channel.zip"
   [ -f "$zip" ] || abort "$TAG has no $channel.zip"
-  # the manifest names this release and this file, the checksum and the signature fit the file
-  M="$m" TAG="$TAG" CH="$channel" REPO="$REPO" node -e '
-    const e = process.env, m = JSON.parse(require("fs").readFileSync(e.M, "utf8"))
+  # the signed envelope (#526): app, this channel, this release, its sequence, the zip's checksum and
+  # minNative, verified against the shells' public key; the client checks the same before it downloads
+  node -e '
+    const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+    if (typeof m.envelope !== "string" || typeof m.envelopeSignature !== "string") throw new Error("no signed envelope")
+    require("fs").writeFileSync(process.argv[2], m.envelope)
+    require("fs").writeFileSync(process.argv[3], Buffer.from(m.envelopeSignature, "base64"))
+  ' "$m" "$WORK/$channel.envelope" "$WORK/$channel.envelope.sig" || abort "manifest of $channel in $TAG has no signed envelope"
+  openssl dgst -sha256 -verify "$KEY" -signature "$WORK/$channel.envelope.sig" "$WORK/$channel.envelope" >/dev/null \
+    || abort "$channel in $TAG: the envelope signature does not verify against apps/wot-v3/ota/live-update-public.pem"
+  SUM=$(sha256sum "$zip" | cut -d' ' -f1)
+  E="$WORK/$channel.envelope" M="$m" TAG="$TAG" CH="$channel" REPO="$REPO" SUM="$SUM" node -e '
+    const fs = require("fs"), e = process.env
+    const env = JSON.parse(fs.readFileSync(e.E, "utf8")), m = JSON.parse(fs.readFileSync(e.M, "utf8"))
+    const seq = Number(e.TAG.slice("ota-v3-".length))
+    if (env.app !== "org.reallife.weboftrust") throw new Error(`envelope app ${env.app}`)
+    if (env.channel !== e.CH) throw new Error(`envelope channel ${env.channel} != ${e.CH}`)
+    if (env.bundleId !== e.TAG || env.seq !== seq) throw new Error(`envelope ${env.bundleId}/${env.seq} != ${e.TAG}/${seq}`)
+    if (env.checksum !== e.SUM) throw new Error(`envelope checksum ${env.checksum} != zip ${e.SUM}`)
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(env.minNative ?? "")) throw new Error("minNative is not major.minor.patch")
     const url = `https://github.com/${e.REPO}/releases/download/${e.TAG}/${e.CH}.zip`
-    if (m.bundleId !== e.TAG) throw new Error(`bundleId ${m.bundleId} != ${e.TAG}`)
     if (m.url !== url) throw new Error(`url ${m.url} != ${url}`)
-    if (!/^[0-9a-f]{64}$/.test(m.checksum ?? "")) throw new Error("checksum is not SHA-256 hex")
-    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(m.minNative ?? "")) throw new Error("minNative is not major.minor.patch")
-    if (typeof m.signature !== "string" || !m.signature) throw new Error("no signature")
-  ' || abort "manifest of $channel in $TAG"
-  want=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).checksum)' "$m")
-  got=$(sha256sum "$zip" | cut -d' ' -f1)
-  [ "$got" = "$want" ] || abort "$channel.zip in $TAG: SHA-256 $got != manifest $want"
+    if (typeof m.signature !== "string" || !m.signature) throw new Error("no zip signature")
+  ' || abort "envelope of $channel in $TAG"
+  # the zip's own signature, which the plugin checks
   node -e 'process.stdout.write(Buffer.from(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).signature, "base64"))' "$m" > "$WORK/$channel.sig"
   openssl dgst -sha256 -verify "$KEY" -signature "$WORK/$channel.sig" "$zip" >/dev/null \
     || abort "$channel.zip in $TAG: the signature does not verify against apps/wot-v3/ota/live-update-public.pem"
   mkdir -p "$OUT/$channel"
   cp "$m" "$OUT/$channel/latest.json"
-  echo "  ok: $channel → $TAG (signature verified)"
+  echo "  ok: $channel → $TAG (envelope and zip signature verified)"
 done

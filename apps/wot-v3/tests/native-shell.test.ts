@@ -43,6 +43,8 @@ describe('capacitor.config.ts per target', () => {
     // the key the plugin verifies every bundle against is the committed one
     expect(lu.publicKey).toBe(readFileSync(path.join(APP, 'ota', 'live-update-public.pem'), 'utf8').trim())
     expect(lu.publicKey).toMatch(/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----$/)
+    // the client verifies the signed envelope with the same key (src/platform/capacitor/ota-public-key.ts)
+    expect(lu.publicKey).toBe((await import('../src/platform/capacitor/ota-public-key')).OTA_PUBLIC_KEY)
     // iOS: the web view shrinks to the space above the keyboard, so the header of a screen stays in view
     expect(c.plugins?.Keyboard).toEqual({ resize: 'native' })
     expect(c.webDir).toBe(`dist-${target}`)
