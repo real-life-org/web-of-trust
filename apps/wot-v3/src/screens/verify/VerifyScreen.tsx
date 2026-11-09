@@ -278,6 +278,50 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         <PersonConfirmActions busy={s.busy} onConfirm={() => send({ type: 'accept' })} onNotNow={() => send({ type: 'notNow' })} />,
         () => send({ type: s.name === 'confirmIncoming' ? 'notNow' : 'leave' }),
       )
+    case 'connectIncoming':
+      // a proposal answers the shown code: accept issues the own credential, decline tells the other
+      // side no and spends the code; back leaves the request open
+      return page(
+        <div className="flex flex-1 flex-col">
+          <PersonConfirmBody name={nameOf(s.name2)} when="now" scanned failed={s.failed} />
+          <p className="m-0 pb-4 text-center text-xs text-muted-foreground">{v.connectNameNote}</p>
+        </div>,
+        <>
+          <PrimaryAction label={v.connectYes} busy={s.busy === 'accept'} disabled={s.busy !== null} onClick={() => send({ type: 'accept' })} />
+          <Button size="lg" variant="muted" className="w-full" disabled={s.busy !== null} onClick={() => send({ type: 'decline' })}>
+            {v.connectNo}
+          </Button>
+        </>,
+        () => send({ type: 'notNow' }),
+      )
+    case 'connecting': {
+      const name = firstName(nameOf(s.name2))
+      return page(
+        <>
+          <Hero icon={<CheckIcon />} title={f(s.role === 'scanner' ? v.connectWaitTitle : v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectWaitBody : v.connectFinishBody, { name })} />
+          {s.waitLong ? (
+            <Callout tone="warning" role="status">
+              <div className="flex flex-col gap-2.5">
+                <span>{v.connectWaitLong}</span>
+                <div>
+                  <Button variant="outline" size="sm" onClick={() => send({ type: 'keepWaiting' })}>
+                    {v.keepWaiting}
+                  </Button>
+                </div>
+              </div>
+            </Callout>
+          ) : null}
+        </>,
+        undefined,
+        () => send({ type: 'leave' }),
+      )
+    }
+    case 'declined':
+      return page(
+        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={v.declinedBody} />,
+        <PrimaryAction label={t.common.close} onClick={() => send({ type: 'done' })} />,
+        () => send({ type: 'done' }),
+      )
     case 'counterPending': {
       const name = nameOf(s.name2)
       return page(

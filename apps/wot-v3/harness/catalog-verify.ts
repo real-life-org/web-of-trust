@@ -5,7 +5,7 @@
 import type { FlowOverride } from '../src/app/flow-override'
 import type { VerifyState } from '../src/flows/verify'
 import { VERIFY_STATES } from '../src/flows/verify'
-import type { ContactId, DecisionId } from '../src/port'
+import type { ConnectionId, ContactId, DecisionId } from '../src/port'
 
 const sample = (word: string, length: number) => `https://web-of-trust.de/c#1:${word.repeat(Math.ceil(length / word.length)).slice(0, length)}`
 const card = { qr: sample('HARNESSSAMPLEDISPLAYEDCARD', 522), expiresAt: Date.parse('2026-10-15T13:35:00-07:00'), card: null }
@@ -40,6 +40,12 @@ const S: Record<string, VerifyState> = {
   confirmationRequired: { ...base, name: 'confirmationRequired', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false },
   confirmIncoming: { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: false },
   'confirmIncoming-failed': { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: true },
+  connectIncoming: { ...base, card: null, name: 'connectIncoming', connection: 'e-noah' as ConnectionId, decision: 'sharedconnect:e-noah' as DecisionId, name2: 'Noah Lindqvist', busy: null, failed: false },
+  'connectIncoming-failed': { ...base, card: null, name: 'connectIncoming', connection: 'e-noah' as ConnectionId, decision: 'sharedconnect:e-noah' as DecisionId, name2: 'Noah Lindqvist', busy: null, failed: true },
+  'connecting-scanner': { ...base, name: 'connecting', connection: 'e-noah' as ConnectionId, name2: 'Noah Lindqvist', role: 'scanner', waitLong: false },
+  'connecting-scanner-long': { ...base, name: 'connecting', connection: 'e-noah' as ConnectionId, name2: 'Noah Lindqvist', role: 'scanner', waitLong: true },
+  'connecting-shower': { ...base, name: 'connecting', connection: 'e-noah' as ConnectionId, name2: 'Noah Lindqvist', role: 'shower', waitLong: false },
+  declined: { ...base, name: 'declined', name2: 'Noah Lindqvist' },
   counterPending: { ...base, name: 'counterPending', contactId: noah, name2: 'Noah Lindqvist' },
   success: { ...base, name: 'success', contactId: noah, name2: 'Noah Lindqvist', isNew: true },
 }

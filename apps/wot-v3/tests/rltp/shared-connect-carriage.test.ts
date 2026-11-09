@@ -27,7 +27,8 @@ const lib = await vi.importActual<{ createHolder(o: object): Promise<H>; seedKey
 const { InMemoryStore } = await vi.importActual<{ InMemoryStore: new () => object }>('@real-life/trust-protocol/testing')
 
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n))
-const turn = () => new Promise((r) => setTimeout(r, 0))
+// a session reads a frame in steps of its own before the wire counts it: a real millisecond per turn
+const turn = () => new Promise((r) => setTimeout(r, 1))
 
 interface Side {
   h: H
@@ -71,7 +72,7 @@ async function side(med: MediatorDouble, clock: VirtualClock): Promise<Side> {
 }
 
 async function flush(med: MediatorDouble, ...sides: Side[]) {
-  for (let calm = 0; calm < 3; ) {
+  for (let calm = 0; calm < 5; ) {
     await med.settled()
     await turn()
     calm = sides.reduce((n, s) => n + s.carriage.busy(), 0) === 0 ? calm + 1 : 0

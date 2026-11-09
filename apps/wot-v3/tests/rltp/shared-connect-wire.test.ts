@@ -24,7 +24,8 @@ type Lib = {
 const { seedKeys, sharedConnect: sc } = await vi.importActual<Lib>('@real-life/trust-protocol')
 
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n))
-const turn = () => new Promise((r) => setTimeout(r, 0))
+// a session reads a frame in steps of its own before the wire counts it: a real millisecond per turn
+const turn = () => new Promise((r) => setTimeout(r, 1))
 const te = new TextEncoder()
 
 /** one side: a KeyProvider over a random root, the enactment nonce, the did:peer:2 the holder would write */
@@ -38,7 +39,7 @@ async function side(med: MediatorDouble) {
 }
 
 async function flush(med: MediatorDouble, ...wires: SharedConnectWire[]) {
-  for (let calm = 0; calm < 2; ) {
+  for (let calm = 0; calm < 5; ) {
     await med.settled()
     await turn()
     calm = wires.reduce((n, w) => n + w.busy(), 0) === 0 ? calm + 1 : 0
