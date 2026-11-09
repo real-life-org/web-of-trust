@@ -24,6 +24,8 @@
 //    resolved): one it could not take comes again at the next connect;
 //  - frames are handled one after another (the session does not serialise them; the holder's act
 //    serialises too, but the sender's long form must be known before the next frame is read);
+//  - a frame the mediator took from the socket and refused comes back as its problem report
+//    (`onRefused`): sent is not carried until the mediator kept it;
 //  - the socket reconnects with a backoff while the enactment is open; the token is renewed by
 //    a new handshake when the mediator refuses it. `close()` ends everything.
 //
@@ -31,12 +33,33 @@
 // documents are the flow machine's, redelivered from its outbox after a restart by the session).
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { authenticateToMediator, MediatorSession } from '@openvtc/vti-didcomm-js'
+import { authenticateToMediator, identityOfKid, MediatorSession } from '@openvtc/vti-didcomm-js'
 import { decodeEnvelope, pack as tspPack, packAccept, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { hkdf, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { KeyProvider } from '@real-life/trust-protocol'
 import type { DeviceTimers } from './transport'
 import type { WireConfig, WireRefusal } from './wire'
+
+const PROBLEM_REPORT = 'https://didcomm.org/report-problem/2.0/problem-report'
+const reportCode = (c: unknown): string => (typeof c === 'string' && /^[a-z0-9._-]{1,64}$/.test(c) ? c : 'unknown')
+
+/** The stock session, with the mediator's own problem reports handed to `onProblem` before the stock
+ *  handling: how a mediator refuses a frame it took from the socket (local direct delivery off:
+ *  `e.p.direct_delivery.denied`). A frame on the socket is not a frame the mediator carries. */
+class SharedConnectSession extends MediatorSession {
+  onProblem: ((code: string) => void) | null = null
+  override async _dispatchFrame(result: { senderDid?: string; message?: { type?: string; body?: { code?: unknown } } }, text: unknown): Promise<void> {
+    const m = result.message
+    if (result.senderDid === identityOfKid(this.mediator.did) && m?.type === PROBLEM_REPORT) {
+      try {
+        this.onProblem?.(reportCode(m.body?.code))
+      } catch {
+        // a sink's failure is not the session's
+      }
+    }
+    return super._dispatchFrame(result, text)
+  }
+}
 
 /** the registry's TSP binding envelope (Trust Tasks TSP binding 0.1) */
 export const BINDING_ENVELOPE = 'https://trusttasks.org/binding/tsp/0.1/envelope'
@@ -94,6 +117,9 @@ export interface SharedConnectWireConfig {
    *  not take it: the frame is not acknowledged and the mediator delivers it again */
   readonly onDocument: (doc: unknown, senderDid: string) => void | Promise<void>
   readonly onState?: (s: 'connected' | 'connecting' | 'unreachable') => void
+  /** the mediator refused a frame this wire sent (its problem report, by code): what was on the socket
+   *  is not carried; the caller sends again or gives the enactment up */
+  readonly onRefused?: (code: string) => void
   /** frames refused for good (diagnostics; a code and a type, never bytes or identifiers) */
   readonly report?: (r: WireRefusal) => void
   readonly net?: WireConfig['net']
@@ -124,7 +150,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   const WebSocketImpl = (cfg.net?.WebSocketImpl ?? globalThis.WebSocket) as typeof WebSocket
   const netPolicy = cfg.net?.policy ? { allowInsecure: Boolean(cfg.net.policy.allowInsecure), allowPrivate: Boolean(cfg.net.policy.allowPrivate) } : undefined
   const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}), ...(netPolicy ? { netPolicy } : {}) }
-  const refuse = (detail: string, sender?: string) => cfg.report?.({ code: 'wire-frame-refused', detail, ...(sender !== undefined ? { sender } : {}) })
+  const refuse = (detail: string, sender?: string) => cfg.report?.({ code: detail.startsWith('direct/') ? 'wire-deposit-refused' : 'wire-frame-refused', detail, ...(sender !== undefined ? { sender } : {}) })
 
   /** senders seen, by their long form where one came (a did:peer:4 short form resolves against it) */
   const knownVids = new Set<string>()
@@ -133,7 +159,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   if (cfg.peerDid) relationship.add(cfg.peerDid)
   let form: 'bare' | 'envelope' = 'bare'
   let closed = false
-  let session: MediatorSession | null = null
+  let session: SharedConnectSession | null = null
   let reconnectTimer: (() => void) | null = null
   let backoff = 0
   let busy = 0
@@ -210,7 +236,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     const auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: cfg.did, clientKid: xKid, clientX25519Private: keys.xSecret, clientX25519Public: keys.xPublic, ...atmSeams })
     if (closed) return
     if (!auth.mediator.wsEndpoint) throw new Error('shared-connect: the mediator has no socket endpoint')
-    const s = new MediatorSession({
+    const s = new SharedConnectSession({
       mediator: auth.mediator as never,
       mediatorJwt: auth.accessToken,
       client: { did: cfg.did, kid: xKid, privateKey: keys.xSecret, publicKey: keys.xPublic },
@@ -220,6 +246,10 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       // the session calls these at runtime (mediator-transport.js); its typings (0.13.0) do not name them
       ...({ onClose: () => { if (session === s) { session = null; scheduleReconnect() } }, onError: () => { /* the close follows */ } } as object),
     })
+    s.onProblem = (code) => {
+      refuse('direct/' + code)
+      cfg.onRefused?.(code)
+    }
     await s.connect()
     if (closed) { s.close(); return }
     session = s

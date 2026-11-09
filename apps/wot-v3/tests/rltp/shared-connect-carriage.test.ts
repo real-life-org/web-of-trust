@@ -292,15 +292,41 @@ describe('shared-connect carriage', () => {
       await flush(med, A, B)
     }
     expect((await B.h.sharedConnect())[0]?.status).toBe('complete')
-    expect(A.marks[String(vA?.id)]).toEqual(expect.any(Number))
-    // handed over and the linger past: no wire, and none after another restart
+    // on the socket is not handed over: the mark comes once the mediator kept the frame for the linger
+    expect(A.marks[String(vA?.id)]).toBeUndefined()
     clock.advance(SC_LINGER_MS + 5000)
     await flush(med, A, B)
+    expect(A.marks[String(vA?.id)]).toEqual(expect.any(Number))
     expect(med.sockets.has(String(vA?.did))).toBe(false)
     const opened = A.opened
     await A.restart()
     await flush(med, A, B)
     expect(A.opened).toBe(opened)
+    A.carriage.stop()
+    B.carriage.stop()
+  })
+
+  it('a frame the mediator took from the socket and refused is not handed over: the receipt goes again, the mark waits', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    await untilPending(x)
+    // the mediator refuses the next direct frame of anyone: the inviter's acceptance
+    med.faults.refuseNextDirect = 'e.p.test.refused'
+    expect((await A.h.decide(String(of(A, 'sharedconnect.pending')[0]?.promptId), 'accept', opts(clock))).ok).toBe(true)
+    await flush(med, A, B)
+    expect([...A.diagnosed, ...B.diagnosed]).toContain('wire-deposit-refused:direct/e.p.test.refused')
+    // the refusal sent the outbox again; both complete, and the mark comes after the linger
+    for (let i = 0; i < 8 && !((await A.h.sharedConnect())[0]?.status === 'complete' && (await B.h.sharedConnect())[0]?.status === 'complete'); i++) {
+      clock.advance(1000)
+      await flush(med, A, B)
+    }
+    const [vA] = await A.h.sharedConnect()
+    expect([vA?.status, (await B.h.sharedConnect())[0]?.status]).toEqual(['complete', 'complete'])
+    expect(A.marks[String(vA?.id)]).toBeUndefined()
+    clock.advance(SC_LINGER_MS + 5000)
+    await flush(med, A, B)
+    expect(A.marks[String(vA?.id)]).toEqual(expect.any(Number))
+    expect(med.sockets.has(String(vA?.did))).toBe(false)
     A.carriage.stop()
     B.carriage.stop()
   })

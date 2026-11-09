@@ -9,8 +9,10 @@
 //  - Which enactments have a wire is read from the view, never from an event alone (`wantedUntil`):
 //    an open one that nobody answered or decided only around its link's life; a decided one until
 //    it closes; a closed one until its last documents were handed to the carrier and a moment more.
-//    Closed on this side is not delivered on the other: the hand-over is marked durably
-//    (`deps.sent`), and without the mark the wire is wanted again after every restart.
+//    Closed on this side is not delivered on the other, and a frame on the socket is not one the
+//    mediator carries: the hand-over counts once the mediator kept the frame for SC_LINGER_MS
+//    without refusing it (its problem report) over a socket that stayed open, and is marked durably
+//    then (`deps.sent`); without the mark the wire is wanted again after every restart.
 //  - A document reaches the mediator's acknowledgement only after the holder took it: one it could
 //    not take now stays there and comes again at the next connect.
 //  - The messaging keys come from the KeyProvider under the nonce this side minted: the inviter's
@@ -35,7 +37,7 @@ export const SC_LINGER_MS = 120_000
 /** the waits (device time) between attempts to open a wire that did not open; the last one repeats */
 export const SC_OPEN_RETRY_MS = [1000, 5000, 30_000] as const
 
-export type SharedConnectDiagnostic = 'wire-frame-refused' | 'shared-connect-refused' | 'shared-connect-wire'
+export type SharedConnectDiagnostic = 'wire-frame-refused' | 'wire-deposit-refused' | 'shared-connect-refused' | 'shared-connect-wire'
 
 export interface SharedConnectCarriageDeps {
   /** a wire at the build's carrier (the custody lease's `sharedConnect`); rejects while it cannot open */
@@ -83,6 +85,10 @@ interface Run {
   resync: boolean
   /** the time the view no longer wants this wire, with the timer that looks again then */
   until: { at: number; cancel: () => void } | null
+  /** a closed enactment's last documents went to the socket then; the hand-over counts once the
+   *  socket stayed open SC_LINGER_MS without the mediator refusing it (null: not handed, or marked) */
+  handedAt: number | null
+  confirm: (() => void) | null
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
@@ -118,9 +124,10 @@ const owes = (v: SharedConnectView): boolean => v.outbox.length > 0 && (v.status
  *  - Open and decided (the acceptance is out or in): until it closes. The documents that complete it
  *    may wait at the carrier while either app is away; the library ends an enactment that never
  *    completes at its own retention.
- *  - Closed with documents owed: until they were handed to the carrier (`sentAt`, kept across
- *    restarts) and SC_LINGER_MS more, in which a counterpart that sends its own again is answered
- *    again; never handed over, SC_OWED_MS after it closed.
+ *  - Closed with documents owed: until the carrier kept them (`sentAt`: on the socket, not refused
+ *    by the mediator within SC_LINGER_MS, the socket open that long; kept across restarts) and
+ *    SC_LINGER_MS more, in which a counterpart that sends its own again is answered again; never
+ *    handed over, SC_OWED_MS after it closed.
  *  - Closed otherwise: SC_LINGER_MS. */
 function wantedUntil(v: SharedConnectView, now: number, sentAt: number | undefined): number | null {
   if (v.status === 'open') {
@@ -156,6 +163,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     r.retry = null
     r.until?.cancel()
     r.until = null
+    r.confirm?.()
+    r.confirm = null
     const w = r.wire
     r.wire = null
     try {
@@ -216,13 +225,22 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
           onState: (s) => {
             if (s !== 'connected' || stopped || runs.get(r.id) !== r) return
             if (r.connected) {
-              // what went to the socket that closed may be lost: the outbox again
+              // what went to the socket that closed may be lost: the outbox again, the hand-over unconfirmed
               r.resync = true
+              r.handedAt = null
               reconcile()
             }
             r.connected = true
           },
-          report: (x) => deps.diagnose?.(x.code === 'wire-frame-refused' ? 'wire-frame-refused' : 'shared-connect-wire', x.detail),
+          onRefused: () => {
+            // the mediator took a frame from the socket and refused it: nothing of this pass counts as
+            // handed over; the outbox goes again (a sticky refusal is bounded by SC_OWED_MS)
+            if (stopped || runs.get(r.id) !== r) return
+            r.resync = true
+            r.handedAt = null
+            reconcile()
+          },
+          report: (x) => deps.diagnose?.(x.code, x.detail),
         })
         if (stopped || runs.get(r.id) !== r) {
           wire.close()
@@ -247,9 +265,10 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     )
   }
 
-  const mark = async (id: string): Promise<void> => {
+  /** the durable mark: the enactment's last documents were with the carrier from `at` on */
+  const mark = async (id: string, at: number): Promise<void> => {
     if (!sent || stopped) return
-    const next = { ...sent, [id]: deps.now() }
+    const next = { ...sent, [id]: at }
     try {
       await deps.sent.write(next)
     } catch {
@@ -290,9 +309,9 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       }
       list.shift()
     }
-    // everything this side owes of a closed enactment is with the carrier now: the mark is durable
-    // before the wire may end (a failed write leaves it unmarked, and it is handed over again)
-    if (owes(v) && (handed || sent?.[v.id] === undefined)) await mark(v.id)
+    // everything this side owes of a closed enactment is on the socket now; it counts as handed over
+    // once the mediator kept it for SC_LINGER_MS without refusing it (the confirm in reconcile)
+    if (owes(v) && sent?.[v.id] === undefined && (handed || r.handedAt === null)) r.handedAt = deps.now()
   }
 
   const reconcileOnce = async (): Promise<void> => {
@@ -336,7 +355,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     for (const { v, until } of wanted.values()) {
       let r = runs.get(v.id)
       if (!r) {
-        r = { id: v.id, wire: null, opening: false, dead: false, tries: 0, retry: null, connected: false, resync: true, until: null }
+        r = { id: v.id, wire: null, opening: false, dead: false, tries: 0, retry: null, connected: false, resync: true, until: null, handedAt: null, confirm: null }
         runs.set(v.id, r)
       }
       if (r.until?.at !== until) {
@@ -347,6 +366,21 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       if (!r.wire && !r.opening && !r.dead && !r.retry) openRun(r, v)
       await flush(r, v, covered.get(v.id) ?? 0)
       if (stopped) return
+      // the hand-over of a closed enactment: on the socket, kept SC_LINGER_MS, not refused, the socket
+      // still open; then the mark, and the wire ends (its end is the hand-over's time plus the linger)
+      if (r.handedAt !== null && sent[v.id] === undefined) {
+        if (!r.wire?.isOpen()) r.handedAt = null
+        else if (deps.now() >= r.handedAt + SC_LINGER_MS) {
+          const at = r.handedAt
+          r.handedAt = null
+          await mark(v.id, at)
+        } else if (!r.confirm) {
+          r.confirm = deps.setTimer(r.handedAt + SC_LINGER_MS, () => {
+            r.confirm = null
+            reconcile()
+          })
+        }
+      }
     }
   }
   // one pass at a time; a request meanwhile runs one more pass after it

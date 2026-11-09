@@ -513,9 +513,11 @@ The session keeps one carriage per opening (`shared-connect-carriage.ts`). Which
 wire is read from the holder's view: a code nobody answered while it is live; a proposal nobody
 decided two minutes more; a decided one until it closes; a closed one until its last documents (the
 receipt of a complete one, the inviter's decline) were handed to the carrier and two minutes more.
-Closed on this side is not delivered on the other: the hand-over is a mark in the opening's app-db
-(`connect-sent`), and an enactment without it gets its wire again after every restart, for thirty
-days after it closed. A frame is acknowledged at the mediator only after the holder took its
+Closed on this side is not delivered on the other, and a frame on the socket is not one the mediator
+carries: the hand-over counts once the mediator kept the frame two minutes without refusing it (its
+problem report) over a socket that stayed open; it is then a mark in the opening's app-db
+(`connect-sent`), and an enactment without the mark gets its wire again after every restart, for
+thirty days after it closed. A frame is acknowledged at the mediator only after the holder took its
 document; one it could not take comes again at the next connect. Documents of a commit
 (`sharedconnect.send`) go out in order; after a send that did not reach the socket, a reconnect or a
 restart, the whole `outbox` of the view goes out again, and the counterpart's machine answers a
