@@ -1379,7 +1379,7 @@ async function runSeed(seed: number, standing: Standing) {
             violations.push(`${c}: after the restart queue ${q1.map((e) => e.id).join(',')}, second names ${String(stillSecond?.answers?.card)}, first open ${open().some((d) => d.id === first.id)}, S2 ${String(s2)}`)
             continue
           }
-          await aConfirms(second.contactId)
+          await aConfirms(second.contactId ?? '')
           for (let j = 0; j < 4 && contacts(S1.h)[0]?.verification !== 'mutual'; j++) await step()
           if (contacts(S1.h)[0]?.verification === 'mutual' && open().length === 0) hit(c)
           else violations.push(`${c}: S1 ${String(contacts(S1.h)[0]?.verification)}, ${open().length} open`)

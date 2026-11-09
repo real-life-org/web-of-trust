@@ -240,7 +240,7 @@ export const de: Translations = {
     connectNameNote: 'Der Name ist selbst angegeben.',
     connectWaitTitle: 'Warte auf {name} …',
     connectWaitBody: '{name} bestätigt gerade auf dem eigenen Gerät.',
-    connectWaitLong: 'Noch keine Antwort.',
+    connectWaitLong: 'Noch keine Antwort. Der Code gilt zehn Minuten; danach bitte neu scannen.',
     connectFinishTitle: 'Verbindung mit {name} wird abgeschlossen',
     connectFinishBody: '{name} hat deinen Code gescannt.',
     declinedTitle: '{name} hat abgelehnt',

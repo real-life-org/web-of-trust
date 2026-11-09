@@ -241,7 +241,7 @@ export const en = {
     connectNameNote: 'The name is self-stated.',
     connectWaitTitle: 'Waiting for {name} …',
     connectWaitBody: '{name} is confirming on their own device.',
-    connectWaitLong: 'No answer yet.',
+    connectWaitLong: 'No answer yet. The code is valid for ten minutes; after that please scan again.',
     connectFinishTitle: 'Finishing the connection with {name}',
     connectFinishBody: '{name} scanned your code.',
     declinedTitle: '{name} declined',
