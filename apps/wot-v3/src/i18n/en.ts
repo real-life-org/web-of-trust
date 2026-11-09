@@ -150,6 +150,12 @@ export const en = {
       declineNote: 'If you decline, {name} won’t be told.',
       declineFailed: 'Declining did not go through. Please try again.',
     },
+    'connect-confirm': {
+      kind: 'Connection request',
+      title: '{name} wants to connect',
+      sub: 'Scanned your code. The name is self-stated.',
+      cta: 'Respond',
+    },
     'group-invite': {
       kind: 'Invitation',
       title: '{group}',

@@ -11,6 +11,8 @@ export type MessageId = Brand<string, 'MessageId'>
 export type DecisionId = Brand<string, 'DecisionId'>
 /** The own displayed card's instance (its carrier nonce N, VTI §1c RLTP-VTI-1250): opaque, compared only. */
 export type CardRef = Brand<string, 'CardRef'>
+/** one connection ceremony (a shared-connect enactment) */
+export type ConnectionId = Brand<string, 'ConnectionId'>
 /** Opaque reference to a group member. */
 export type MemberRef = Brand<string, 'MemberRef'>
 /** UUID v4, minted in the command service (architecture §3.4), never in a hook or screen. */

@@ -124,6 +124,8 @@ function decisionPreviewValues(state: WorldState, d: Decision): Record<string, s
   switch (d.kind) {
     case 'encounter-confirm':
       return { name: state.persons.get(d.contactId)?.name ?? '' }
+    case 'connect-confirm':
+      return { name: d.name ?? '' }
     case 'group-invite':
       return { name: state.persons.get(d.inviterId)?.name ?? '', group: d.groupName ?? '' }
     case 'vouch':

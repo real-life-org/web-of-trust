@@ -57,6 +57,7 @@ export const SYSTEM_GLYPH: Record<SystemKind, { glyph: string; tone: Tone }> = {
 
 export const DECISION_GLYPH: Record<Decision['kind'], { glyph: string; tone: Tone }> = {
   'encounter-confirm': { glyph: '←', tone: 'primary' },
+  'connect-confirm': { glyph: '←', tone: 'primary' },
   'group-invite': { glyph: '⏳', tone: 'warning' },
   vouch: { glyph: '✓', tone: 'primary' },
   introduction: { glyph: '◇', tone: 'warning' },

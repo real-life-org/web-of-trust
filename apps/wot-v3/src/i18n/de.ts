@@ -149,6 +149,12 @@ export const de: Translations = {
       declineNote: 'Wenn du ablehnst, erfährt {name} davon nichts.',
       declineFailed: 'Das Ablehnen ist nicht durchgegangen. Bitte versuche es noch einmal.',
     },
+    'connect-confirm': {
+      kind: 'Verbindungsanfrage',
+      title: '{name} möchte sich verbinden',
+      sub: 'Hat deinen Code gescannt. Name selbst angegeben.',
+      cta: 'Antworten',
+    },
     'group-invite': {
       kind: 'Einladung',
       title: '{group}',

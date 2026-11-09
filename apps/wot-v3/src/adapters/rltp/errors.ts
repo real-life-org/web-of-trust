@@ -63,7 +63,8 @@ export const ACT_ERRORS = {
   // Access 0.58 stage 1 (lib 0.13.0): the group log's bounds
   'not-yet-canonical': GENERIC,
   oversize: GENERIC,
-  // shared-connect on the holder (lib 0.16.0; the port's own codes come with the shared-connect PR)
+  // shared-connect on the holder (lib 0.16.0): a link is a code like a card, an enactment once
+  // answered is a used code
   'link-invalid': r('card-invalid'),
   'enactment-unknown': GENERIC,
   'enactment-closed': r('code-used'),
@@ -72,7 +73,7 @@ export const ACT_ERRORS = {
   // the app's KeyProvider implements sharedConnectMessaging: a refusal is a bug of the app
   'keys-missing': BUG,
   // trust toward a shared-connect contact the two sides did not meet (A3)
-  'not-met': GENERIC,
+  'not-met': r('not-met'),
 } as const satisfies Record<ActError, Mapped>
 
 /** Refusals that say "not now", not "no": the library could not write its own log, or this device's

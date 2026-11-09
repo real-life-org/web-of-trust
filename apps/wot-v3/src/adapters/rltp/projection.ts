@@ -2,13 +2,15 @@
 // The library's views and the app-db part come from the same fence (session.ts); this function only
 // maps. Structural sharing happens in the port's stores (writableStore).
 
-import type { ContactView, ProfileView, PromptView } from '@real-life/trust-protocol'
+import type { ContactView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import type {
   AnsweredCard,
   Availability,
   BlockedEntry,
   CardRef,
+  Connection,
+  ConnectionId,
   ContactActions,
   ContactDetail,
   ContactId,
@@ -42,6 +44,8 @@ export interface ProjectionInput {
   readonly contacts: readonly ContactView[]
   readonly prompts: readonly PromptView[]
   readonly profile: ProfileView
+  /** the holder's connection ceremonies (shared-connect enactments) */
+  readonly connections?: readonly SharedConnectView[]
   readonly encounters: EncounterCache
   /** the cards displayed with a carrier offer, until their challenge ends (app-db `displayed`) */
   readonly displayed: DisplayedCards
@@ -60,6 +64,7 @@ export interface ReadModels {
   /** per contact: the messages a report may select, hidden ones of a blocked contact included */
   readonly reportable: ReadonlyMap<string, readonly MessageItem[]>
   readonly decisions: readonly Decision[]
+  readonly connections: readonly Connection[]
   readonly profile: ProfileModel
   readonly standing: TrustStandingSummary
   readonly visibility: readonly VisibilityEntry[]
@@ -94,7 +99,7 @@ function answeredCard(contact: ContactView | undefined, displayed: DisplayedCard
   return null
 }
 
-function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards): Decision | null {
+function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards, connections: readonly SharedConnectView[], now: number): Decision | null {
   const base = {
     id: p.id as DecisionId,
     openedAt: p.openedAt,
@@ -103,6 +108,14 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
   }
   if (p.kind === 'encounter-confirm' && p.contactId !== undefined) {
     return { ...base, kind: 'encounter-confirm', contactId: p.contactId as ContactId, answers: answeredCard(contacts.get(p.contactId), displayed) }
+  }
+  if (p.kind === 'shared-connect-confirm') {
+    const v = connections.find((x) => x.promptId === p.id)
+    if (!v) return null
+    // the proposal answers the code of its enactment (E9); the code is the one in front of the person
+    // while its link is valid
+    const validUntil = v.link.exp * 1000
+    return { ...base, kind: 'connect-confirm', connection: v.id as ConnectionId, name: v.name, answers: now <= validUntil ? { card: v.id as CardRef, validUntil } : null }
   }
   // group invitations, vouches and introductions come with their screens (not in this step)
   return null
@@ -189,7 +202,7 @@ export function project(raw: ProjectionInput): ReadModels {
   const decisions: Decision[] = []
   const byId = new Map(input.contacts.map((c) => [c.id, c] as const))
   for (const p of input.prompts) {
-    const d = decisionOf(p, running, byId, input.displayed)
+    const d = decisionOf(p, running, byId, input.displayed, input.connections ?? [], input.now)
     if (d) decisions.push(d)
   }
   const decisionById = new Map<string, Decision>(decisions.map((d) => [d.id, d]))
@@ -349,6 +362,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
+    connections: (input.connections ?? []).map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? null) as ContactId | null, met: v.met })),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

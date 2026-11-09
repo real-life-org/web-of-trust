@@ -84,8 +84,9 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
   const scanned = await jonas.port.trust.confirmCard(shown.value.qr).done
   if (!scanned.ok) throw new Error('harness: scan')
   await settle()
-  if (optical && scanned.value.contactId) {
-    const sent = await jonas.port.trust.sentCardFor(scanned.value.contactId)
+  const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
+  if (optical && scannedContact) {
+    const sent = await jonas.port.trust.sentCardFor(scannedContact)
     if (!sent.ok) throw new Error('harness: sent card')
     const captured = await noah.port.trust.confirmCard(sent.value.qr).done
     if (!captured.ok) throw new Error('harness: capture')
@@ -96,7 +97,7 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
   if (!open || open.kind !== 'encounter-confirm') throw new Error('harness: no confirmation at noah')
   await noah.port.trust.counterVerify(open.contactId).done
   await settle()
-  const noahAtJonas = scanned.value.contactId
+  const noahAtJonas = scannedContact
   const jonasAtNoah = open.contactId
   if (!noahAtJonas) throw new Error('harness: no contact at jonas')
   clock.advance(4 * 60_000)

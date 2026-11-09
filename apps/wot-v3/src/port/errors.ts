@@ -16,6 +16,8 @@ export type RefusalCode =
   | 'unknown-contact'
   | 'already-done'
   | 'contact-blocked'
+  // trust toward a contact connected over a link, not in person
+  | 'not-met'
   // Messages: 'not-ready' (no document of the contact arrived on the relationship yet; the app keeps
   // the message unsent), 'message-invalid' (1 to 4096 code points)
   | 'not-ready'

@@ -8,6 +8,7 @@ import type {
   AppPort,
   AppStores,
   Capabilities,
+  Connection,
   Connectivity,
   ContactDetail,
   Conversation,
@@ -65,6 +66,8 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     contacts: writableStore(loadable(world.bundle(), (b) => b.contacts)),
     groups: writableStore(loadable(world.bundle(), (b) => b.groups)),
     decisions: writableStore(loadable(world.bundle(), (b) => b.decisions)),
+    // the simulation runs no connection ceremony
+    connections: writableStore(loadable(world.bundle(), () => [] as readonly Connection[])),
     candidacies: writableStore(loadable(world.bundle(), (b) => b.candidacies)),
     profile: writableStore(loadable(world.bundle(), (b) => b.profile)),
     standing: writableStore(loadable(world.bundle(), (b) => b.standing)),
@@ -106,6 +109,7 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     top.contacts.set(loadable(b, (x) => x.contacts))
     top.groups.set(loadable(b, (x) => x.groups))
     top.decisions.set(loadable(b, (x) => x.decisions))
+    top.connections.set(loadable(b, () => []))
     top.candidacies.set(loadable(b, (x) => x.candidacies))
     top.profile.set(loadable(b, (x) => x.profile))
     top.standing.set(loadable(b, (x) => x.standing))
@@ -130,6 +134,7 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     contacts: top.contacts,
     groups: top.groups,
     decisions: top.decisions,
+    connections: top.connections,
     candidacies: top.candidacies,
     profile: top.profile,
     standing: top.standing,

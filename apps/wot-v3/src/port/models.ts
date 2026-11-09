@@ -1,6 +1,6 @@
 // Read models of the app port (architecture §2.3). Screens see only these, never core views.
 
-import type { ActId, CardRef, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
+import type { ActId, CardRef, ConnectionId, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
 import type { CardPreview, CommandName, SafetyTarget } from './commands'
 
 // ── Contacts ────────────────────────────────────────────────────────────────
@@ -227,6 +227,22 @@ export interface Conversation {
   readonly composer: Availability
 }
 
+// ── Connections ─────────────────────────────────────────────────────────────
+/** One connection ceremony of this device (a shown code or a code read), until it is complete,
+ *  declined or failed; a closed one stays listed while the core keeps it. */
+export interface Connection {
+  readonly id: ConnectionId
+  /** 'inviter': this device showed the code; 'responder': it read one */
+  readonly role: 'inviter' | 'responder'
+  readonly status: 'open' | 'complete' | 'declined' | 'failed'
+  /** the other side's name as its code or its proposal states it, unverified */
+  readonly name: string | null
+  /** the contact the complete ceremony opened; null before, and for a counterpart whose app gives no channel */
+  readonly contactId: ContactId | null
+  /** both sides read the code in one place */
+  readonly met: boolean
+}
+
 // ── Decisions ───────────────────────────────────────────────────────────────
 /** The own displayed card an incoming confirmation answers. */
 export interface AnsweredCard {
@@ -250,6 +266,16 @@ export type Decision =
        *  relationship that holds the card's N is the record of the card's challenge (VTI §1c
        *  RLTP-VTI-1260). Null: the bundle answers no card this device displayed with a carrier offer
        *  (no mediator, a chained re-encounter), or the card has ended and left the app */
+      readonly answers: AnsweredCard | null
+    })
+  /** someone read the own code and proposes to connect: accept issues the own credential, decline
+   *  tells the other side no and spends the code */
+  | (DecisionBase & {
+      readonly kind: 'connect-confirm'
+      readonly connection: ConnectionId
+      /** the name the proposal states, unverified */
+      readonly name: string | null
+      /** the own shown code it answers, while that code is valid */
       readonly answers: AnsweredCard | null
     })
   | (DecisionBase & {

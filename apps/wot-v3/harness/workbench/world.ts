@@ -290,8 +290,9 @@ export async function createWorkbenchWorld(opts: {
     if (!scanned.ok) throw new Error('workbench: scan')
     await settle()
     // over a mediator B learns A's delivery hint from A's sent card (the optical leg)
-    if (how.kind !== 'memory' && scanned.value.contactId) {
-      const sent = await A.port.trust.sentCardFor(scanned.value.contactId)
+    const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
+    if (how.kind !== 'memory' && scannedContact) {
+      const sent = await A.port.trust.sentCardFor(scannedContact)
       if (!sent.ok) throw new Error('workbench: sent card')
       const captured = await B.port.trust.confirmCard(sent.value.qr).done
       if (!captured.ok) throw new Error('workbench: capture')
