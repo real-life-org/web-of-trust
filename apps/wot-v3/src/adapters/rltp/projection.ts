@@ -3,7 +3,7 @@
 // maps. Structural sharing happens in the port's stores (writableStore).
 
 import type { ContactView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
-import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
+import { CHALLENGE_MAX_AGE, sharedConnect as sc } from '@real-life/trust-protocol'
 import type {
   AnsweredCard,
   Availability,
@@ -113,8 +113,9 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     const v = connections.find((x) => x.promptId === p.id)
     if (!v) return null
     // the proposal answers the code of its enactment (E9); the code is the one in front of the person
-    // while its link is valid
-    const validUntil = v.link.exp * 1000
+    // while its link is valid, with the ceremony's clock tolerance: the holder takes a proposal that
+    // long, so one it took is asked
+    const validUntil = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
     return { ...base, kind: 'connect-confirm', connection: v.id as ConnectionId, name: v.name, answers: now <= validUntil ? { card: v.id as CardRef, validUntil } : null }
   }
   // group invitations, vouches and introductions come with their screens (not in this step)

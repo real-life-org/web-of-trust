@@ -6,9 +6,11 @@
 // holder's view does not give back.
 //
 //  - Which enactments have a wire is read from the view, never from an event alone: an open
-//    enactment (an inviter's without a counterpart only while its link is live, with the ceremony's
-//    clock tolerance), and a closed one for SC_LINGER_MS after it closed, so the last documents leave
-//    and a counterpart that sends its own again is answered again by the holder.
+//    enactment within the bounds of its link (`wantedUntil`: no socket outlives a code nobody
+//    answered or decided by more than a moment), and a closed one for SC_LINGER_MS after it closed,
+//    so the last documents leave and a counterpart that sends its own again is answered again.
+//  - A document reaches the mediator's acknowledgement only after the holder took it: one it could
+//    not take now stays there and comes again at the next connect.
 //  - The messaging keys come from the KeyProvider under the nonce this side minted: the inviter's
 //    handle (the enactment id), the responder's own challenge (the id of its propose, which its later
 //    documents name as `threadId` and its credential as `taskContext`). The wire checks the keys
@@ -71,7 +73,8 @@ interface Run {
   retry: (() => void) | null
   /** the socket was open once: a later `connected` is a reconnect */
   connected: boolean
-  /** the whole outbox of the view goes out at the next flush */
+  /** the whole outbox of the view goes out at the next flush: at a run's start (a fresh enactment's is
+   *  what its first commit named, a restarted one's what the counterpart may miss) and after a reconnect */
   resync: boolean
   /** the time the view no longer wants this wire, with the timer that looks again then */
   until: { at: number; cancel: () => void } | null
@@ -91,15 +94,22 @@ function nonceCandidates(v: SharedConnectView): string[] {
   return [...new Set(own.filter((c): c is string => c !== null && sc.canonicalChallenge(c)))]
 }
 
-/** until when the view wants a wire for this enactment (device time); null: no wire */
+/** how long (device time) past its link's end an enactment both sides agreed on keeps its wire for
+ *  the documents that complete it; they follow the acceptance within moments */
+export const SC_FINISH_MS = 3_600_000
+
+/** Until when the view wants a wire for this enactment (device time); null: no wire. An open
+ *  enactment is bounded by its link: nobody answered the inviter's link, it listens while the link is
+ *  live; a proposal nobody decided is asked only while the code is valid, so both sides wait for the
+ *  decision that long and a moment more; once the acceptance is out or in, the rest may take SC_FINISH_MS.
+ *  A decision taken past the code's end opens the wire again within that time. */
 function wantedUntil(v: SharedConnectView, now: number): number | null {
   if (v.status === 'open') {
-    // nobody answered the inviter's link: it listens while the link is live
-    if (v.role === 'inviter' && v.theirDid === null) {
-      const end = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
-      return now < end ? end : null
-    }
-    return Infinity
+    const live = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
+    const answered = v.theirDid !== null
+    const decided = v.role === 'inviter' ? answered && v.promptId === null : v.theirPair !== null
+    const end = live + (decided ? SC_FINISH_MS : answered ? SC_LINGER_MS : 0)
+    return now < end ? end : null
   }
   const end = (v.closedAt ?? 0) + SC_LINGER_MS
   return now < end ? end : null
@@ -110,7 +120,6 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
   /** documents of commits not sent yet, by enactment, in commit order */
   const owed = new Map<string, { to: string; docs: readonly unknown[] }[]>()
   let stopped = false
-  let resyncAll = false
   let inFlight = 0
   const track = <T>(p: Promise<T>): Promise<T> => {
     inFlight++
@@ -133,20 +142,23 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     }
   }
 
+  /** Resolves once the holder took the document or refused it for good; rejects when it could not take
+   *  it now (storage, a closed gate, a step that kept losing against a commit): the wire then leaves the
+   *  frame unacknowledged and the mediator delivers it again at the next connect. */
   const receive = async (doc: unknown, sender: string): Promise<void> => {
-    if (stopped) return
+    if (stopped) throw new Error('shared-connect: the carriage stopped')
+    let r: ActResult
     try {
+      r = await deps.receive(doc, sender)
       // a decision of the person may commit between the machine's step and its commit: the step is taken again
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const r = await deps.receive(doc, sender)
-        if (r.ok) return
-        if (r.code !== 'concurrent') return void deps.diagnose?.('shared-connect-refused', r.code)
-      }
-      deps.diagnose?.('shared-connect-refused', 'concurrent')
-    } catch {
-      // storage or a closed gate: the counterpart's document comes again when it sends its outbox again
+      for (let attempt = 0; attempt < 2 && !r.ok && r.code === 'concurrent'; attempt++) r = await deps.receive(doc, sender)
+    } catch (e) {
       deps.diagnose?.('shared-connect-refused', 'not-received')
+      throw e
     }
+    if (r.ok) return
+    deps.diagnose?.('shared-connect-refused', r.code)
+    if (r.code === 'concurrent') throw new Error('shared-connect: the document was not taken')
   }
 
   const keysOf = async (v: SharedConnectView): Promise<SharedConnectKeys | null> => {
@@ -266,7 +278,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     for (const { v, until } of wanted.values()) {
       let r = runs.get(v.id)
       if (!r) {
-        r = { id: v.id, wire: null, opening: false, dead: false, tries: 0, retry: null, connected: false, resync: resyncAll, until: null }
+        r = { id: v.id, wire: null, opening: false, dead: false, tries: 0, retry: null, connected: false, resync: true, until: null }
         runs.set(v.id, r)
       }
       if (r.until?.at !== until) {
@@ -277,7 +289,6 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       await flush(r, v, covered.get(v.id) ?? 0)
       if (stopped) return
     }
-    resyncAll = false
   }
   // one pass at a time; a request meanwhile runs one more pass after it
   let running: Promise<void> | null = null
@@ -313,8 +324,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     },
     resume() {
       if (stopped) return
+      // every run is made anew, and a new run sends its view's outbox
       for (const r of [...runs.values()]) closeRun(r)
-      resyncAll = true
       reconcile()
     },
     poke() {

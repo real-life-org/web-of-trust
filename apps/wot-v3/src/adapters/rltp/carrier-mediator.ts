@@ -937,8 +937,12 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
           mediatorDid: C,
           clock,
           ...(cfg.net ? { net: cfg.net } : {}),
-          // a document reaches the opening only in the generation that opened the wire (rule 3)
-          onDocument: (doc, sender) => (here() ? wcfg.onDocument(doc, sender) : undefined),
+          // a document reaches the opening only in the generation that opened the wire (rule 3); outside
+          // it nobody took it: the frame stays unacknowledged at the mediator for the next opening
+          onDocument: async (doc, sender) => {
+            if (!here()) throw new Error('shared-connect: the opening is not in use')
+            await wcfg.onDocument(doc, sender)
+          },
         })
         if (!here()) {
           wire.close()

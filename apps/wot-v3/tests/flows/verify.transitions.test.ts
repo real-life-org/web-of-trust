@@ -875,6 +875,24 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     expect(fb.rows()).toContain('connectIncoming.result.accepted')
   }, 60_000)
 
+  it('an accept past the end of the answered code issues nothing: a fresh code is shown, the scanner scans again', async () => {
+    const { clock, devices, until, settle } = await mediatorWorld(2, 'shared-connect')
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const fb = flow(B)
+    await fb.until('ready')
+    const first = fb.state().card?.qr
+    expect((await A.port.trust.confirmCard(first ?? '', 'camera').done).ok).toBe(true)
+    await until(() => fb.state().name === 'connectIncoming', 'the proposal at the shower')
+    clock.advance(12 * 60_000)
+    fb.send({ type: 'accept' })
+    await fb.until('ready')
+    expect(fb.state().card?.qr).not.toBe(first)
+    expect(fb.rows()).toContain('connectIncoming.result.expired')
+    await settle()
+    const connections = B.port.stores.connections.get()
+    expect(connections.status === 'ready' && connections.value.some((c) => c.status === 'complete')).toBe(false)
+  }, 60_000)
+
   it('over a port double: the other side’s error ends in the error screen; a ceremony complete without a contact leaves the flow', async () => {
     const { devices } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]

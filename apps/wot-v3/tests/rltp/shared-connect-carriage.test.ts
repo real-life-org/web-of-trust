@@ -35,6 +35,8 @@ interface Side {
   carriage: SharedConnectCarriage
   events: Ev[]
   diagnosed: string[]
+  /** the next receives of the holder fail (storage) */
+  failReceives: number
   /** a new holder and carriage over the same store and root (the app restarted) */
   restart(): Promise<void>
 }
@@ -42,14 +44,20 @@ interface Side {
 async function side(med: MediatorDouble, clock: VirtualClock): Promise<Side> {
   const store = new InMemoryStore()
   const keys = lib.seedKeys(rand(64))
-  const s = { events: [] as Ev[], diagnosed: [] as string[] } as Side
+  const s = { events: [] as Ev[], diagnosed: [] as string[], failReceives: 0 } as Side
   const start = async () => {
     const h = await lib.createHolder({ store, keys })
     const carriage = createSharedConnectCarriage({
       open: (cfg) => openSharedConnectWire({ ...cfg, mediatorDid: med.did, clock, net: med.net }),
       keys: keys as never,
       views: () => h.sharedConnect() as never,
-      receive: (doc, sender) => h.sharedConnectReceive(doc, sender, clock.now()) as never,
+      receive: (doc, sender) => {
+        if (s.failReceives > 0) {
+          s.failReceives--
+          return Promise.reject(new Error('storage'))
+        }
+        return h.sharedConnectReceive(doc, sender, clock.now()) as never
+      },
       now: () => clock.now(),
       setTimer: (at, cb) => clock.setTimer(at, cb),
       diagnose: (code, detail) => void s.diagnosed.push(`${code}:${detail ?? ''}`),
@@ -72,7 +80,8 @@ async function side(med: MediatorDouble, clock: VirtualClock): Promise<Side> {
 }
 
 async function flush(med: MediatorDouble, ...sides: Side[]) {
-  for (let calm = 0; calm < 5; ) {
+  for (let calm = 0, rounds = 0; calm < 5; rounds++) {
+    if (rounds > 2000) throw new Error('flush: the sides never came to rest')
     await med.settled()
     await turn()
     calm = sides.reduce((n, s) => n + s.carriage.busy(), 0) === 0 ? calm + 1 : 0
@@ -203,6 +212,44 @@ describe('shared-connect carriage', () => {
     A.carriage.stop()
     await flush(med, A, B)
     expect(views.some((v) => med.sockets.has(v.did))).toBe(false)
+    B.carriage.stop()
+  })
+
+  it('a document the holder could not take is not acknowledged: the mediator delivers it again at the next connect', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    const shown = await A.h.sharedConnectShow({ relays: RELAYS(med), name: 'Anton' }, opts(clock))
+    expect(shown.ok).toBe(true)
+    await flush(med, A, B)
+    A.failReceives = 1
+    expect((await B.h.sharedConnectPropose({ link: String(of(A, 'sharedconnect.shown')[0]?.link), relays: RELAYS(med), channel: 'scan' }, opts(clock))).ok).toBe(true)
+    await flush(med, A, B)
+    expect(of(A, 'sharedconnect.pending').length).toBe(0)
+    expect(A.diagnosed).toEqual(['shared-connect-refused:not-received'])
+    // the inviter's socket drops and comes back: the frame is still at the mediator
+    const [vA] = await A.h.sharedConnect()
+    med.sockets.get(String(vA?.did))?.close()
+    for (let i = 0; i < 8 && of(A, 'sharedconnect.pending').length === 0; i++) {
+      clock.advance(1000)
+      await flush(med, A, B)
+    }
+    expect(of(A, 'sharedconnect.pending').length).toBe(1)
+    A.carriage.stop()
+    B.carriage.stop()
+  })
+
+  it('a proposal nobody decides keeps no socket: both wires end a moment after the code', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    await untilPending(x)
+    const [vA] = await A.h.sharedConnect()
+    const [vB] = await B.h.sharedConnect()
+    expect(med.sockets.has(String(vA?.did)) && med.sockets.has(String(vB?.did))).toBe(true)
+    // ten minutes of the code, the ceremony's clock tolerance, the linger
+    clock.advance(600_000 + 60_000 + SC_LINGER_MS + 5000)
+    await flush(med, A, B)
+    expect(med.sockets.has(String(vA?.did)) || med.sockets.has(String(vB?.did))).toBe(false)
+    A.carriage.stop()
     B.carriage.stop()
   })
 })

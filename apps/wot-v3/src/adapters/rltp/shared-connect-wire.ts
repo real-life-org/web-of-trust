@@ -20,6 +20,8 @@
 //  - application messages of kind `direct` carry a Trust Task document, bare or inside the
 //    registry's TSP binding envelope `{ type: …/binding/tsp/0.1/envelope, document }`; the wire
 //    replies in the form the counterpart used (bare by default);
+//  - a frame is acknowledged at the mediator only after the holder took its document (`onDocument`
+//    resolved): one it could not take comes again at the next connect;
 //  - frames are handled one after another (the session does not serialise them; the holder's act
 //    serialises too, but the sender's long form must be known before the next frame is read);
 //  - the socket reconnects with a backoff while the enactment is open; the token is renewed by
@@ -66,6 +68,13 @@ export async function sharedConnectKeys(keys: KeyProvider, nonce: Uint8Array, di
   return { edSecret, xSecret, xPublic }
 }
 
+/** The mediator's client identity of a peer DID (the X25519 method as its document writes it, and its
+ *  key): what the wire authenticates under, and what a mediator double reads its acknowledgements with. */
+export async function peerClient(did: string): Promise<{ readonly kid: string; readonly x: Uint8Array } | null> {
+  const peer = await sc.parsePeer(did)
+  return peer ? { kid: peer.ref + peer.doc.keyAgreement[0], x: peer.x } : null
+}
+
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 
 export interface SharedConnectWireConfig {
@@ -81,7 +90,8 @@ export interface SharedConnectWireConfig {
    *  counterpart from the first frame */
   readonly peerDid?: string
   readonly clock: DeviceTimers
-  /** a document for the holder, with the TSP sender the wire verified */
+  /** a document for the holder, with the TSP sender the wire verified; a rejection means the holder did
+   *  not take it: the frame is not acknowledged and the mediator delivers it again */
   readonly onDocument: (doc: unknown, senderDid: string) => void | Promise<void>
   readonly onState?: (s: 'connected' | 'connecting' | 'unreachable') => void
   /** frames refused for good (diagnostics; a code and a type, never bytes or identifiers) */
@@ -137,9 +147,14 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
 
   // frames one after another
   let queue: Promise<void> = Promise.resolve()
-  const onTspFrame = (qb2: Uint8Array) => {
+  // The session awaits this before it acknowledges the frame at the mediator (vti-didcomm-js: ack after
+  // hand-off): a document the holder could not take rejects here, stays at the mediator and comes
+  // again when the socket opens next.
+  const onTspFrame = (qb2: Uint8Array): Promise<void> => {
     busy++
-    queue = queue.then(() => handleFrame(qb2), () => handleFrame(qb2)).finally(() => { busy-- })
+    const taken = queue.then(() => handleFrame(qb2), () => handleFrame(qb2))
+    queue = taken.catch(() => undefined)
+    return taken.finally(() => { busy-- })
   }
   async function handleFrame(qb2: Uint8Array): Promise<void> {
     if (closed) return

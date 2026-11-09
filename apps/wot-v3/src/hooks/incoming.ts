@@ -37,6 +37,7 @@ export function incomingExecutor(port: AppPort, platform: Pick<Platform, 'clock'
   return async (e: IncomingEffect): Promise<EffectResult> => {
     switch (e.id) {
       case 'inc.counter':
+        // (a proposal is asked only before its code's end: the queue's expiry takes it away then)
         return fromResult(e.contactId === null ? await port.trust.decide(e.decision, 'accept').done : await port.trust.counterVerify(e.contactId).done)
       case 'inc.expire':
         await new Promise<void>((resolve) => platform.clock.setTimer(e.at, resolve))

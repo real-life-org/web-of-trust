@@ -510,8 +510,11 @@ opening is in use and ends with the generation (rule 3); a document it reads rea
 in that generation.
 
 The session keeps one carriage per opening (`shared-connect-carriage.ts`). Which enactments have a
-wire is read from the holder's view: an open one (an inviter's without a counterpart only while its
-link is live), and a closed one for two minutes after it closed. Documents of a commit
+wire is read from the holder's view: an open one within the bounds of its link (a code nobody
+answered: while it is live; a proposal nobody decided: two minutes more; once accepted: an hour for
+the documents that complete it), and a closed one for two minutes after it closed. A frame is
+acknowledged at the mediator only after the holder took its document; one it could not take comes
+again at the next connect. Documents of a commit
 (`sharedconnect.send`) go out in order; after a send that did not reach the socket, a reconnect or a
 restart, the whole `outbox` of the view goes out again, and the counterpart's machine answers a
 duplicate without acting twice. The carriage starts from the view whenever the opening becomes the

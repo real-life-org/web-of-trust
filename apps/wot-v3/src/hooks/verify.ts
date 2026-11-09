@@ -119,6 +119,9 @@ export function verifyExecutor(
       case 'ver.counter':
         return fromResult(await port.trust.counterVerify(e.contactId).done)
       case 'ver.decide':
+        // a proposal is accepted only while the code it answers is valid: past it the person may have
+        // scanned a new code already, and nothing is issued for the old one
+        if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
         return fromResult(await port.trust.decide(e.decision, e.choice).done)
     }
   }
@@ -141,7 +144,7 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   const open = decisions.value.flatMap((d) =>
     d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
   )
-  const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' ? [{ id: d.id, connection: d.connection, card: d.answers?.card ?? null, name: d.name }] : []))
+  const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
   const all = port.stores.connections.get()
   const connections = Object.fromEntries((all.status === 'ready' ? all.value : []).map((c) => [c.id, { status: c.status, contactId: c.contactId }]))
   return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections }

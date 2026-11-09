@@ -213,7 +213,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'confirm': {
       // the scanner: "not now" stores nothing, back to the own code
       return page(
-        <PersonConfirmBody name={nameOf(s.preview.name)} when="now" />,
+        <div className="flex flex-1 flex-col">
+          <PersonConfirmBody name={nameOf(s.preview.name)} when="now" />
+          {/* the name is what the code states, a card's as much as a link's */}
+          <p className="m-0 pb-4 text-center text-xs text-muted-foreground">{v.connectNameNote}</p>
+        </div>,
         <PersonConfirmActions onConfirm={() => send({ type: 'yes' })} onNotNow={() => send({ type: 'notThem' })} />,
       )
     }

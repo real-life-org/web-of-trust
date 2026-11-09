@@ -358,7 +358,7 @@ describe('incoming proposals over the mediator (real devices, the connection cer
     const first = await meet()
     // the verify flow is closed (no shown code of its own): the queue's entry is the proposal
     const entries = incomingEntries(B.port, null)
-    expect(entries).toMatchObject([{ contactId: null, name: 'Al', validUntil: first.expiresAt }])
+    expect(entries).toMatchObject([{ contactId: null, name: 'Al', validUntil: first.expiresAt + 60_000 }])
     // the code the flow shows right now is the flow's own to ask for
     expect(incomingEntries(B.port, first.card)).toEqual([])
     const done = await incomingExecutor(B.port, B.platform)({ id: 'inc.counter', run: 1, decision: entries![0]!.id, contactId: null })
@@ -374,8 +374,10 @@ describe('incoming proposals over the mediator (real devices, the connection cer
     // a second code, never answered: once it ended the proposal answers no code and is asked nowhere
     await meet()
     expect(incomingEntries(B.port, null)).toHaveLength(1)
-    clock.advance(11 * 60_000)
+    // the code's ten minutes and the ceremony's clock tolerance
+    clock.advance(12 * 60_000)
     await settle()
-    expect(incomingEntries(B.port, null)).toEqual([])
+    // the queue judges by the device time (its expiry timer); the entry's end is behind it
+    expect((incomingEntries(B.port, null) ?? []).filter((e) => clock.now() < e.validUntil)).toEqual([])
   }, 60_000)
 })

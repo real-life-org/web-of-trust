@@ -24,6 +24,7 @@
 import { x25519 } from '@noble/curves/ed25519.js'
 import { didKey, jwk, multibase, pack as didcommPack, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
 import { decodeEnvelope, describeVersion, isRevisionError, nextHop, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { peerClient } from '../src/adapters/rltp/shared-connect-wire'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
 export const DOUBLE_DID = 'did:example:mediator-double'
@@ -337,10 +338,19 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   }
 
   async function ackedBy(did: string): Promise<string[]> {
-    const doc = didKey.resolve(did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
-    const first = doc.keyAgreement?.[0]
-    const clientKid = typeof first === 'string' ? first : first?.id
-    const clientX = peerKeys(did).encPub
+    // a did:key client of a relationship's wire, or the did:peer of a shared-connect enactment's
+    let clientKid: string | undefined
+    let clientX: Uint8Array
+    const peer = did.startsWith('did:peer:') ? await peerClient(did) : null
+    if (peer) {
+      clientKid = peer.kid
+      clientX = peer.x
+    } else {
+      const doc = didKey.resolve(did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
+      const first = doc.keyAgreement?.[0]
+      clientKid = typeof first === 'string' ? first : first?.id
+      clientX = peerKeys(did).encPub
+    }
     const ids: string[] = []
     for (const f of sent.filter((s) => s.did === did)) {
       for (const sk of [xSecret, ...oldSecrets]) {

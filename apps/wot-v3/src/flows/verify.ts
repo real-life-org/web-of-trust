@@ -29,6 +29,8 @@ export interface ProposalRef {
   readonly connection: ConnectionId
   readonly card: CardRef | null
   readonly name: string | null
+  /** the end of the code it answers: it is accepted only before (the person scans again after) */
+  readonly validUntil: number
 }
 
 /** where a connection ceremony stands, from the last published bundle */
@@ -89,7 +91,7 @@ export type VerifyState =
   | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   /** a proposal answers the shown code (a connection ceremony): the shower accepts or declines; a
    *  decline tells the other side and spends the code */
-  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
+  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly validUntil: number; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
   /** the ceremony runs: the scanner waits for the shower's answer, the shower for the last documents */
   | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean })
   /** the shower declined the scanner's proposal: nothing was created */
@@ -145,7 +147,8 @@ export type VerifyEffect =
   | ({ readonly id: 'ver.wait'; readonly ms: number } & Effect)
   | ({ readonly id: 'ver.sent'; readonly contactId: ContactId } & Effect)
   | ({ readonly id: 'ver.counter'; readonly contactId: ContactId } & Effect)
-  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline' } & Effect)
+  /** `validUntil`: an accept past the answered code's end is not issued (`code-expired`) */
+  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline'; readonly validUntil: number } & Effect)
 
 /** every state name of the machine (screen catalog coverage) */
 export const VERIFY_STATES = [
@@ -249,6 +252,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connectIncoming.decline', 'decline', 'connectIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.decide'] }),
   row('connectIncoming.result.accepted', 'result ver.decide', 'connecting{shower}', 'free', 'the ceremony completes from the core’s snapshot', { guard: 'accepted, not complete yet' }),
   row('connectIncoming.result.declined', 'result ver.decide', 'showing', 'free', '–', { guard: 'declined: the code is spent', effects: ['ver.show'] }),
+  row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'accepted past the code’s end: nothing is issued, a fresh code', effects: ['ver.show'] }),
   row('connectIncoming.result.failed', 'result ver.decide', 'connectIncoming{failed}', 'free', 'the decision stays open'),
   row('connectIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list'),
   row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open and the ceremony not complete', effects: ['ver.show'] }),
@@ -348,7 +352,7 @@ function step(s: S, e: E): Out {
         if (d) return goto(s, { name: 'confirmIncoming', card: null, contactId: d.contactId, decision: d.id, name2: d.name, busy: false, failed: false }, 'ready.bundle.answered')
         // the proposal of a connection ceremony that answers this very code
         const p = ref === null ? undefined : e.proposals?.find((x) => x.card === ref)
-        if (p) return goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, name2: p.name, busy: null, failed: false }, 'ready.bundle.proposed')
+        if (p) return goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, validUntil: p.validUntil, name2: p.name, busy: null, failed: false }, 'ready.bundle.proposed')
         return stay(s)
       }
       if (e.type === 'scan') return emit(s, { name: 'cameraChecking' }, 'ready.scan', (r) => [{ id: 'cam.check', run: r }])
@@ -495,6 +499,7 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'connectIncoming': {
       if (isResult(e, s.run, 'ver.decide')) {
+        if (!e.result.ok && e.result.code === 'code-expired') return show(s, 'connectIncoming.result.expired')
         if (!e.result.ok) return goto(s, { ...pickConnect(s), busy: null, failed: true }, 'connectIncoming.result.failed')
         if (s.busy === 'decline') return show(s, 'connectIncoming.result.declined')
         return connectionEnd(s, s.connection, s.name2) ?? goto(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'shower', waitLong: false }, 'connectIncoming.result.accepted')
@@ -502,7 +507,7 @@ function step(s: S, e: E): Out {
       if (s.busy) return stay(s)
       if (e.type === 'accept' || e.type === 'decline') {
         const choice = e.type
-        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice }])
+        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice, validUntil: s.validUntil }])
       }
       if (e.type === 'notNow' || e.type === 'back' || e.type === 'leave') return exit(s, 'back', null, 'connectIncoming.notNow', s.decision)
       if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) {
@@ -534,7 +539,7 @@ function step(s: S, e: E): Out {
   }
 }
 
-const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, name2: s.name2 })
+const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, validUntil: s.validUntil, name2: s.name2 })
 const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role })
 
 /** Where a connection ceremony that ended leaves the flow, by the last bundle; null while it runs.
