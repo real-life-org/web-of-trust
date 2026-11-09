@@ -1,5 +1,5 @@
 // Core refusals → port errors (architecture §2.6). One table over the complete ActError union of
-// the pinned library (0.9.0): a new code in a library update is a type error here, not a silent fallback.
+// the pinned library (0.16.0): a new code in a library update is a type error here, not a silent fallback.
 // Library code and rule reference go only into the diagnostic store; the port error carries the
 // DiagnosticId (wiring follows with the runtime).
 
@@ -60,6 +60,19 @@ export const ACT_ERRORS = {
   'log-failure': GENERIC,
   'unknown-act': GENERIC,
   'no-declaration': GENERIC,
+  // Access 0.58 stage 1 (lib 0.13.0): the group log's bounds
+  'not-yet-canonical': GENERIC,
+  oversize: GENERIC,
+  // shared-connect on the holder (lib 0.16.0; the port's own codes come with the shared-connect PR)
+  'link-invalid': r('card-invalid'),
+  'enactment-unknown': GENERIC,
+  'enactment-closed': r('code-used'),
+  'not-pending': r('decision-gone'),
+  concurrent: GENERIC,
+  // the app's KeyProvider implements sharedConnectMessaging: a refusal is a bug of the app
+  'keys-missing': BUG,
+  // trust toward a shared-connect contact the two sides did not meet (A3)
+  'not-met': GENERIC,
 } as const satisfies Record<ActError, Mapped>
 
 /** Refusals that say "not now", not "no": the library could not write its own log, or this device's
