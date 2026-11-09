@@ -56,6 +56,11 @@ export interface RltpDeps {
   readonly subtle?: SubtleCrypto
   /** tests and harness only */
   readonly faults?: RltpFaults
+  /** the ceremony a shown code starts: 'shared-connect' (the connection ceremony across apps; needs a
+   *  carrier with wires for it, the VTI mediator) or 'card' (encounter-scan's card, the default: the
+   *  form every carrier can show). The store builds name 'shared-connect' (app/compose.ts); codes of
+   *  both kinds are read either way */
+  readonly ceremony?: 'shared-connect' | 'card'
   /** foreground / background of the app (LifecyclePort.onState) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
   /** the interop probe of the developer area (interop-probe.ts): only a build that enables it passes one */
@@ -97,6 +102,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     contacts: writableStore(loadable((m) => m.contacts)),
     groups: writableStore(loadable(() => [] as never[])),
     decisions: writableStore(loadable((m) => m.decisions)),
+    connections: writableStore(loadable((m) => m.connections)),
     candidacies: writableStore(loadable(() => [] as never[])),
     profile: writableStore(loadable((m) => m.profile)),
     standing: writableStore(loadable((m) => m.standing)),
@@ -123,6 +129,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     top.contacts.set(loadable((m) => m.contacts))
     top.groups.set(loadable(() => []))
     top.decisions.set(loadable((m) => m.decisions))
+    top.connections.set(loadable((m) => m.connections))
     top.candidacies.set(loadable(() => []))
     top.profile.set(loadable((m) => m.profile))
     top.standing.set(loadable((m) => m.standing))
@@ -146,6 +153,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     ...(deps.retry ? { retry: deps.retry } : {}),
     ...(deps.subtle ? { subtle: deps.subtle } : {}),
     ...(deps.faults ? { faults: deps.faults } : {}),
+    ...(deps.ceremony ? { ceremony: deps.ceremony } : {}),
     diagnostics,
     ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
     publish,
@@ -206,10 +214,14 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
   const trust: TrustCommands = {
     showCard: () => withSession((s) => s.intent('showCard', 'encounter', 'showCard', {})),
     previewCard: async (raw) => (session ? session.previewCard(raw) : (LOCKED as Result<never>)),
-    confirmCard(raw) {
+    confirmCard(raw, origin) {
       return withSession((s) => {
         const card = decodeCardLink(raw)
-        if (!card) return handle({ ok: false, error: { kind: 'refused', code: 'card-invalid' } })
+        // no card: the trigger link of a connection ceremony; the holder reads and refuses it itself
+        if (!card) {
+          const link = raw.trim()
+          return s.intent('confirmCard', 'encounter', `confirmCard|${link}`, { link, role: 'displayed', origin: origin ?? 'manual' }, { role: 'displayed', name: null, knownContact: null, self: false })
+        }
         const role = typeof card.sentTo === 'string' ? 'sent' : 'displayed'
         const name = typeof card.name === 'string' ? card.name : null
         return s.intent('confirmCard', 'encounter', `confirmCard|${raw.trim()}`, { card, role }, { role, name, knownContact: null, self: false })

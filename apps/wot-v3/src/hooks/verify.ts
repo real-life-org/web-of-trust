@@ -106,7 +106,7 @@ export function verifyExecutor(
       case 'ver.preview':
         return fromResult(await port.trust.previewCard(e.raw))
       case 'ver.confirm':
-        return fromResult(await port.trust.confirmCard(e.raw).done)
+        return fromResult(await port.trust.confirmCard(e.raw, e.origin).done)
       case 'ver.capture': {
         const r = await port.trust.confirmCard(e.raw).done
         if (!r.ok) return fromResult(r)
@@ -118,6 +118,11 @@ export function verifyExecutor(
         return fromResult(await port.trust.sentCardFor(e.contactId))
       case 'ver.counter':
         return fromResult(await port.trust.counterVerify(e.contactId).done)
+      case 'ver.decide':
+        // a proposal is accepted only while the code it answers is valid: past it the person may have
+        // scanned a new code already, and nothing is issued for the old one
+        if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
+        return fromResult(await port.trust.decide(e.decision, e.choice).done)
     }
   }
 }
@@ -139,7 +144,10 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   const open = decisions.value.flatMap((d) =>
     d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
   )
-  return { type: 'bundle', verifications, aliases, decisions: open }
+  const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
+  const all = port.stores.connections.get()
+  const connections = Object.fromEntries((all.status === 'ready' ? all.value : []).map((c) => [c.id, { status: c.status, contactId: c.contactId }]))
+  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections }
 }
 
 export interface VerifyFlow {
@@ -174,6 +182,7 @@ export function useVerify(
     }
     const offContacts = port.stores.contacts.subscribe(push)
     const offDecisions = port.stores.decisions.subscribe(push)
+    const offConnections = port.stores.connections.subscribe(push)
     // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
     // again (a bundle that answered the card while the camera was open takes over now)
     let last = r.get().name
@@ -188,6 +197,7 @@ export function useVerify(
     return () => {
       offContacts()
       offDecisions()
+      offConnections()
       offScan()
       scans.current?.abort()
       r.dispose()

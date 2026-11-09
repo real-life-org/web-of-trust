@@ -213,7 +213,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'confirm': {
       // the scanner: "not now" stores nothing, back to the own code
       return page(
-        <PersonConfirmBody name={nameOf(s.preview.name)} when="now" />,
+        <div className="flex flex-1 flex-col">
+          <PersonConfirmBody name={nameOf(s.preview.name)} when="now" />
+          {/* the name is what the code states, a card's as much as a link's */}
+          <p className="m-0 pb-4 text-center text-xs text-muted-foreground">{v.connectNameNote}</p>
+        </div>,
         <PersonConfirmActions onConfirm={() => send({ type: 'yes' })} onNotNow={() => send({ type: 'notThem' })} />,
       )
     }
@@ -278,6 +282,50 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         <PersonConfirmActions busy={s.busy} onConfirm={() => send({ type: 'accept' })} onNotNow={() => send({ type: 'notNow' })} />,
         () => send({ type: s.name === 'confirmIncoming' ? 'notNow' : 'leave' }),
       )
+    case 'connectIncoming':
+      // a proposal answers the shown code: accept issues the own credential, decline tells the other
+      // side no and spends the code; back leaves the request open
+      return page(
+        <div className="flex flex-1 flex-col">
+          <PersonConfirmBody name={nameOf(s.name2)} when="now" scanned failed={s.failed} />
+          <p className="m-0 pb-4 text-center text-xs text-muted-foreground">{v.connectNameNote}</p>
+        </div>,
+        <>
+          <PrimaryAction label={v.connectYes} busy={s.busy === 'accept'} disabled={s.busy !== null} onClick={() => send({ type: 'accept' })} />
+          <Button size="lg" variant="muted" className="w-full" disabled={s.busy !== null} onClick={() => send({ type: 'decline' })}>
+            {v.connectNo}
+          </Button>
+        </>,
+        () => send({ type: 'notNow' }),
+      )
+    case 'connecting': {
+      const name = firstName(nameOf(s.name2))
+      return page(
+        <>
+          <Hero icon={<CheckIcon />} title={f(s.role === 'scanner' ? v.connectWaitTitle : v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectWaitBody : v.connectFinishBody, { name })} />
+          {s.waitLong ? (
+            <Callout tone="warning" role="status">
+              <div className="flex flex-col gap-2.5">
+                <span>{v.connectWaitLong}</span>
+                <div>
+                  <Button variant="outline" size="sm" onClick={() => send({ type: 'keepWaiting' })}>
+                    {v.keepWaiting}
+                  </Button>
+                </div>
+              </div>
+            </Callout>
+          ) : null}
+        </>,
+        undefined,
+        () => send({ type: 'leave' }),
+      )
+    }
+    case 'declined':
+      return page(
+        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={v.declinedBody} />,
+        <PrimaryAction label={t.common.close} onClick={() => send({ type: 'done' })} />,
+        () => send({ type: 'done' }),
+      )
     case 'counterPending': {
       const name = nameOf(s.name2)
       return page(
@@ -313,11 +361,15 @@ function SuccessActions({ contactId, name, onChat }: { contactId: ContactId; nam
   const { t, f } = useI18n()
   const contact = useContact(contactId)
   const given = contact.status === 'ready' && contact.value?.trust.given === true
+  // a contact of another app (the connection ceremony without a card): no conversation, no trust yet
+  const channel = contact.status !== 'ready' || contact.value?.channel !== false
   const [sheet, setSheet] = useState(false)
   const focus = useRef<HTMLElement | null>(null)
   return (
     <>
-      {given ? (
+      {!channel ? (
+        <PrimaryAction label={t.common.close} onClick={onChat} />
+      ) : given ? (
         <PrimaryAction label={t.verify.openChat} onClick={onChat} />
       ) : (
         <>

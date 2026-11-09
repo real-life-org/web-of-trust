@@ -5,7 +5,7 @@
 import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
-import type { CommandName, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
+import type { CommandName, ConnectionId, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
 import type { LogLine, MessageLine } from './app-data'
 import type { IntentPolicy } from './journal'
 
@@ -18,6 +18,26 @@ export interface ActOpts {
 export interface ActContext {
   /** the library's carrier offer from the journaled one in the act input (carrier-offer.ts) */
   offer(raw: unknown): Promise<CarrierOffer | undefined>
+  /** where the documents of a connection ceremony travel (shared-connect 0.1): the build's carrier as
+   *  the relay of the per-encounter messaging identity; null without a carrier that has such wires */
+  readonly relays: readonly { readonly kind: string; readonly address: string }[] | null
+  /** the shown code starts the connection ceremony (the build names it and `relays` is there); else the card */
+  readonly showsLink: boolean
+}
+
+/** how long a shown code is valid (shared-connect 0.1 caps a code read in person at ten minutes) */
+export const CODE_MINUTES = 10
+
+/** the own name a code or a proposal states: the profile's, absent while there is none */
+async function ownName(h: Holder): Promise<{ name: string } | Record<string, never>> {
+  const name = (await h.profile()).name
+  return typeof name === 'string' && name.length > 0 ? { name } : {}
+}
+
+/** `_exp` of a trigger link the holder wrote, in milliseconds */
+export function linkExpiry(link: string): number {
+  const m = /[#&]_exp=(\d+)/.exec(link)
+  return m ? Number(m[1]) * 1000 : 0
 }
 
 /** a later part of an act refused after an earlier one committed: the contact's state is partial,
@@ -135,11 +155,18 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   showCard: {
     policy: 'discard',
     // the displayed card carries this side's delivery hint for C under its proof (lib 0.8.0)
+    // with a carrier for it, the shown code is the trigger link of a connection ceremony (shared-connect
+    // 0.1, the one ceremony of the app); without one, the card of encounter-scan as before
     run: async (h, i, o, ctx) => {
       const carrier = await ctx.offer(i.carrier)
+      // the offer makes the relationship the ceremony opens a carried one (lib 0.17.0)
+      if (ctx.relays && ctx.showsLink) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
       return h.show(carrier ? { ...o, carrier } : o)
     },
     outcome: (events, i) => {
+      const link = ev(events, 'sharedconnect.shown')[0]
+      // the code's instance is its enactment: the proposal that answers it names it (E9)
+      if (link) return { qr: link.link, expiresAt: linkExpiry(link.link), card: link.id }
       const shown = ev(events, 'encounter.shown')[0]
       if (!shown) return null
       const issued = (shown.card as { challenge?: { issuedAt?: unknown } }).challenge?.issuedAt
@@ -156,11 +183,20 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     policyFor: (i) => (i.role === 'sent' ? 'replay' : 'confirm-again'),
     // the scanner's sent card carries its delivery hint for C (lib 0.8.0); a capture offers none
     run: async (h, i, o, ctx) => {
+      // a trigger link: the responder's proposal; `scan` only for a code this device's camera read
+      if (typeof i.link === 'string') {
+        const carrier = await ctx.offer(i.carrier)
+        return h.sharedConnectPropose({ link: i.link, relays: (ctx.relays ?? []).map((r) => ({ ...r })), channel: i.origin === 'camera' ? 'scan' : 'link', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
+      }
       if (i.role === 'sent') return h.captureSentCard(i.card as never, o)
       const carrier = await ctx.offer(i.carrier)
       return h.scan(i.card as never, carrier ? { ...o, carrier } : o)
     },
-    outcome: (events, i) => encounterOutcome(events, i.role === 'sent' ? 'sent' : 'displayed'),
+    outcome: (events, i) => {
+      const proposed = ev(events, 'sharedconnect.proposed')[0]
+      if (proposed) return { kind: 'proposed', connection: proposed.id as ConnectionId, contactId: null } satisfies EncounterOutcome
+      return encounterOutcome(events, i.role === 'sent' ? 'sent' : 'displayed')
+    },
   },
   counterVerify: {
     policy: 'replay',

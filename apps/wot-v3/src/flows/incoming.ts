@@ -10,10 +10,12 @@
 import type { ContactId, DecisionId } from '../port'
 import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 
-/** One open encounter-confirm that answers an own card (from the hook, over `decisions`). */
+/** One open confirmation that answers an own code (from the hook, over `decisions`): an
+ *  encounter-confirm of a contact, or the proposal of a connection ceremony (no contact yet). */
 export interface IncomingEntry {
   readonly id: DecisionId
-  readonly contactId: ContactId
+  /** null for a proposal: its answer is the decision's accept, not the counter-step */
+  readonly contactId: ContactId | null
   readonly name: string | null
   /** arrival: the order of the queue */
   readonly openedAt: number
@@ -49,7 +51,7 @@ export type IncomingEvent =
   | { readonly type: 'confirm' }
   | { readonly type: 'notNow' }
 
-export type IncomingEffect = ({ readonly id: 'inc.counter'; readonly contactId: ContactId } & Effect) | ({ readonly id: 'inc.expire'; readonly at: number } & Effect)
+export type IncomingEffect = ({ readonly id: 'inc.counter'; readonly decision: DecisionId; readonly contactId: ContactId | null } & Effect) | ({ readonly id: 'inc.expire'; readonly at: number } & Effect)
 
 export const INCOMING_STATES = ['idle', 'asking'] as const satisfies readonly IncomingState['name'][]
 
@@ -160,7 +162,7 @@ export function incomingTransition(s: S, e: E): Out {
       }
       if (e.type === 'confirm') {
         const run = s.run + 1
-        return { state: { ...s, run, busy: true, failed: false, timerAt: null }, effects: [{ id: 'inc.counter', run, contactId: s.head.contactId }], row: 'asking.confirm' }
+        return { state: { ...s, run, busy: true, failed: false, timerAt: null }, effects: [{ id: 'inc.counter', run, decision: s.head.id, contactId: s.head.contactId }], row: 'asking.confirm' }
       }
       if (e.type === 'notNow') return judge({ ...base(s), deferred: [...s.deferred, s.head.id] }, null, 'asking.notNow')
       if (e.type === 'defer') {

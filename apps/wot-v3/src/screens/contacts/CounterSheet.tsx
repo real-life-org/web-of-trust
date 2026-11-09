@@ -26,7 +26,8 @@ export function CounterSheet({
   position = null,
   run,
 }: {
-  contactId: ContactId
+  /** null: the proposal of a connection ceremony, answered through `run` */
+  contactId: ContactId | null
   name: string
   open: boolean
   /** "not now", ×, Escape: the decision stays open */
@@ -47,6 +48,7 @@ export function CounterSheet({
   }, [open])
   const own = async () => {
     setFailed(false)
+    if (contactId === null) return
     const r = await counter.run(contactId)
     if (r.ok) onClose()
     else setFailed(true)

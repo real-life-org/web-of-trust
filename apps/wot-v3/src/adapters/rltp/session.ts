@@ -3,8 +3,8 @@
 // transport, and the command service with the intent journal (§3.4). The host (host.ts) creates one
 // per HolderHost.open and drives its shutdown phases.
 
-import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy } from '@real-life/trust-protocol'
+import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
@@ -17,10 +17,11 @@ import { idbAppDb, type AppDb, type AppWrite } from './app-db'
 import { decodeCardLink } from './card-link'
 import { mapActError, TRANSIENT_REFUSALS } from './errors'
 import { createGate, GateClosedError, type Gate } from './gate'
-import { applyEncounterEvents, ingest, statusFinal } from './ingest'
+import { applyEncounterEvents, connectedContact, ingest, statusFinal } from './ingest'
 import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
 import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
+import { createSharedConnectCarriage, type SharedConnectCarriage } from './shared-connect-carriage'
 import { keysFromRootIkm } from './keys'
 import { idbHolderStore, type HolderStore } from './store-idb'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
@@ -43,6 +44,8 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent */
+  readonly ceremony?: 'shared-connect' | 'card'
   /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
    *  in use */
   readonly diagnose?: (entry: Omit<DiagnosticEntry, 'id'>) => void
@@ -289,7 +292,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
-  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView } | null = null
+  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[] } | null = null
   /** events announced but not yet taken over, and the ids already taken (dedupe of act results) */
   let pending: HolderEvent[] = []
   const seen = new Set<string>()
@@ -333,6 +336,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       contacts: lastViews.contacts,
       prompts: lastViews.prompts,
       profile: lastViews.profile,
+      connections: lastViews.connections,
       encounters,
       displayed: (snap.kv.get(KV.displayed) as DisplayedCards | undefined) ?? {},
       lines,
@@ -354,9 +358,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         (l): l is MessageLine => l.kind === 'message' && l.dir === 'out' && l.digest !== null && !statusFinal(l.status),
       )
       const a = (await gate.run((h) => h.profile())).commitSeq
-      const [contacts, prompts, inbox, statusViews] = await gate.run((h) =>
-        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? '')))]),
+      const [rawContacts, prompts, inbox, statusViews, connections] = await gate.run((h) =>
+        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect()]),
       )
+      // one reading of "verified" for ingest, projection and the flows (connectedContact)
+      const contacts = rawContacts.map(connectedContact)
       const profile = await gate.run((h) => h.profile())
       if (profile.commitSeq !== a) {
         // a commit landed while reading: the next attempt waits for the burst to come to rest
@@ -379,7 +385,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
-      lastViews = { commitSeq: a, contacts, prompts, profile }
+      lastViews = { commitSeq: a, contacts, prompts, profile, connections }
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
@@ -578,8 +584,36 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => {
     stopped = true
   })
+  // ── shared-connect (shared-connect-carriage.ts): a wire per enactment at the build's carrier ──
+  // The holder runs the ceremony; the carriage moves its documents. Only with a carrier that has such
+  // wires (the VTI mediator) and never in a dereg-only opening.
+  const keys = keysFromRootIkm(deps.rootIkm)
+  const lease = deps.transport
+  const sharedConnect: SharedConnectCarriage | null =
+    lease.kind === 'custody' && !deregOnly
+      ? createSharedConnectCarriage({
+          open: (cfg) => lease.sharedConnect(cfg),
+          keys,
+          views: () => gate.run((h) => h.sharedConnect()),
+          receive: async (doc, sender) => {
+            const r = await gate.run((h) => h.sharedConnectReceive(doc, sender, when()))
+            if (r.ok) schedule(r.nextDueAt)
+            return r
+          },
+          attempts: {
+            read: async () => (await app.get<Record<string, number>>('kv', KV.connectAttempts)) ?? {},
+            write: (next: Readonly<Record<string, number>>) => queue(() => app.write([{ store: 'kv', key: KV.connectAttempts, value: next }])),
+          },
+          now,
+          setTimer,
+          diagnose: (code, detail) => deps.diagnose?.({ at: now(), code, ...(detail !== undefined ? { detail } : {}) }),
+        })
+      : null
+  undo.push(() => sharedConnect?.stop())
   const unsubscribe = holder.subscribe(({ events }) => {
     if (stopped) return
+    // every commit's events, also those of a document the carriage itself handed to the holder
+    sharedConnect?.events(events)
     for (const e of events) {
       if (seen.has(e.eventId)) continue
       seen.add(e.eventId)
@@ -1253,10 +1287,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** an encounter act opens a relationship: with a custody carrier its card carries the delivery hint
    *  for C under a fresh N, drawn here and journaled with the act (carrier-offer.ts) */
   const withCarrier = (command: string, input: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> =>
+    // also for a connection ceremony (shared-connect): its acts take the offer as show and scan do
     deps.transport.kind === 'custody' && (command === 'showCard' || (command === 'confirmCard' && input.role === 'displayed'))
       ? { ...input, carrier: journaledOffer(deps.transport.carrier, entropy.bytes(32)) }
       : input
-  const actContext: ActContext = { offer: (raw) => carrierOffer(deps.rootIkm, raw) }
+  const actContext: ActContext = {
+    offer: (raw) => carrierOffer(deps.rootIkm, raw),
+    // a trigger link that was read is answered over the carrier's address, where the carrier has wires
+    // for it (the VTI mediator); the shown code is such a link only where the build names it
+    relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
+    showsLink: deps.ceremony === 'shared-connect',
+  }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {
     if (i === null) return null
@@ -1534,9 +1575,28 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   // ── reads ───────────────────────────────────────────────────────────────────────────────────
+  /** The trigger link of a connection ceremony (shared-connect 0.1): read without the network; the name
+   *  is the link's `_label`, unverified. An own link is this device's code. */
+  const previewLink = async (raw: string): Promise<Result<CardPreview>> => {
+    const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
+    if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
+    let self = false
+    let used = false
+    try {
+      const mine = (await gate.run((h) => h.sharedConnect())).find((v) => v.id === read.link.id)
+      self = mine?.role === 'inviter'
+      used = mine?.role === 'responder'
+    } catch (e) {
+      return { ok: false, error: toAppError(e) }
+    }
+    // a link this device answered before is spent (one code, one ceremony)
+    if (used) return { ok: false, error: { kind: 'refused', code: 'code-used' } }
+    return { ok: true, value: { role: 'displayed', name: read.link.label ?? null, knownContact: null, self } }
+  }
+
   const previewCard = async (raw: string): Promise<Result<CardPreview>> => {
     const card = decodeCardLink(raw)
-    if (!card) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
+    if (!card) return previewLink(raw)
     if ((await cardOk(card)) !== null) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
     const sent = typeof card.sentTo === 'string'
     const challenge = (card.challenge ?? null) as { value?: unknown; issuedAt?: unknown } | null
@@ -1593,6 +1653,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         const online = deps.transport.status.get().network === 'online'
         if (online && !wasOnline) {
           void track(replayOpen()).catch(() => undefined)
+          sharedConnect?.poke()
           // what waited for the network goes over again from the holder
           parked.clear()
           void offer()
@@ -1604,6 +1665,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
       void track(due())
+      sharedConnect?.poke()
       void track(replayOpen()).catch(() => undefined)
     }) ?? (() => undefined)
   undo.push(() => offLifecycle())
@@ -1631,6 +1693,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     (ending ??= (async () => {
       stopped = true
       gate.close()
+      sharedConnect?.stop()
       // the generation ends at once: an answer computed from now on is `later` (rule 3)
       deps.transport.deactivate()
       offStatus()
@@ -1683,12 +1746,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         for (let i = 0; i < turns; i++) await new Promise((r) => setTimeout(r, 0))
       })
     },
-    transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0),
+    transportBusy: () => (deps.transport.kind === 'custody' ? deps.transport.busy() : 0) + (sharedConnect?.busy() ?? 0),
     timerBusy: () => background,
     offer() {
       if (deregOnly) return
       parked.clear()
       void offer()
+      // the wires of the open shared-connect enactments, from the holder's view
+      sharedConnect?.resume()
     },
     queued,
     carriage: deps.transport.kind === 'custody' ? deps.transport.carriage : writableStore<Carriage>({ contacts: {}, open: 0, lastReceiveAt: null }),
@@ -1727,6 +1792,7 @@ function toAppEvent(e: HolderEvent): AppEvent | null {
     case 'encounter.accepted':
       return e.mutual ? { ...base, type: 'encounter.mutual', contactId: e.contactId as ContactId, isNew: true } : null
     case 'prompt.opened':
+      if (e.kind === 'shared-connect-confirm') return { ...base, type: 'decision.opened', decision: e.promptId as never, kind: 'connect-confirm' }
       return e.kind === 'encounter-confirm' ? { ...base, type: 'decision.opened', decision: e.promptId as never, kind: 'encounter-confirm' } : null
     case 'trust.received':
       return { ...base, type: 'trust.received', contactId: e.contactId as ContactId }

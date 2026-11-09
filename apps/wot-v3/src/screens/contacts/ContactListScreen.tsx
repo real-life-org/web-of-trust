@@ -77,9 +77,10 @@ export function ContactListScreen({ alone = false }: { alone?: boolean }) {
                   unread={conv.unread}
                   blocked={c.blocked}
                   selected={selected === conv.key}
-                  onSelect={() => send({ type: 'open', route: { kind: 'chat', key: conv.key } })}
+                  // a contact of another app has no conversation: its details instead
+                  onSelect={() => send(c.channel ? { type: 'open', route: { kind: 'chat', key: conv.key } } : { type: 'push', route: { kind: 'contact', id: c.id } })}
                   action={
-                    c.blocked ? undefined : (
+                    c.blocked || !c.channel ? undefined : (
                       <Switch
                         className="hit-target relative"
                         aria-label={f(c.trust.given ? t.contacts.trustOff : t.contacts.trustOn, { name: c.name ?? t.contacts.unnamed })}

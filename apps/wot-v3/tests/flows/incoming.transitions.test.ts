@@ -176,7 +176,7 @@ describe('incoming transitions over a scripted executor', () => {
     const timers: { at: number; resolve: (r: EffectResult) => void }[] = []
     const exec = (e: IncomingEffect): Promise<EffectResult> =>
       new Promise((resolve) => {
-        if (e.id === 'inc.counter') counters.push({ contactId: e.contactId, resolve })
+        if (e.id === 'inc.counter') counters.push({ contactId: e.contactId ?? '', resolve })
         else timers.push({ at: e.at, resolve })
       })
     const r: FlowRunner<IncomingState, IncomingEvent> = cover.track(createFlowRunner(incoming, incomingStart(0), exec))
@@ -324,5 +324,60 @@ describe('the success moment (E7)', () => {
     expect(flowCovers({ name: 'committing', run: 1, card: null, mutual: [], preview: { ...preview, knownContact: null }, origin: 'camera' } as VerifyState, d!.contactId)).toBe(false)
     expect(flowAsks(null)).toBe(false)
     void (A.port as AppPort)
+  }, 60_000)
+})
+
+// ── a proposal of a connection ceremony is asked like a card's confirmation, while its code is valid ──
+describe('incoming proposals over the mediator (real devices, the connection ceremony)', () => {
+  it('a proposal that arrives outside the verify flow is asked; confirming accepts it and both sides connect; past the code’s end it is asked nowhere', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const A = await loopbackDevice({ carrier: { mediator: med }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 81, ceremony: 'shared-connect' })
+    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 87, ceremony: 'shared-connect' })
+    const settle = async () => {
+      let last = ''
+      for (let i = 0, calm = 0; i < 400 && calm < 2; i++) {
+        await med.settled()
+        await A.port.session()?.idle()
+        await B.port.session()?.idle()
+        await new Promise((r) => setTimeout(r, 0))
+        const busy = (A.port.session()?.transportBusy() ?? 0) + (B.port.session()?.transportBusy() ?? 0)
+        const now = JSON.stringify([A.port.session()?.models()?.revision, B.port.session()?.models()?.revision])
+        calm = busy === 0 && now === last ? calm + 1 : 0
+        last = now
+      }
+    }
+    const meet = async () => {
+      const shown = await B.port.trust.showCard().done
+      if (!shown.ok) throw new Error('show')
+      await settle()
+      expect((await A.port.trust.confirmCard(shown.value.qr, 'camera').done).ok).toBe(true)
+      await settle()
+      return shown.value
+    }
+    const first = await meet()
+    // the verify flow is closed (no shown code of its own): the queue's entry is the proposal
+    const entries = incomingEntries(B.port, null)
+    expect(entries).toMatchObject([{ contactId: null, name: 'Al', validUntil: first.expiresAt + 60_000 }])
+    // the code the flow shows right now is the flow's own to ask for
+    expect(incomingEntries(B.port, first.card)).toEqual([])
+    const done = await incomingExecutor(B.port, B.platform)({ id: 'inc.counter', run: 1, decision: entries![0]!.id, contactId: null })
+    expect(done.ok).toBe(true)
+    await settle()
+    clock.advance(CARRIER_TICK_MS)
+    await settle()
+    const contactsOf = (d: LoopbackDevice) => {
+      const v = d.port.stores.contacts.get()
+      return v.status === 'ready' ? v.value : []
+    }
+    expect([contactsOf(A)[0]?.verification, contactsOf(B)[0]?.verification]).toEqual(['mutual', 'mutual'])
+    // a second code, never answered: once it ended the proposal answers no code and is asked nowhere
+    await meet()
+    expect(incomingEntries(B.port, null)).toHaveLength(1)
+    // the code's ten minutes and the ceremony's clock tolerance
+    clock.advance(12 * 60_000)
+    await settle()
+    // the queue judges by the device time (its expiry timer); the entry's end is behind it
+    expect((incomingEntries(B.port, null) ?? []).filter((e) => clock.now() < e.validUntil)).toEqual([])
   }, 60_000)
 })

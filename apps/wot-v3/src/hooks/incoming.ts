@@ -23,18 +23,22 @@ export function incomingEntries(port: AppPort, shownByFlow: CardRef | null): Inc
   const contacts = port.stores.contacts.get()
   if (decisions.status !== 'ready' || contacts.status !== 'ready') return null
   const names = new Map(contacts.value.map((c) => [c.id as string, c.name] as const))
-  return decisions.value.flatMap((d) =>
-    d.kind === 'encounter-confirm' && d.state === 'open' && d.answers !== null && d.answers.card !== shownByFlow
-      ? [{ id: d.id, contactId: d.contactId, name: names.get(d.contactId) ?? null, openedAt: d.openedAt, validUntil: d.answers.validUntil }]
-      : [],
-  )
+  return decisions.value.flatMap((d): IncomingEntry[] => {
+    if (d.state !== 'open' || !('answers' in d) || d.answers === null || d.answers.card === shownByFlow) return []
+    if (d.kind === 'encounter-confirm') return [{ id: d.id, contactId: d.contactId, name: names.get(d.contactId) ?? null, openedAt: d.openedAt, validUntil: d.answers.validUntil }]
+    // the proposal of a connection ceremony: asked while its code is valid, like a card's confirmation;
+    // past the code's end it is asked nowhere (the person scans again)
+    if (d.kind === 'connect-confirm') return [{ id: d.id, contactId: null, name: d.name, openedAt: d.openedAt, validUntil: d.answers.validUntil }]
+    return []
+  })
 }
 
 export function incomingExecutor(port: AppPort, platform: Pick<Platform, 'clock'>) {
   return async (e: IncomingEffect): Promise<EffectResult> => {
     switch (e.id) {
       case 'inc.counter':
-        return fromResult(await port.trust.counterVerify(e.contactId).done)
+        // (a proposal is asked only before its code's end: the queue's expiry takes it away then)
+        return fromResult(e.contactId === null ? await port.trust.decide(e.decision, 'accept').done : await port.trust.counterVerify(e.contactId).done)
       case 'inc.expire':
         await new Promise<void>((resolve) => platform.clock.setTimer(e.at, resolve))
         return { ok: true, value: { now: platform.clock.now() } }
@@ -54,6 +58,9 @@ export function flowAsks(v: VerifyState | null): boolean {
 export function flowCovers(v: VerifyState | null, contactId: ContactId): boolean {
   if (v === null || v.name === 'exit') return false
   if (v.name === 'committing' || v.name === 'capturing') return v.preview.knownContact === contactId
+  // a connection ceremony runs towards the flow's own success; its contact exists only at the end, so
+  // the bundle that makes it mutual can come before the flow has read it
+  if (v.name === 'connecting' || v.name === 'connectIncoming') return true
   return 'contactId' in v && v.contactId === contactId
 }
 

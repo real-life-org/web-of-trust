@@ -64,7 +64,7 @@ export interface Scene {
   readonly note: string
 }
 
-const RANK: Record<Verification, number> = { introduced: 0, met: 1, outgoing: 2, incoming: 2, mutual: 3 }
+const RANK: Record<Verification, number> = { introduced: 0, link: 0, met: 1, outgoing: 2, incoming: 2, mutual: 3 }
 
 export function edgesOf(devices: readonly DeviceContacts[]): Edge[] {
   const byName = new Map<string, string[]>()

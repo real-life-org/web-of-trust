@@ -25,6 +25,7 @@ import type {
   BlockedEntry,
   Candidacy,
   Capabilities,
+  Connection,
   Connectivity,
   ContactDetail,
   ContactListItem,
@@ -60,6 +61,8 @@ export interface AppStores {
    *  selection, the one place where reporting discloses them on purpose (Anton 21.10.) */
   readonly reportable: StoreFamily<ContactId, Loadable<readonly MessageItem[]>>
   readonly decisions: ReadStore<Loadable<readonly Decision[]>>
+  /** the connection ceremonies of this device (a shown code, a code read), open and closed */
+  readonly connections: ReadStore<Loadable<readonly Connection[]>>
   readonly candidacies: ReadStore<Loadable<readonly Candidacy[]>>
   readonly profile: ReadStore<Loadable<ProfileModel>>
   readonly standing: ReadStore<Loadable<TrustStandingSummary>>

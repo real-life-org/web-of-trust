@@ -17,6 +17,7 @@ export const VERIFICATION_GLYPH: Record<Verification, string> = {
   incoming: '←',
   introduced: '◇',
   met: '⇄',
+  link: '⚠',
 }
 
 export type TrustKind = 'both' | 'given' | 'received'
@@ -57,6 +58,7 @@ export const SYSTEM_GLYPH: Record<SystemKind, { glyph: string; tone: Tone }> = {
 
 export const DECISION_GLYPH: Record<Decision['kind'], { glyph: string; tone: Tone }> = {
   'encounter-confirm': { glyph: '←', tone: 'primary' },
+  'connect-confirm': { glyph: '←', tone: 'primary' },
   'group-invite': { glyph: '⏳', tone: 'warning' },
   vouch: { glyph: '✓', tone: 'primary' },
   introduction: { glyph: '◇', tone: 'warning' },

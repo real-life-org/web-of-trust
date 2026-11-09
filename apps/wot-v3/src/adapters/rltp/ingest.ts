@@ -8,6 +8,15 @@ import type { ConversationKey, DeliveryState, SystemKind } from '../../port'
 import type { EncounterCache, Ledger, LogLine, MessageLine } from './app-data'
 import { encodeCardLink } from './card-link'
 
+/** A contact a connection ceremony (shared-connect) opened has no encounter record: the library reads
+ *  its edge from the anchor mappings. For the app the complete ceremony in which both sides read the
+ *  code in one place is the mutual verification (both credentials are exchanged and receipted), so
+ *  the view says `mutual` there; one over a link keeps the library's value until its own class
+ *  comes with the contact book. Applied once, where the session reads the views. */
+export function connectedContact(c: ContactView): ContactView {
+  return c.sharedConnect?.met === true && c.verification !== 'mutual' ? { ...c, verification: 'mutual' } : c
+}
+
 export interface IngestInput {
   readonly commitSeq: string
   readonly now: number

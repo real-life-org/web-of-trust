@@ -124,6 +124,8 @@ function decisionPreviewValues(state: WorldState, d: Decision): Record<string, s
   switch (d.kind) {
     case 'encounter-confirm':
       return { name: state.persons.get(d.contactId)?.name ?? '' }
+    case 'connect-confirm':
+      return { name: d.name ?? '' }
     case 'group-invite':
       return { name: state.persons.get(d.inviterId)?.name ?? '', group: d.groupName ?? '' }
     case 'vouch':
@@ -277,6 +279,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       name: state.persons.get(c.person)?.name ?? null,
       image: null,
       verification: c.verification,
+      channel: true,
       trust: { given: c.trust.given, received: c.trust.received, paused: c.trust.paused ?? false, pending: false },
       blocked: c.blocked ?? false,
       aliases: [],

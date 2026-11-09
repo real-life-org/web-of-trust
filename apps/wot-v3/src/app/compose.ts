@@ -50,7 +50,8 @@ export async function compose(): Promise<Composition | HarnessPage> {
   const mediator = import.meta.env.VITE_MEDIATOR_DID
   const transport = mediator ? mediatorTransport({ did: mediator, clock: platform.clock, network: platform.network }) : unconfiguredTransport()
   const interop = mediator ? await interopProbe(mediator, platform) : undefined
-  const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle, ...(interop ? { interop } : {}) })
+  // with a mediator the shown code starts the connection ceremony (shared-connect), the one ceremony of the app
+  const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle, ...(mediator ? { ceremony: 'shared-connect' as const } : {}), ...(interop ? { interop } : {}) })
   await port.identity.refresh()
   void platform.liveUpdate.check()
   return { port, platform, theme: 'system' }

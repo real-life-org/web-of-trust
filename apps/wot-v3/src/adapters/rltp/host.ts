@@ -33,6 +33,8 @@ export interface RltpHostDeps {
   readonly retry?: Partial<RetryPolicy>
   readonly subtle?: SubtleCrypto
   readonly faults?: RltpFaults
+  /** see RltpPortDeps.ceremony */
+  readonly ceremony?: 'shared-connect' | 'card'
   /** where the adapter records what it met (codes only, architecture §2.6) */
   readonly diagnostics?: Pick<DiagnosticStore, 'record'>
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
@@ -211,6 +213,7 @@ export function rltpHolderHost(deps: RltpHostDeps): HolderHost & { current(): Se
       ...(deps.retry ? { retry: deps.retry } : {}),
       ...(deps.subtle ? { subtle: deps.subtle } : {}),
       ...(deps.faults ? { faults: deps.faults } : {}),
+      ...(deps.ceremony ? { ceremony: deps.ceremony } : {}),
       diagnose: (e) => {
         if (self && current === self) deps.diagnostics?.record(e)
         else diagnosed.push(e)

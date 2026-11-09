@@ -13,6 +13,7 @@ import type { DiagnosticCode } from '../../port/diagnostics'
 import { writableStore } from '../../port'
 import { redact } from '../../lib/error-filter'
 import type { ClockPort } from '../../platform/ports'
+import type { SharedConnectWire, SharedConnectWireOpening } from './shared-connect-wire'
 
 /** The device clock as far as the transport needs it (#430): every delay of the adapter is a timer on
  *  it, never a wall-clock `setTimeout`, so a harness advances the clock instead of waiting real time. */
@@ -361,6 +362,11 @@ export interface CustodyLease extends LeaseBase {
   answered(digests: readonly string[]): void
   /** work of the carrier in flight for this opening (tests and the harness wait for none) */
   busy(): number
+  /** the wire of one shared-connect enactment at this carrier (shared-connect-wire.ts): a session of
+   *  its own under the enactment's messaging identity, beside the custody. Rejects while the opening
+   *  is not in use; the end of the generation (deactivate, stop) closes it and hands its documents
+   *  to nobody (rule 3) */
+  sharedConnect(cfg: SharedConnectWireOpening): Promise<SharedConnectWire>
 }
 
 export type AnyLease = Lease | CustodyLease

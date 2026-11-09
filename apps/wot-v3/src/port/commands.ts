@@ -3,7 +3,7 @@
 // journals before the first effect (architecture §3.4).
 
 import type { AppError } from './errors'
-import type { ActId, Brand, CardRef, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
+import type { ActId, Brand, CardRef, ConnectionId, ContactId, ConversationKey, DecisionId, GroupId, MemberRef, MessageId } from './ids'
 import type { AuthorLabel, DeliveryState, TrustClass, ClassSetting } from './models'
 
 export interface IntentHandle<T> {
@@ -48,6 +48,9 @@ export type EncounterOutcome =
   | { readonly kind: 'recognized'; readonly contactId: ContactId }
   | { readonly kind: 'captured'; readonly contactId: ContactId; readonly decision: DecisionId }
   | { readonly kind: 'already-captured'; readonly contactId: ContactId | null }
+  /** the code of a connection ceremony was read and the own proposal is under way: the contact exists
+   *  once the ceremony is complete (`stores.connections`) */
+  | { readonly kind: 'proposed'; readonly connection: ConnectionId; readonly contactId: null }
 
 export type SafetyTarget =
   | { readonly kind: 'contact'; readonly contactId: ContactId }
@@ -99,7 +102,9 @@ export interface TrustCommands {
   showCard(): IntentHandle<{ qr: string; expiresAt: number; card: CardRef | null }>
   /** pure, no commit */
   previewCard(raw: string): Promise<Result<CardPreview>>
-  confirmCard(raw: string): IntentHandle<EncounterOutcome>
+  /** `origin`: where the code came in; only a code this device's camera read counts as read in one
+   *  place (the connection is `met` when both sides say so), a link or typed text does not */
+  confirmCard(raw: string, origin?: 'camera' | 'url' | 'manual'): IntentHandle<EncounterOutcome>
   /** return path for the scanner: the own sent card as QR */
   sentCardFor(contactId: ContactId): Promise<Result<{ qr: string }>>
   counterVerify(contactId: ContactId): IntentHandle<void>

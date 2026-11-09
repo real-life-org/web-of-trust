@@ -24,6 +24,7 @@
 import { x25519 } from '@noble/curves/ed25519.js'
 import { didKey, jwk, multibase, pack as didcommPack, peekSkid, unpack as didcommUnpack } from '@openvtc/vti-didcomm-js'
 import { decodeEnvelope, describeVersion, isRevisionError, nextHop, peekRevision, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { peerClient } from '../src/adapters/rltp/shared-connect-wire'
 import { peerKeys } from '../src/adapters/rltp/wire'
 
 export const DOUBLE_DID = 'did:example:mediator-double'
@@ -309,15 +310,23 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
 
   /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
    *  message of another sender or type */
+  /** the client identity of a socket's DID: a did:key of a relationship's wire, or the did:peer of a
+   *  shared-connect enactment's */
+  async function clientOf(did: string): Promise<{ kid: string; x: Uint8Array }> {
+    const peer = did.startsWith('did:peer:') ? await peerClient(did) : null
+    if (peer) return peer
+    const doc = didKey.resolve(did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
+    const first = doc.keyAgreement?.[0]
+    return { kid: typeof first === 'string' ? first : (first?.id ?? ''), x: peerKeys(did).encPub }
+  }
+
   async function problemReport(ws: FakeWs, code: string, opts: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string } = {}) {
     const from = opts.from ?? { did: mediatorDid, kid, xSecret }
-    const doc = didKey.resolve(ws.did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
-    const first = doc.keyAgreement?.[0]
-    const clientKid = typeof first === 'string' ? first : (first?.id ?? '')
+    const client = await clientOf(ws.did)
     const packed = await didcommPack({
       message: { id: crypto.randomUUID(), type: opts.type ?? 'https://didcomm.org/report-problem/2.0/problem-report', from: from.did, to: [ws.did], body: { code, comment: 'refused by the mediator double' } },
       sender: { kid: from.kid, privateJwk: jwk.privateJwk('X25519', from.xSecret, x25519.getPublicKey(from.xSecret)) },
-      recipient: { kid: clientKid, publicJwk: jwk.publicJwk('X25519', peerKeys(ws.did).encPub) },
+      recipient: { kid: client.kid, publicJwk: jwk.publicJwk('X25519', client.x) },
     } as never)
     if (ws.readyState === 1) ws.onmessage?.({ data: typeof packed === 'string' ? packed : JSON.stringify(packed) })
   }
@@ -337,10 +346,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   }
 
   async function ackedBy(did: string): Promise<string[]> {
-    const doc = didKey.resolve(did).didDocument as { keyAgreement?: ({ id: string } | string)[] }
-    const first = doc.keyAgreement?.[0]
-    const clientKid = typeof first === 'string' ? first : first?.id
-    const clientX = peerKeys(did).encPub
+    const { kid: clientKid, x: clientX } = await clientOf(did)
     const ids: string[] = []
     for (const f of sent.filter((s) => s.did === did)) {
       for (const sk of [xSecret, ...oldSecrets]) {
