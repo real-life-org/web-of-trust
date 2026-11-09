@@ -14,8 +14,10 @@
 //    against the DID the holder wrote, so a derivation that drifted never signs under it;
 //  - the mediator session authenticates under the X25519 method of the did:peer:2 (`#key-…` as the
 //    document writes it), as Keyring's `vtiClientIdentityFromDid` does;
-//  - a relationship-forming XRFI from a sender never seen is answered with XRFA while the link is
-//    live (the inviter's side; a responder sends none and gets none); after the link expired only
+//  - the responder forms the TSP relationship first: an XRFI to the inviter on every socket open,
+//    before its documents (as the reference CLI does; Keyring's inviter takes a propose only from a
+//    sender that formed the relationship). The inviter answers an XRFI from a sender never seen with
+//    XRFA while the link is live; after the link expired only
 //    senders already seen reach the holder;
 //  - application messages of kind `direct` carry a Trust Task document, bare or inside the
 //    registry's TSP binding envelope `{ type: …/binding/tsp/0.1/envelope, document }`; the wire
@@ -34,7 +36,7 @@
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { authenticateToMediator, identityOfKid, MediatorSession } from '@openvtc/vti-didcomm-js'
-import { decodeEnvelope, pack as tspPack, packAccept, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { decodeEnvelope, pack as tspPack, packAccept, packInvite, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { hkdf, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { KeyProvider } from '@real-life/trust-protocol'
 import type { DeviceTimers } from './transport'
@@ -254,6 +256,16 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     if (closed) { s.close(); return }
     session = s
     backoff = 0
+    // the responder: the relationship-forming XRFI to the inviter, before any document on this socket
+    if (cfg.peerDid) {
+      try {
+        const peer = await peerOf(cfg.peerDid)
+        if (peer) {
+          const inv = await packInvite(cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })
+          s.sendBinary(inv.bytes)
+        }
+      } catch { refuse('invite-failed', cfg.peerDid) }
+    }
     cfg.onState?.('connected')
   }
   await open()

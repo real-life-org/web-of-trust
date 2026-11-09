@@ -74,6 +74,9 @@ describe('shared-connect wire', () => {
   it('carries documents both ways, bare and in the binding envelope, and names the verified sender', async () => {
     const { med, inviter, responder, atI, atR, I, R } = await setup()
     expect(inviter.isOpen() && responder.isOpen()).toBe(true)
+    // the responder formed the relationship on opening: its XRFI reached the inviter, the inviter answered
+    expect(med.direct.filter((d) => d.sender === R.did && d.receiver === I.did).length).toBe(1)
+    expect(med.direct.filter((d) => d.sender === I.did && d.receiver === R.did).length).toBe(1)
     const propose = { type: sc.TASK_PROPOSE, id: 'p-1', payload: { reason: 'Bea' } }
     await responder.send(I.did, [propose])
     await flush(med, inviter, responder)
