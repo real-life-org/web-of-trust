@@ -7,18 +7,25 @@
 # does not verify stops the deploy, rather than publishing a pointer the phones would refuse anyway.
 # No ota-v3 release yet: nothing is written, the phones keep their own bundle.
 #
+# The release is the highest sequence <n> among all published ota-v3-<n> releases (every page of the
+# release list), not the newest by date: an older tag published late does not replace a newer one.
+#
 # Usage: scripts/release/v3-ota-pointers.sh <out dir, e.g. combined/updates>   (needs gh with GH_TOKEN)
+#   OTA_PUBLIC_KEY_FILE: the public key (default apps/wot-v3/ota/live-update-public.pem; the test sets
+#   its own). Tested by scripts/release/test-v3-ota-pointers.mjs.
 set -euo pipefail
 
 OUT="${1:-}"
 [ -n "$OUT" ] || { echo "usage: $0 <out dir>" >&2; exit 2; }
 REPO="${GITHUB_REPOSITORY:-real-life-org/web-of-trust}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-KEY="$ROOT/apps/wot-v3/ota/live-update-public.pem"
+KEY="${OTA_PUBLIC_KEY_FILE:-$ROOT/apps/wot-v3/ota/live-update-public.pem}"
 CHANNELS=(v3-android v3-ios)
 abort() { echo "ABORT: $*" >&2; exit 1; }
 
-TAG=$(gh api "repos/$REPO/releases?per_page=100" --jq '[.[] | select(.draft == false and (.tag_name | test("^ota-v3-[0-9]+$")))] | sort_by(.published_at) | last | .tag_name // empty')
+TAGS=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft == false and (.tag_name | test("^ota-v3-[0-9]+$"))) | .tag_name')
+TAG=$(printf '%s\n' "$TAGS" | sed -n 's/^ota-v3-\([0-9]\{1,15\}\)$/\1/p' | sort -n | tail -1)
+TAG="${TAG:+ota-v3-$TAG}"
 if [ -z "$TAG" ]; then echo "no ota-v3 release yet: no v3 live-update pointer"; exit 0; fi
 echo "v3 live update: $TAG"
 

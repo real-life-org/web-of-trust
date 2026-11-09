@@ -54,6 +54,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # a release deploy builds the site from main, never from the release's tag: an ota-v3 tag
+          # published late must not reset newer Pages content to its own state (#527)
+          ref: ${{ github.event_name == 'release' && 'main' || github.ref }}
           # the Gen-2 OTA decision diffs against the commit of the live bundle
           fetch-depth: 0
 
@@ -62,7 +65,8 @@ jobs:
       # content. The base is the live bundle, not the previous push: a cancelled deploy loses nothing.
       - name: Gen-2 OTA needed?
         id: ota
-        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        # the commit checked out (on a release: main), not the event commit (on a release: the tag)
+        run: scripts/release/gen2-ota-needed.sh "${{ github.event_name }}" "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
