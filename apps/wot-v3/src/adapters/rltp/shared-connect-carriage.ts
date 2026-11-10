@@ -252,7 +252,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         // the responder listens and sends where the inviter's identifier says (its relay), as the inviter
         // listens at the carrier it put into its link; a link naming no mediator relay falls back to ours
         const relay = v.role === 'responder' ? (await sc.parsePeer(v.link.from))?.relays.find((x) => x.kind === 'tsp-mediator')?.address : undefined
-        deps.diagnose?.('shared-connect-wire', `${v.role}/${relay ? 'their-relay' : 'our-relay'}/opening`)
+        deps.diagnose?.('shared-connect-wire', `${v.role} ${relay ? 'their relay' : 'our relay'} opening`)
         const wire = await deps.open({
           did: v.did,
           keys,
@@ -281,7 +281,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
           },
           report: (x) => deps.diagnose?.(x.code, x.detail),
           // the wire's steps, with the enactment's role and the relay class (ours or the counterpart's)
-          trace: (step) => deps.diagnose?.('shared-connect-wire', `${v.role}/${relay ? 'their-relay' : 'our-relay'}/${step}`),
+          trace: (step) => deps.diagnose?.('shared-connect-wire', `${v.role} ${relay ? 'their relay' : 'our relay'} ${step}`),
         })
         if (stopped || runs.get(r.id) !== r) {
           wire.close()

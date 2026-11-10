@@ -133,7 +133,7 @@ export interface SharedConnectWireConfig {
    *  is not carried; the caller sends again or gives the enactment up */
   readonly onRefused?: (code: string) => void
   /** the wire's steps, for the diagnostics: `connected`, `xrfi-sent`, `xrfa-received`, `sent/<n>`,
-   *  `received/<step>`; never an identifier */
+   *  `received <step>` (words, never a run the diagnostics' redaction would take for a key); never an identifier */
   readonly trace?: (step: string) => void
   /** frames refused for good (diagnostics; a code and a type, never bytes or identifiers) */
   readonly report?: (r: WireRefusal) => void
@@ -225,7 +225,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       const kind = String(got.control?.controlType ?? 'unknown')
       // a first contact from a sender never seen only while the link is live (the holder's checkPropose bounds the rest)
       if (!live() && !relationship.has(peer.did)) { refuse('control-after-expiry', peer.did); return }
-      cfg.trace?.(kind.toLowerCase().includes('accept') ? 'xrfa-received' : kind.toLowerCase().includes('invite') ? 'xrfi-received' : `control/${kind.slice(0, 24)}`)
+      cfg.trace?.(kind.toLowerCase().includes('accept') ? 'xrfa received' : kind.toLowerCase().includes('invite') ? 'xrfi received' : `control ${kind.slice(0, 24)}`)
       if (kind.toLowerCase().includes('invite')) {
         relationship.add(peer.did)
         try {
@@ -245,7 +245,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       form = 'envelope'
     }
     relationship.add(peer.did)
-    cfg.trace?.(`received/${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
+    cfg.trace?.(`received ${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
     await cfg.onDocument(doc, peer.did)
   }
 
@@ -291,9 +291,11 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       try {
         const peer = await peerOf(cfg.peerDid)
         if (peer) {
-          const inv = await packInvite(cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })
+          // the reply path (TSP §7.2.4): through the relay this wire is logged in at, to this identity,
+          // as Keyring writes it; without it the inviter's accept has no route back
+          const inv = await packInvite(cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x }, cfg.routed ? { route: [cfg.mediatorDid, cfg.did] } : undefined)
           s.sendBinary(await frameTo(inv.bytes, peer))
-          cfg.trace?.('xrfi-sent')
+          cfg.trace?.('xrfi sent')
         }
       } catch { refuse('invite-failed', cfg.peerDid) }
     }
@@ -315,7 +317,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
         const msg = await tspPack(te.encode(JSON.stringify(body)), cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })
         s.sendBinary(await frameTo(msg.bytes, peer))
       }
-      cfg.trace?.(`sent/${docs.length}`)
+      cfg.trace?.(`sent ${docs.length}`)
     },
     isOpen: () => session?.isOpen === true,
     close() {
