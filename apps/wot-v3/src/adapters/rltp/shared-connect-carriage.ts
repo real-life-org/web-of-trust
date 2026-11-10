@@ -99,6 +99,18 @@ interface Run {
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
+/** the class of a failed wire opening, from the error's message: an HTTP status of the relay's
+ *  handshake (`http-403`), a socket that did not open, a relay that could not be resolved, else `other` */
+export function openFailure(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e)
+  const status = /\b([45]\d\d)\b/.exec(m)
+  if (status) return `http-${status[1]}`
+  if (/resolv/i.test(m)) return 'resolve'
+  if (/socket|websocket|network|fetch/i.test(m)) return 'socket'
+  if (/no socket endpoint/i.test(m)) return 'no-endpoint'
+  return 'other'
+}
+
 /** the nonces the messaging identity of an enactment may derive from, most direct first */
 function nonceCandidates(v: SharedConnectView): string[] {
   if (v.role === 'inviter') return [v.id]
@@ -273,8 +285,11 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         r.wire = wire
         r.tries = 0
       })()
-        .catch(() => {
+        .catch((e: unknown) => {
           if (stopped || runs.get(r.id) !== r) return
+          // why the wire did not open, as a class (the relay refused the login, the network, the
+          // relay's own answer), never an address: the first failure and every fourth after it
+          if (r.tries % 4 === 0) deps.diagnose?.('shared-connect-wire', `open-failed/${openFailure(e)}`)
           const wait = SC_OPEN_RETRY_MS[Math.min(r.tries, SC_OPEN_RETRY_MS.length - 1)] as number
           r.tries++
           r.retry = deps.setTimer(deps.now() + wait, () => {
