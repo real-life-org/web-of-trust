@@ -64,12 +64,15 @@ export function IdentitySettingsScreen({ onChangeProtection, onDelete, onLock }:
           <SectionLabel id="profile-identity">{t.profileTab.identity}</SectionLabel>
           <ActionList rows={[{ icon: <TrashIcon />, label: t.profileTab.delete, tone: 'destructive', onClick: onDelete }]} />
         </section>
-        {probe ? (
-          <section aria-labelledby="profile-developer" className="flex flex-col gap-2">
-            <SectionLabel id="profile-developer">{t.profileTab.developer}</SectionLabel>
-            <ActionList rows={[{ icon: <KeyIcon />, label: t.profileTab.interop, onClick: () => send({ type: 'push', route: { kind: 'interop' } }) }]} />
-          </section>
-        ) : null}
+        <section aria-labelledby="profile-developer" className="flex flex-col gap-2">
+          <SectionLabel id="profile-developer">{t.profileTab.developer}</SectionLabel>
+          <ActionList
+            rows={[
+              { icon: <ShieldIcon />, label: t.profileTab.diagnostics, onClick: () => send({ type: 'push', route: { kind: 'diagnostics' } }) },
+              ...(probe ? [{ icon: <KeyIcon />, label: t.profileTab.interop, onClick: () => send({ type: 'push', route: { kind: 'interop' } }) }] : []),
+            ]}
+          />
+        </section>
       </div>
     </>
   )

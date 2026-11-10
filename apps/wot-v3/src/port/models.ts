@@ -245,6 +245,11 @@ export interface Connection {
   readonly contactId: ContactId | null
   /** both sides read the code in one place */
   readonly met: boolean
+  /** how the other side ended a failed ceremony: the code and the message of its error, as sent (its
+   *  text, unverified); null otherwise */
+  readonly failure: { readonly code: string; readonly message: string | null } | null
+  /** when the ceremony closed (complete, declined, failed); null while open */
+  readonly closedAt: number | null
 }
 
 // ── Decisions ───────────────────────────────────────────────────────────────

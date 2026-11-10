@@ -61,7 +61,8 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
   it('the code is a trigger link with the name; the proposal opens a decision that answers the shown code; accepting connects both, carried, and messages arrive', async () => {
     const w = await world()
     const { shown, preview, proposed } = await propose(w)
-    expect(shown.qr.startsWith('https://link.trustoverip.org/t#')).toBe(true)
+    expect(shown.qr.startsWith('https://web-of-trust.de/t#')).toBe(true)
+    expect(decodeURIComponent(shown.qr)).toContain('_type=https://link.trustoverip.org/vti/flow/shared-connect/0.1')
     expect(shown.expiresAt).toBeGreaterThan(w.clock.now())
     expect(preview).toEqual({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } })
     // the own code is recognised as such

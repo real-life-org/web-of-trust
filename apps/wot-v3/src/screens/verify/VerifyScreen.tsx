@@ -2,7 +2,7 @@
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
-import { useBackInFlow, useContact, useCopy, useFormat, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useConnections, useContact, useCopy, useFormat, usePlatform, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
 import { useI18n } from '../../i18n'
@@ -29,6 +29,10 @@ import {
   firstName,
   Working,
 } from '../../ui/components'
+
+/** how long a connection the other side ended with an error is shown under the own code (the code
+ *  itself lives ten minutes; a failure older than this is in the contact list and the diagnostics) */
+const RECENT_FAILURE_MS = 30 * 60_000
 
 export function VerifyScreen({
   onExit,
@@ -57,7 +61,9 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const { t, f } = i18n
   const v = t.verify
   const fmt = useFormat()
+  const { clock } = usePlatform()
   const profile = useProfile()
+  const connections = useConnections()
   const copy = useCopy()
   const toast = useToast()
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
@@ -68,6 +74,12 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     </FlowPage>
   )
   const nameOf = (n: string | null) => n ?? t.contacts.unnamed
+  // the newest closed ceremony, when the other side ended it with an error a short while ago: its code
+  // and the start of its text (the other app's words, unverified, quoted as such) stay readable here,
+  // since the error screen is gone after "try again"; an old failure is not a banner over the own code
+  const newestClosed = connections.status === 'ready' ? [...connections.value].filter((c) => c.closedAt !== null).sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))[0] : undefined
+  const recentFailure = newestClosed?.status === 'failed' && newestClosed.failure && clock.now() - (newestClosed.closedAt ?? 0) <= RECENT_FAILURE_MS ? newestClosed : undefined
+  const failureQuote = (m: string | null) => (m ? ` „${m.length > 140 ? m.slice(0, 139) + '…' : m}“` : '')
   const link = 'hit-target relative rounded-sm text-[13px] text-muted-foreground underline underline-offset-[3px] hover:text-foreground'
   /** the shown code with its actions; also behind the camera sheet. Artboard 3: the rule under the
    *  code; copy and enter as small links, the scan in the footer */
@@ -85,6 +97,14 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         {hint ? (
           <div className="mt-4 w-full text-left">
             <Callout tone="info">{hint === 'nothing-open' ? v.nothingOpen : v.alreadyCaptured}</Callout>
+          </div>
+        ) : null}
+        {recentFailure ? (
+          <div className="mt-4 w-full text-left">
+            <Callout tone="danger" role="status">
+              {f(v.recentFailure, { time: fmt.time(recentFailure.closedAt ?? 0) })} <span className="font-mono text-xs">{recentFailure.failure?.code}</span>
+              {failureQuote(recentFailure.failure?.message ?? null)}
+            </Callout>
           </div>
         ) : null}
         <div className="min-h-4 flex-1" />
@@ -207,7 +227,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(<Working label={v.checking} />)
     case 'scanError':
       return page(
-        <Hero icon={<AlertIcon />} tone="danger" title={v.errorTitle} body={v[`error.${s.code}`]} />,
+        <Hero icon={<AlertIcon />} tone="danger" title={s.code === 'connect-failed' ? v.errorTitleConnectFailed : v.errorTitle} body={v[`error.${s.code}`]} />,
         <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />,
       )
     case 'confirm': {

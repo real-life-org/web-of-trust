@@ -49,6 +49,12 @@ export const DIAGNOSTIC_CODES = [
   // the wire of a shared-connect enactment did not come up: `keys` when no nonce of the enactment gives
   // the keys of its messaging identity
   'shared-connect-wire',
+  // the counterpart ended a shared-connect enactment with an error: the detail is its code (a trust-task-error
+  // code such as `vrc/relationships/propose:declined`, or the counterpart's own refusal code)
+  'shared-connect-failed',
+  // the holder refused or ignored a document of the counterpart on an enactment: the detail is
+  // `<step type's last segment>/<reason>` (`issue/vrc-proof`), never the document
+  'shared-connect-step-refused',
   'unknown-code',
 ] as const
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number]

@@ -27,6 +27,8 @@ export interface ActContext {
 
 /** how long a shown code is valid (shared-connect 0.1 caps a code read in person at ten minutes) */
 export const CODE_MINUTES = 10
+/** the host of the links this app shows (its app link; card-link.ts uses the same host for cards) */
+export const LINK_ORIGIN = 'https://web-of-trust.de'
 
 /** the own name a code or a proposal states: the profile's, absent while there is none */
 async function ownName(h: Holder): Promise<{ name: string } | Record<string, never>> {
@@ -160,7 +162,9 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: async (h, i, o, ctx) => {
       const carrier = await ctx.offer(i.carrier)
       // the offer makes the relationship the ceremony opens a carried one (lib 0.17.0)
-      if (ctx.relays && ctx.showsLink) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
+      // the link on the app's own host: a camera scan opens the app (an app link), a page explains the code
+      // to someone without it; the flow stays the registered URI
+      if (ctx.relays && ctx.showsLink) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', origin: LINK_ORIGIN, ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
       return h.show(carrier ? { ...o, carrier } : o)
     },
     outcome: (events, i) => {

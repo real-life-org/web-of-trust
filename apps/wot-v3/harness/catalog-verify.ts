@@ -30,6 +30,7 @@ const S: Record<string, VerifyState> = {
   'scanError-card-self': { ...base, name: 'scanError', code: 'card-self' },
   'scanError-code-expired': { ...base, name: 'scanError', code: 'code-expired' },
   'scanError-card-invalid': { ...base, name: 'scanError', code: 'card-invalid' },
+  'scanError-connect-failed': { ...base, name: 'scanError', code: 'connect-failed' },
   confirm: { ...base, name: 'confirm', raw: sent, preview, origin: 'camera' },
   committing: { ...base, name: 'committing', preview, origin: 'camera' },
   waiting: { ...base, name: 'waiting', contactId: noah, name2: 'Noah Lindqvist', waitLong: false },

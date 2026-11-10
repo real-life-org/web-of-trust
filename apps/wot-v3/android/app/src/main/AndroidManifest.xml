@@ -37,6 +37,21 @@
                 <data android:host="web-of-trust.de" />
                 <data android:path="/c" />
                 <data android:path="/c/" />
+                <data android:path="/t" />
+                <data android:path="/t/" />
+            </intent-filter>
+            <!-- Trigger links of the connection ceremony that another app shows (shared-connect 0.1; VTI
+                 trigger links on the ToIP link host). Not verifiable by us: the host would have to name this
+                 app in its assetlinks.json. Android opens them in the app only after the person allowed
+                 the app's supported links in its settings; until then the browser gets them. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="link.trustoverip.org" />
+                <data android:path="/t" />
+                <data android:path="/t/" />
             </intent-filter>
 
         </activity>

@@ -4,7 +4,7 @@
 // side in the middle (the outbox goes out again), a wire that does not open at first, and the end of
 // the wires (the link expired unanswered; the linger after an enactment closed).
 import { describe, expect, it, vi } from 'vitest'
-import { createSharedConnectCarriage, SC_LINGER_MS, SC_OWED_MS, SC_RETRY_MIN_MS, type SharedConnectCarriage } from '../../src/adapters/rltp/shared-connect-carriage'
+import { createSharedConnectCarriage, openFailure, SC_LINGER_MS, SC_OWED_MS, SC_RETRY_MIN_MS, type SharedConnectCarriage } from '../../src/adapters/rltp/shared-connect-carriage'
 import { openSharedConnectWire } from '../../src/adapters/rltp/shared-connect-wire'
 import { mediatorDouble, type MediatorDouble } from '../../harness/mediator-double'
 import { virtualClock, type VirtualClock } from '../../src/platform/fake'
@@ -41,6 +41,8 @@ interface Side {
   failSends: boolean
   /** wires opened so far */
   opened: number
+  /** sends the wires took so far */
+  sends: number
   /** the last attempts as the opening's app-db keeps them (they survive a restart) */
   marks: Record<string, number>
   /** a new holder and carriage over the same store and root (the app restarted) */
@@ -50,14 +52,20 @@ interface Side {
 async function side(med: MediatorDouble, clock: VirtualClock): Promise<Side> {
   const store = new InMemoryStore()
   const keys = lib.seedKeys(rand(64))
-  const s = { events: [] as Ev[], diagnosed: [] as string[], failReceives: 0, failSends: false, opened: 0, marks: {} } as Side
+  const s = { events: [] as Ev[], diagnosed: [] as string[], failReceives: 0, failSends: false, opened: 0, sends: 0, marks: {} } as Side
   const start = async () => {
     const h = await lib.createHolder({ store, keys })
     const carriage = createSharedConnectCarriage({
       open: async (cfg) => {
         const wire = await openSharedConnectWire({ ...cfg, mediatorDid: med.did, clock, net: med.net })
         s.opened++
-        return { ...wire, send: (to, docs) => (s.failSends ? Promise.reject(new Error('down')) : wire.send(to, docs)) }
+        return {
+          ...wire,
+          send: (to, docs) => {
+            s.sends++
+            return s.failSends ? Promise.reject(new Error('down')) : wire.send(to, docs)
+          },
+        }
       },
       attempts: { read: async () => s.marks, write: async (next) => void (s.marks = { ...next }) },
       keys: keys as never,
@@ -140,7 +148,14 @@ describe('shared-connect carriage', () => {
     const cB = await B.h.contacts()
     expect([cA.length, cB.length]).toEqual([1, 1])
     expect([cA[0]?.sharedConnect?.met, cB[0]?.sharedConnect?.met]).toEqual([true, true])
-    expect([...A.diagnosed, ...B.diagnosed]).toEqual([])
+    // the wire's steps are traced; nothing was refused
+    expect([...A.diagnosed, ...B.diagnosed].filter((d) => !d.startsWith('shared-connect-wire:'))).toEqual([])
+    // the responder (at the inviter's relay) sent everything routed through it, with the reply path in
+    // the XRFI; the inviter (at its own carrier) sent direct
+    expect(med.direct.filter((d) => d.sender === vB?.did && d.receiver === vA?.did)).toEqual([])
+    expect(med.forwarded.filter((f) => f.outer.sender === vB?.did).length).toBeGreaterThanOrEqual(3)
+    expect(med.forwarded.every((f) => f.outer.route.includes(String(vA?.did)))).toBe(true)
+    expect(med.direct.filter((d) => d.sender === vA?.did && d.receiver === vB?.did).length).toBeGreaterThanOrEqual(2)
     // the enactments closed: their wires stay for the linger, then the sockets are gone
     expect(med.sockets.has(String(vA?.did)) && med.sockets.has(String(vB?.did))).toBe(true)
     clock.advance(SC_LINGER_MS + 1000)
@@ -236,7 +251,7 @@ describe('shared-connect carriage', () => {
     expect((await B.h.sharedConnectPropose({ link: String(of(A, 'sharedconnect.shown')[0]?.link), relays: RELAYS(med), channel: 'scan' }, opts(clock))).ok).toBe(true)
     await flush(med, A, B)
     expect(of(A, 'sharedconnect.pending').length).toBe(0)
-    expect(A.diagnosed).toEqual(['shared-connect-refused:not-received'])
+    expect(A.diagnosed.filter((d) => !d.startsWith('shared-connect-wire:'))).toEqual(['shared-connect-refused:not-received'])
     // the inviter's socket drops and comes back: the frame is still at the mediator
     const [vA] = await A.h.sharedConnect()
     med.sockets.get(String(vA?.did))?.close()
@@ -347,6 +362,36 @@ describe('shared-connect carriage', () => {
     B.carriage.stop()
   })
 
+  it('a mediator that refuses every frame is asked again paced, not at round-trip speed; once it takes them the ceremony completes', async () => {
+    const x = await setup()
+    const { med, clock, A, B } = x
+    await untilPending(x)
+    med.faults.refuseDirect = true
+    const before = A.sends
+    expect((await A.h.decide(String(of(A, 'sharedconnect.pending')[0]?.promptId), 'accept', opts(clock))).ok).toBe(true)
+    // a minute of refusals, the clock in steps of a second (the problem report is read off the loop)
+    for (let i = 0; i < 60; i++) {
+      clock.advance(1000)
+      await flush(med, A, B)
+      await new Promise((r) => setTimeout(r, 3))
+    }
+    expect(A.diagnosed.filter((d) => d === 'wire-deposit-refused:direct/e.p.direct_delivery.denied').length).toBeGreaterThanOrEqual(2)
+    // the first send, then one after 1 s, 5 s, 30 s, 30 s: five at most within the minute
+    expect(A.sends - before).toBeLessThanOrEqual(5)
+    expect(A.sends - before).toBeGreaterThanOrEqual(3)
+    // nothing counted as an attempt
+    expect(Object.keys(A.marks)).toEqual([])
+    med.faults.refuseDirect = false
+    for (let i = 0; i < 40 && (await B.h.sharedConnect())[0]?.status !== 'complete'; i++) {
+      clock.advance(1000)
+      await flush(med, A, B)
+      await new Promise((r) => setTimeout(r, 3))
+    }
+    expect([(await A.h.sharedConnect())[0]?.status, (await B.h.sharedConnect())[0]?.status]).toEqual(['complete', 'complete'])
+    A.carriage.stop()
+    B.carriage.stop()
+  })
+
   it('an enactment that closes long after its run began gets its attempt from the close: the receipt leaves without a resume', async () => {
     const x = await setup()
     const { med, clock, A, B } = x
@@ -358,5 +403,16 @@ describe('shared-connect carriage', () => {
     expect([(await A.h.sharedConnect())[0]?.status, (await B.h.sharedConnect())[0]?.status]).toEqual(['complete', 'complete'])
     A.carriage.stop()
     B.carriage.stop()
+  })
+})
+
+describe('openFailure', () => {
+  it('classes the opening failure by its message, the endpoint before the socket, a status never from a port', () => {
+    expect(openFailure(new Error('shared-connect: the mediator has no socket endpoint'))).toBe('no-endpoint')
+    expect(openFailure(new Error('authenticate: status 403'))).toBe('http-403')
+    expect(openFailure(new Error('HTTP 502 from the relay'))).toBe('http-502')
+    expect(openFailure(new Error('WebSocket wss://relay.example:443/ws failed'))).toBe('socket')
+    expect(openFailure(new Error('did:webvh resolve: not found'))).toBe('resolve')
+    expect(openFailure('something else')).toBe('other')
   })
 })

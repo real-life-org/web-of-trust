@@ -7,6 +7,7 @@ import type {
   ContactListItem,
   Conversation,
   ConversationKey,
+  Connection,
   Decision,
   GroupListItem,
   InteropProbe,
@@ -46,6 +47,10 @@ export function useGroups(): Loadable<readonly GroupListItem[]> {
 
 export function useDecisions(): Loadable<readonly Decision[]> {
   return useStore(usePort().stores.decisions)
+}
+
+export function useConnections(): Loadable<readonly Connection[]> {
+  return useStore(usePort().stores.connections)
 }
 
 export function useProfile(): Loadable<ProfileModel> {

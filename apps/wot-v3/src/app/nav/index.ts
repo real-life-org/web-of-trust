@@ -17,6 +17,8 @@ export type Route =
   | { readonly kind: 'profile-name' }
   /** the interop probe of the developer area (only in a build that has one) */
   | { readonly kind: 'interop' }
+  /** the diagnostic entries of this unlock (app/error-report.tsx) */
+  | { readonly kind: 'diagnostics' }
 export type Sheet = never
 
 export interface NavState {

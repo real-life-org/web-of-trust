@@ -94,7 +94,9 @@ export function webLifecycle(): LifecyclePort {
 export function isCardLink(url: string): boolean {
   try {
     const u = new URL(url)
-    return /\/c\/?$/.test(u.pathname) && u.hash.length > 1
+    // a card (/c) or the trigger link of a connection ceremony (/t) with a fragment; which hosts reach the
+    // app is the platform's filter (AndroidManifest, AASA), the link itself is checked by the holder
+    return /\/[ct]\/?$/.test(u.pathname) && u.hash.length > 1
   } catch {
     return false
   }
