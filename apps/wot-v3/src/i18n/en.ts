@@ -710,6 +710,9 @@ export const en = {
     lead: 'What the adapter recorded since the unlock: codes and rule references, never names, keys or texts.',
     empty: 'No entries.',
     clear: 'Clear',
+    share: 'Share diagnostics',
+    copied: 'Copied to the clipboard.',
+    shareFailed: 'Sharing is not possible here.',
   },
   interop: {
     title: 'Interop probe',

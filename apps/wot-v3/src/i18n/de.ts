@@ -708,6 +708,9 @@ export const de: Translations = {
     lead: 'Was der Adapter seit dem Entsperren festgehalten hat: Codes und Regelverweise, nie Namen, Schlüssel oder Texte.',
     empty: 'Keine Einträge.',
     clear: 'Leeren',
+    share: 'Diagnose teilen',
+    copied: 'In die Zwischenablage kopiert.',
+    shareFailed: 'Teilen ist hier nicht möglich.',
   },
   interop: {
     title: 'Interop-Probe',
