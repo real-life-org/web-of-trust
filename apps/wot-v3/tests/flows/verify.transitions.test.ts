@@ -773,7 +773,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   const scanAndPropose = async (fa: Flow, fb: Flow) => {
     await fb.until('ready')
     const card = fb.state().card
-    expect(card?.qr.startsWith('https://link.trustoverip.org/t#')).toBe(true)
+    expect(card?.qr.startsWith('https://web-of-trust.de/t#')).toBe(true)
     await fa.until('ready')
     fa.scanner.source = () => card?.qr ?? null
     fa.send({ type: 'scan' })

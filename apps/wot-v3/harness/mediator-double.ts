@@ -224,7 +224,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
   async function route(session: string, qb2: Uint8Array) {
     let got
     try {
-      got = await tspUnpack(qb2, { receiverDecryptionKey: xSecret, senderSigningKey: peerKeys(session).signPub })
+      // a did:key client of a relationship's wire, or the did:peer of a shared-connect enactment's
+      got = await tspUnpack(qb2, { receiverDecryptionKey: xSecret, senderSigningKey: (await signerOf(session)).ed })
     } catch (e) {
       dropped.push({ why: isRevisionError(e) ? `TSP version: ${versionOf(qb2)}` : 'not openable with the current key', sender: session })
       return
@@ -310,6 +311,15 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
 
   /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
    *  message of another sender or type */
+  /** the signing key of a socket's DID (the sender of a routed frame): did:key or did:peer */
+  async function signerOf(did: string): Promise<{ ed: Uint8Array }> {
+    if (did.startsWith('did:peer:')) {
+      const p = await peerClient(did)
+      if (p) return { ed: p.ed }
+    }
+    return { ed: peerKeys(did).signPub }
+  }
+
   /** the client identity of a socket's DID: a did:key of a relationship's wire, or the did:peer of a
    *  shared-connect enactment's */
   async function clientOf(did: string): Promise<{ kid: string; x: Uint8Array }> {

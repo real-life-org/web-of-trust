@@ -19,7 +19,9 @@
 //    document writes it), as Keyring's `vtiClientIdentityFromDid` does;
 //  - the responder forms the TSP relationship first: an XRFI to the inviter on every socket open,
 //    before its documents (as the reference CLI does; Keyring's inviter takes a propose only from a
-//    sender that formed the relationship). The inviter answers an XRFI from a sender never seen with
+//    sender that formed the relationship). At the inviter's relay (`routed`) the XRFI and every
+//    document travel routed through that mediator, as Keyring's scanner sends them: a mediator
+//    drops or refuses a direct frame between parties whose relationship it never saw form. The inviter answers an XRFI from a sender never seen with
 //    XRFA while the link is live; after the link expired only
 //    senders already seen reach the holder;
 //  - application messages of kind `direct` carry a Trust Task document, bare or inside the
@@ -39,7 +41,7 @@
 
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { authenticateToMediator, identityOfKid, MediatorSession } from '@openvtc/vti-didcomm-js'
-import { decodeEnvelope, pack as tspPack, packAccept, packInvite, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
+import { decodeEnvelope, pack as tspPack, packAccept, packInvite, packRouted, unpack as tspUnpack } from '@openvtc/vti-tsp-js'
 import { hkdf, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { KeyProvider } from '@real-life/trust-protocol'
 import type { DeviceTimers } from './transport'
@@ -98,9 +100,9 @@ export async function sharedConnectKeys(keys: KeyProvider, nonce: Uint8Array, di
 
 /** The mediator's client identity of a peer DID (the X25519 method as its document writes it, and its
  *  key): what the wire authenticates under, and what a mediator double reads its acknowledgements with. */
-export async function peerClient(did: string): Promise<{ readonly kid: string; readonly x: Uint8Array } | null> {
+export async function peerClient(did: string): Promise<{ readonly kid: string; readonly x: Uint8Array; readonly ed: Uint8Array } | null> {
   const peer = await sc.parsePeer(did)
-  return peer ? { kid: peer.ref + peer.doc.keyAgreement[0], x: peer.x } : null
+  return peer ? { kid: peer.ref + peer.doc.keyAgreement[0], x: peer.x, ed: peer.ed } : null
 }
 
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
@@ -117,6 +119,11 @@ export interface SharedConnectWireConfig {
   /** the counterpart the responder already knows (the link's `_from`); the inviter learns its
    *  counterpart from the first frame */
   readonly peerDid?: string
+  /** every frame goes routed through the mediator (an outer message to the mediator with the
+   *  counterpart as the route), not as a direct frame: the form for a relay that is not this build's
+   *  carrier, which admits a direct frame only between parties it saw form their relationship (and
+   *  may be configured to refuse direct delivery altogether); Keyring's scanner does the same */
+  readonly routed?: boolean
   readonly clock: DeviceTimers
   /** a document for the holder, with the TSP sender the wire verified; a rejection means the holder did
    *  not take it: the frame is not acknowledged and the mediator delivers it again */
@@ -125,6 +132,9 @@ export interface SharedConnectWireConfig {
   /** the mediator refused a frame this wire sent (its problem report, by code): what was on the socket
    *  is not carried; the caller sends again or gives the enactment up */
   readonly onRefused?: (code: string) => void
+  /** the wire's steps, for the diagnostics: `connected`, `xrfi-sent`, `xrfa-received`, `sent/<n>`,
+   *  `received/<step>`; never an identifier */
+  readonly trace?: (step: string) => void
   /** frames refused for good (diagnostics; a code and a type, never bytes or identifiers) */
   readonly report?: (r: WireRefusal) => void
   readonly net?: WireConfig['net']
@@ -160,6 +170,13 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   const WebSocketImpl = (cfg.net?.WebSocketImpl ?? globalThis.WebSocket) as typeof WebSocket
   const netPolicy = cfg.net?.policy ? { allowInsecure: Boolean(cfg.net.policy.allowInsecure), allowPrivate: Boolean(cfg.net.policy.allowPrivate) } : undefined
   const atmSeams = { ...(cfg.net?.fetch ? { fetch: cfg.net.fetch } : {}), ...(cfg.net?.resolve ? { resolve: cfg.net.resolve } : {}), ...(netPolicy ? { netPolicy } : {}) }
+  /** a frame to `peer`: direct, or routed through the mediator with the peer as the route */
+  const frameTo = async (inner: Uint8Array, peer: { did: string }): Promise<Uint8Array> => {
+    if (!cfg.routed) return inner
+    if (!mediatorX) throw new Error('shared-connect: the mediator key is not known yet')
+    const outer = await packRouted(inner, [peer.did], cfg.did, cfg.mediatorDid, { senderSigningKey: keys.edSecret, receiverEncryptionKey: mediatorX })
+    return outer.bytes
+  }
   const refuse = (detail: string, sender?: string) => cfg.report?.({ code: detail.startsWith('direct/') ? 'wire-deposit-refused' : 'wire-frame-refused', detail, ...(sender !== undefined ? { sender } : {}) })
 
   /** senders seen, by their long form where one came (a did:peer:4 short form resolves against it) */
@@ -170,6 +187,8 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   let form: 'bare' | 'envelope' = 'bare'
   let closed = false
   let session: SharedConnectSession | null = null
+  /** the mediator's X25519 key, from the handshake: the outer layer of a routed frame is sealed to it */
+  let mediatorX: Uint8Array | null = null
   let reconnectTimer: (() => void) | null = null
   let backoff = 0
   let busy = 0
@@ -206,6 +225,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       const kind = String(got.control?.controlType ?? 'unknown')
       // a first contact from a sender never seen only while the link is live (the holder's checkPropose bounds the rest)
       if (!live() && !relationship.has(peer.did)) { refuse('control-after-expiry', peer.did); return }
+      cfg.trace?.(kind.toLowerCase().includes('accept') ? 'xrfa-received' : kind.toLowerCase().includes('invite') ? 'xrfi-received' : `control/${kind.slice(0, 24)}`)
       if (kind.toLowerCase().includes('invite')) {
         relationship.add(peer.did)
         try {
@@ -225,6 +245,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       form = 'envelope'
     }
     relationship.add(peer.did)
+    cfg.trace?.(`received/${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
     await cfg.onDocument(doc, peer.did)
   }
 
@@ -246,6 +267,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     const auth = await authenticateToMediator({ mediatorDid: cfg.mediatorDid, clientDid: cfg.did, clientKid: xKid, clientX25519Private: keys.xSecret, clientX25519Public: keys.xPublic, ...atmSeams })
     if (closed) return
     if (!auth.mediator.wsEndpoint) throw new Error('shared-connect: the mediator has no socket endpoint')
+    mediatorX = auth.mediator.x25519Pub
     const s = new SharedConnectSession({
       mediator: auth.mediator as never,
       mediatorJwt: auth.accessToken,
@@ -270,10 +292,12 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
         const peer = await peerOf(cfg.peerDid)
         if (peer) {
           const inv = await packInvite(cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })
-          s.sendBinary(inv.bytes)
+          s.sendBinary(await frameTo(inv.bytes, peer))
+          cfg.trace?.('xrfi-sent')
         }
       } catch { refuse('invite-failed', cfg.peerDid) }
     }
+    cfg.trace?.('connected')
     cfg.onState?.('connected')
   }
   await open()
@@ -289,8 +313,9 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       for (const doc of docs) {
         const body = form === 'envelope' ? { type: BINDING_ENVELOPE, document: doc } : doc
         const msg = await tspPack(te.encode(JSON.stringify(body)), cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })
-        s.sendBinary(msg.bytes)
+        s.sendBinary(await frameTo(msg.bytes, peer))
       }
+      cfg.trace?.(`sent/${docs.length}`)
     },
     isOpen: () => session?.isOpen === true,
     close() {

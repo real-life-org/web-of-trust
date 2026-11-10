@@ -9,9 +9,9 @@
 //  - Which enactments have a wire is read from the view, never from an event alone (`wantedUntil`):
 //    an open one that nobody answered or decided only around its link's life; a decided one until
 //    it closes; a closed one until its last documents were handed to the carrier and a moment more.
-//  - The responder's wire is at the inviter's relay (the link's `_from` names it), the inviter's at
-//    this build's carrier: each side collects where its own identifier says, so a counterpart on
-//    another mediator (Keyring on mediator.ic3.dev) is reached.
+//  - The responder's wire is at the inviter's relay (the link's `_from` names it) and sends routed
+//    through it; the inviter's is at this build's carrier: each side collects where its own
+//    identifier says, so a counterpart on another mediator (Keyring on mediator.ic3.dev) is reached.
 //    Three decisions stay apart: the holder decides that an enactment is complete; a timeout decides
 //    that a socket closes (a resource); nothing but delivery evidence or the explicit rule of
 //    SC_OWED_MS ends the retries. Closed on this side is not delivered on the other, and a frame on
@@ -252,11 +252,14 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         // the responder listens and sends where the inviter's identifier says (its relay), as the inviter
         // listens at the carrier it put into its link; a link naming no mediator relay falls back to ours
         const relay = v.role === 'responder' ? (await sc.parsePeer(v.link.from))?.relays.find((x) => x.kind === 'tsp-mediator')?.address : undefined
+        deps.diagnose?.('shared-connect-wire', `${v.role}/${relay ? 'their-relay' : 'our-relay'}/opening`)
         const wire = await deps.open({
           did: v.did,
           keys,
           exp: v.link.exp,
-          ...(relay ? { mediatorDid: relay } : {}),
+          // at the inviter's relay every frame goes routed through it (the relay admits no direct frame
+          // between strangers); at our own carrier direct, as before
+          ...(relay ? { mediatorDid: relay, routed: true } : {}),
           ...(peerDid !== null ? { peerDid } : {}),
           onDocument: (doc, sender) => track(receive(doc, sender)),
           onState: (s) => {
@@ -277,6 +280,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
             reconcile()
           },
           report: (x) => deps.diagnose?.(x.code, x.detail),
+          // the wire's steps, with the enactment's role and the relay class (ours or the counterpart's)
+          trace: (step) => deps.diagnose?.('shared-connect-wire', `${v.role}/${relay ? 'their-relay' : 'our-relay'}/${step}`),
         })
         if (stopped || runs.get(r.id) !== r) {
           wire.close()

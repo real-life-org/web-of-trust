@@ -140,7 +140,8 @@ describe('shared-connect carriage', () => {
     const cB = await B.h.contacts()
     expect([cA.length, cB.length]).toEqual([1, 1])
     expect([cA[0]?.sharedConnect?.met, cB[0]?.sharedConnect?.met]).toEqual([true, true])
-    expect([...A.diagnosed, ...B.diagnosed]).toEqual([])
+    // the wire's steps are traced; nothing was refused
+    expect([...A.diagnosed, ...B.diagnosed].filter((d) => !d.startsWith('shared-connect-wire:'))).toEqual([])
     // the enactments closed: their wires stay for the linger, then the sockets are gone
     expect(med.sockets.has(String(vA?.did)) && med.sockets.has(String(vB?.did))).toBe(true)
     clock.advance(SC_LINGER_MS + 1000)
@@ -236,7 +237,7 @@ describe('shared-connect carriage', () => {
     expect((await B.h.sharedConnectPropose({ link: String(of(A, 'sharedconnect.shown')[0]?.link), relays: RELAYS(med), channel: 'scan' }, opts(clock))).ok).toBe(true)
     await flush(med, A, B)
     expect(of(A, 'sharedconnect.pending').length).toBe(0)
-    expect(A.diagnosed).toEqual(['shared-connect-refused:not-received'])
+    expect(A.diagnosed.filter((d) => !d.startsWith('shared-connect-wire:'))).toEqual(['shared-connect-refused:not-received'])
     // the inviter's socket drops and comes back: the frame is still at the mediator
     const [vA] = await A.h.sharedConnect()
     med.sockets.get(String(vA?.did))?.close()
