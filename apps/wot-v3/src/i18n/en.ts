@@ -225,7 +225,7 @@ export const en = {
     'error.code-used': 'This code was used already. Ask for a new one.',
     'error.failed': 'Something went wrong. Please try again.',
     recentFailure: 'The other app ended the last connection ({time}) with an error:',
-    'error.connect-failed': 'The other person’s app ended the connection with an error. Nothing was created; the error code is in the developer area.',
+    'error.connect-failed': 'The other person’s app ended the connection with an error. Nothing was created; the error code is under Settings › Development › Diagnostics.',
     committing: 'Verifying…',
     capturing: 'Taking over the encounter…',
     waitTitle: '{name} verified',
@@ -692,6 +692,7 @@ export const en = {
     delete: 'Delete identity',
     developer: 'Developer',
     interop: 'Interop probe',
+    diagnostics: 'Diagnostics',
   },
   profileName: {
     pickImage: 'Choose picture',
@@ -703,6 +704,12 @@ export const en = {
     hint: 'Contacts you trust see this name. Everyone else keeps the name from the card they scanned.',
     save: 'Save',
     failed: 'Saving did not go through. Please try again.',
+  },
+  diagnostics: {
+    title: 'Diagnostics',
+    lead: 'What the adapter recorded since the unlock: codes and rule references, never names, keys or texts.',
+    empty: 'No entries.',
+    clear: 'Clear',
   },
   interop: {
     title: 'Interop probe',

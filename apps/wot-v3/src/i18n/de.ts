@@ -224,7 +224,7 @@ export const de: Translations = {
     'error.code-used': 'Dieser Code wurde schon verwendet. Bitte um einen neuen.',
     'error.failed': 'Etwas ist schiefgegangen. Bitte versuche es noch einmal.',
     recentFailure: 'Die letzte Verbindung ({time}) hat die andere App mit einem Fehler beendet:',
-    'error.connect-failed': 'Die App der anderen Person hat die Verbindung mit einem Fehler beendet. Es wurde nichts angelegt; der Fehlercode steht im Entwicklerbereich.',
+    'error.connect-failed': 'Die App der anderen Person hat die Verbindung mit einem Fehler beendet. Es wurde nichts angelegt; der Fehlercode steht unter Einstellungen › Entwicklung › Diagnose.',
     committing: 'Wird verifiziert…',
     capturing: 'Die Begegnung wird übernommen…',
     waitTitle: '{name} verifiziert',
@@ -690,6 +690,7 @@ export const de: Translations = {
     delete: 'Identität löschen',
     developer: 'Entwicklung',
     interop: 'Interop-Probe',
+    diagnostics: 'Diagnose',
   },
   profileName: {
     pickImage: 'Bild wählen',
@@ -701,6 +702,12 @@ export const de: Translations = {
     hint: 'Kontakte, denen du vertraust, sehen diesen Namen. Alle anderen behalten den Namen von der Karte, die sie gescannt haben.',
     save: 'Speichern',
     failed: 'Das Speichern ist nicht durchgegangen. Bitte versuche es noch einmal.',
+  },
+  diagnostics: {
+    title: 'Diagnose',
+    lead: 'Was der Adapter seit dem Entsperren festgehalten hat: Codes und Regelverweise, nie Namen, Schlüssel oder Texte.',
+    empty: 'Keine Einträge.',
+    clear: 'Leeren',
   },
   interop: {
     title: 'Interop-Probe',

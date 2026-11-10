@@ -10,6 +10,7 @@ import { createWebIdentityPlatform, createWebPlatform } from '../platform/web'
 import { createRltpPort, mediatorTransport, unconfiguredTransport } from '../adapters/rltp'
 import type { NavState } from './nav'
 import type { FlowOverride } from './flow-override'
+import { installDiagnostics } from './error-report'
 
 export interface Composition {
   readonly port: AppPort
@@ -52,6 +53,7 @@ export async function compose(): Promise<Composition | HarnessPage> {
   const interop = mediator ? await interopProbe(mediator, platform) : undefined
   // with a mediator the shown code starts the connection ceremony (shared-connect), the one ceremony of the app
   const port = createRltpPort({ identity, idb: indexedDB, transport, lifecycle: platform.lifecycle, ...(mediator ? { ceremony: 'shared-connect' as const } : {}), ...(interop ? { interop } : {}) })
+  installDiagnostics(port.diagnostics)
   await port.identity.refresh()
   void platform.liveUpdate.check()
   return { port, platform, theme: 'system' }

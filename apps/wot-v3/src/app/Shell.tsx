@@ -9,6 +9,7 @@ import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
 import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
+import { DiagnosticsScreen } from './error-report'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
 import { ContactDetailScreen } from '../screens/contacts/ContactDetailScreen'
 import { VerifyScreen } from '../screens/verify/VerifyScreen'
@@ -257,6 +258,8 @@ function RouteScreen({
       return <ReportScreen key={route.id} contactId={route.id} onExit={(to) => onReportExit(to, route.id)} />
     case 'interop':
       return <InteropProbeScreen onBack={onBack} />
+    case 'diagnostics':
+      return <DiagnosticsScreen onBack={onBack} />
     case 'profile-name':
       return <ProfileNameScreen onBack={onBack} />
   }
