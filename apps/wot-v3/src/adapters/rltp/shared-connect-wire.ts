@@ -26,7 +26,8 @@
 //    senders already seen reach the holder;
 //  - application messages of kind `direct` carry a Trust Task document, bare or inside the
 //    registry's TSP binding envelope `{ type: …/binding/tsp/0.1/envelope, document }`; the wire
-//    replies in the form the counterpart used (bare by default);
+//    replies in the form the counterpart used, the envelope until a bare one came (a reader that
+//    knows only the envelope, Keyring, sees a bare document as no Trust Task at all, silently);
 //  - a frame is acknowledged at the mediator only after the holder took its document (`onDocument`
 //    resolved): one it could not take comes again at the next connect;
 //  - frames are handled one after another (the session does not serialise them; the holder's act
@@ -184,7 +185,9 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   /** senders in a relationship (an XRFI answered, or the link's counterpart) */
   const relationship = new Set<string>()
   if (cfg.peerDid) relationship.add(cfg.peerDid)
-  let form: 'bare' | 'envelope' = 'bare'
+  // the registry's TSP binding envelope by default: a counterpart that reads only envelopes (Keyring)
+  // sees a bare document as no Trust Task at all, silently; one that writes bare gets bare back
+  let form: 'bare' | 'envelope' = 'envelope'
   let closed = false
   let session: SharedConnectSession | null = null
   /** the mediator's X25519 key, from the handshake: the outer layer of a routed frame is sealed to it */
@@ -243,7 +246,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     if (body && typeof body === 'object' && (body as { type?: unknown }).type === BINDING_ENVELOPE && (body as { document?: unknown }).document) {
       doc = (body as { document: unknown }).document
       form = 'envelope'
-    }
+    } else form = 'bare'
     relationship.add(peer.did)
     cfg.trace?.(`received ${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
     await cfg.onDocument(doc, peer.did)
