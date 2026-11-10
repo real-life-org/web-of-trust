@@ -94,7 +94,8 @@ export function webLifecycle(): LifecyclePort {
 export function isCardLink(url: string): boolean {
   try {
     const u = new URL(url)
-    return /\/c\/?$/.test(u.pathname) && u.hash.length > 1
+    // a card (/c) or the trigger link of a connection ceremony (/t), on our host or the VTI link host
+    return /\/[ct]\/?$/.test(u.pathname) && u.hash.length > 1
   } catch {
     return false
   }

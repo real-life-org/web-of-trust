@@ -3,7 +3,7 @@
 // card-link test agree on host, path and package, so Android opens https://web-of-trust.de/c#… in the
 // app. The fingerprint's equality with what Play reports is a manual check (the PR documents it).
 // iOS: apple-app-site-association and the Associated Domains entitlement name the same app and paths.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { isCardLink } from '../src/platform/web'
@@ -29,8 +29,23 @@ describe('verified App Links (#489)', () => {
     expect(filter).toContain('android:host="web-of-trust.de"')
     expect(filter).toContain('android:path="/c"')
     expect(filter).toContain('android:path="/c/"')
+    expect(filter).toContain('android:path="/t"')
+    expect(filter).toContain('android:path="/t/"')
     expect(isCardLink('https://web-of-trust.de/c#1:ABC')).toBe(true)
     expect(isCardLink('https://web-of-trust.de/c/#1:ABC')).toBe(true)
+    // the trigger link of the connection ceremony (shared-connect 0.1), on our host and on the VTI link host
+    expect(isCardLink('https://web-of-trust.de/t#_from=did:peer:2.x&_id=y')).toBe(true)
+    expect(isCardLink('https://link.trustoverip.org/t#_from=did:peer:2.x&_id=y')).toBe(true)
+  })
+
+  it('the VTI link host is registered unverified: trigger links another app shows reach the app once the person allows its links', () => {
+    const at = manifest.indexOf('android:host="link.trustoverip.org"')
+    expect(at).toBeGreaterThan(0)
+    const filter = manifest.slice(manifest.lastIndexOf('<intent-filter', at), manifest.indexOf('</intent-filter>', at))
+    expect(filter).not.toContain('autoVerify')
+    expect(filter).toContain('android:path="/t"')
+    // the landing serves the page a browser lands on for our own links
+    expect(existsSync(here('../landing/public/t/index.html'))).toBe(true)
   })
 
   it('assetlinks.json names the app the manifest builds, with well-formed fingerprints', () => {
@@ -58,7 +73,7 @@ describe('verified App Links (#489)', () => {
     // <team id>.<bundle id>: the team that signs the release (Tillmann's account, IOS_TEAM_ID)
     expect(detail!.appIDs).toEqual([`R8QCRG95T6.${bundleId}`])
     // exactly the paths isCardLink accepts and the Android filter names; /c/<anything> is no card link
-    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/'])
+    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/', '/t', '/t/'])
     expect(isCardLink('https://web-of-trust.de/c/other#1:ABC')).toBe(false)
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
   })
