@@ -133,7 +133,10 @@ if $SIGNED; then
   mkdir -p "$PROFILE_DIR"
   PROFILE_FILE="$PROFILE_DIR/$PROFILE_UUID.mobileprovision"
   cp "$WORK/profile.mobileprovision" "$PROFILE_FILE"
-  SIGN_ARGS=(CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$IOS_TEAM_ID" "CODE_SIGN_IDENTITY=Apple Distribution" "PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME" "OTHER_CODE_SIGN_FLAGS=--keychain $KEYCHAIN")
+  # the profile goes on the App target only: on the command line it would reach the resource bundles of
+  # Swift packages too, which refuse a profile (scripts/ios-app-profile.py)
+  python3 "$APP_DIR/scripts/ios-app-profile.py" "$IOS_DIR/$SCHEME.xcodeproj/project.pbxproj" "$PROFILE_NAME"
+  SIGN_ARGS=(CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$IOS_TEAM_ID" "CODE_SIGN_IDENTITY=Apple Distribution" "OTHER_CODE_SIGN_FLAGS=--keychain $KEYCHAIN")
   echo "    ok: Apple Distribution identity, profile '$PROFILE_NAME' for $PROFILE_APP"
 else
   echo "    skipped: unsigned archive"

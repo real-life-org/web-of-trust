@@ -5,8 +5,9 @@
 // package, the version comes from the tag as on Android, and the workflow's secrets are the ones the
 // deploy README documents (a hand-written list drifts silently).
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const here = (...p: string[]) => resolve(__dirname, '..', ...p)
@@ -201,5 +202,47 @@ describe('release path', () => {
     const names = new Set([...wf.matchAll(/\b(?:secrets|vars)\.([A-Z0-9_]+)/g)].map((m) => m[1]!))
     expect(names.size).toBeGreaterThan(3)
     for (const n of names) expect(readme, `${n} is not documented in deploy/ios/README.md`).toContain(`\`${n}\``)
+  })
+})
+
+describe('the signing profile of a signed build (scripts/ios-app-profile.py)', () => {
+  // the profile goes on the App target's Release configuration only: on the xcodebuild command line it
+  // reached the resource bundles of the live-update plugin's Swift packages, which refuse a profile
+  // (archive of app-v3.2.0 failed: "ZIPFoundation_ZIPFoundation does not support provisioning profiles")
+  const run = (project: string, name: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'ios-profile-'))
+    const file = join(dir, 'project.pbxproj')
+    writeFileSync(file, project)
+    try {
+      execFileSync('python3', [here('scripts', 'ios-app-profile.py'), file, name], { stdio: 'pipe' })
+      return { ok: true, out: readFileSync(file, 'utf8') }
+    } catch (e) {
+      return { ok: false, out: String((e as { stderr?: Buffer }).stderr ?? e) }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('names the profile once, in the Release configuration of the App target', () => {
+    const r = run(pbxproj, 'Web of Trust App Store')
+    expect(r.ok).toBe(true)
+    expect(r.out.match(/PROVISIONING_PROFILE_SPECIFIER = "Web of Trust App Store";/g)).toHaveLength(1)
+    const release = r.out.slice(r.out.lastIndexOf('/* Release */ = {'))
+    expect(release.slice(0, release.indexOf('name = Release;'))).toContain('PRODUCT_BUNDLE_IDENTIFIER = org.reallife.weboftrust;')
+    expect(release.slice(0, release.indexOf('name = Release;'))).toContain('PROVISIONING_PROFILE_SPECIFIER = "Web of Trust App Store";')
+    // nothing else changes
+    expect(r.out.replace('\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "Web of Trust App Store";\n', '')).toBe(pbxproj)
+  })
+
+  it('refuses a name that would break the project file, and a second run', () => {
+    expect(run(pbxproj, 'a"b').ok).toBe(false)
+    const once = run(pbxproj, 'P').out
+    expect(run(once, 'P').out).toContain('names a profile already')
+  })
+
+  it('the build passes no profile on the command line', () => {
+    const build = read('scripts', 'build-ios.sh')
+    expect(build).not.toMatch(/"PROVISIONING_PROFILE_SPECIFIER=/)
+    expect(build).toContain('scripts/ios-app-profile.py')
   })
 })
