@@ -108,6 +108,27 @@ describe('shared-connect wire', () => {
     responder.close()
   })
 
+  it("the trace names a received document by the ceremony's words only: a sender's text never reaches the diagnostics", async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.parse('2026-11-09T10:00:00Z'), 'UTC')
+    const exp = Math.floor(clock.now() / 1000) + 600
+    const I = await side(med)
+    const R = await side(med)
+    const steps: string[] = []
+    const inviter = await openSharedConnectWire({ mediatorDid: med.did, did: I.did, keys: I.wire, exp, clock, net: med.net, onDocument: () => undefined, trace: (s) => steps.push(s) })
+    const deliver = async (doc: object) => {
+      const m = await tspPack(te.encode(JSON.stringify({ type: BINDING_ENVELOPE, document: doc })), R.did, I.did, { senderSigningKey: R.wire.edSecret, receiverEncryptionKey: (await sc.parsePeer(I.did))!.x })
+      med.deliver(I.did, m.bytes)
+      await flush(med, inviter)
+    }
+    await deliver({ type: sc.TASK_PROPOSE, id: 'p-1', ceremony: { enactment: 'e', step: 'Anna ist in Behandlung' } })
+    await deliver({ type: 'https://example.org/Anna', id: 'p-2', ceremony: { enactment: 'e', step: 'propose' } })
+    await deliver({ type: sc.TASK_ISSUE + '#response', id: 'r-1', ceremony: { enactment: 'e', step: 'issue-inviter' } })
+    expect(steps.filter((s) => s.startsWith('received'))).toEqual(['received unknown-step', 'received propose', 'received issue-inviter response'])
+    expect(steps.join('\n')).not.toMatch(/Anna/)
+    inviter.close()
+  })
+
   it('answers each sender in the form it wrote: a bare document of a stranger leaves the envelope to the counterpart', async () => {
     const { med, inviter, responder, atI, I, R } = await setup()
     const S = await side(med)

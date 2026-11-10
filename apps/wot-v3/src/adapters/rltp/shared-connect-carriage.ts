@@ -35,7 +35,7 @@
 
 import { fromB64u, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, HolderEvent, KeyProvider, SharedConnectView } from '@real-life/trust-protocol'
-import { sharedConnectKeys, type SharedConnectKeys, type SharedConnectWire, type SharedConnectWireOpening } from './shared-connect-wire'
+import { codeOnly, sharedConnectKeys, type SharedConnectKeys, type SharedConnectWire, type SharedConnectWireOpening } from './shared-connect-wire'
 
 /** how long (device time) a closed enactment keeps its wire: its last documents leave, a
  *  counterpart's repeated document is answered again */
@@ -102,6 +102,13 @@ interface Run {
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+
+/** a refused document's type as one of the ceremony's words, never the sender's string */
+function docWord(type: string): string {
+  const base = type.endsWith('#response') ? type.slice(0, -'#response'.length) : type
+  const word = base === sc.TASK_PROPOSE ? 'propose' : base === sc.TASK_ISSUE ? 'issue' : base === sc.TASK_ERROR ? 'error' : 'other'
+  return type.endsWith('#response') ? `${word}-response` : word
+}
 
 /** the class of a failed wire opening, from the error's message: an HTTP status of the relay's
  *  handshake (`http-403`), a socket that did not open, a relay that could not be resolved, else `other` */
@@ -466,8 +473,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         }
         // how an enactment went wrong, for the diagnostics: codes and step names, never a document; the
         // counterpart's code only in the shape of a code (a sentence in it stays out of a shared log)
-        if (e.type === 'sharedconnect.failed') deps.diagnose?.('shared-connect-failed', /^[a-z0-9._:/#-]{1,64}$/i.test(e.code) ? e.code : '[text]')
-        if (e.type === 'sharedconnect.refused') deps.diagnose?.('shared-connect-step-refused', `${e.docType.split('/').slice(-2).join('/').slice(0, 60)}/${e.reason.slice(0, 40)}`)
+        if (e.type === 'sharedconnect.failed') deps.diagnose?.('shared-connect-failed', codeOnly(e.code))
+        if (e.type === 'sharedconnect.refused') deps.diagnose?.('shared-connect-step-refused', `${docWord(e.docType)}/${e.reason.slice(0, 40)}`)
       }
       if (mine) reconcile()
     },

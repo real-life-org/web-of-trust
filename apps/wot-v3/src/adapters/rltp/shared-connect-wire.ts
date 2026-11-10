@@ -73,6 +73,21 @@ class SharedConnectSession extends MediatorSession {
 
 /** the registry's TSP binding envelope (Trust Tasks TSP binding 0.1) */
 export const BINDING_ENVELOPE = 'https://trusttasks.org/binding/tsp/0.1/envelope'
+
+/** the step names shared-connect 0.1 has; anything else a sender writes is `unknown-step` in the trace */
+const STEPS: ReadonlySet<string> = new Set(['propose', 'issue-inviter', 'issue-responder'])
+/** the trace word for a received document: its step from the closed set and whether it is a response,
+ *  or `error`; never the sender's text (the diagnostics are shared as a text-free report) */
+export function receivedWord(doc: unknown): string {
+  const d = doc as { type?: unknown; ceremony?: { step?: unknown } } | null
+  const type = typeof d?.type === 'string' ? d.type : ''
+  if (type === sc.TASK_ERROR) return 'error'
+  const step = d?.ceremony?.step
+  const name = typeof step === 'string' && STEPS.has(step) ? step : 'unknown-step'
+  return type.endsWith('#response') ? `${name} response` : name
+}
+/** a code of a foreign system (a problem report's, a document type's) only in the shape of a code */
+export const codeOnly = (s: string, max = 64): string => (/^[a-z0-9._:/#-]+$/i.test(s) && s.length <= max ? s : '[text]')
 export const SC_RECONNECT_MIN_MS = 500
 export const SC_RECONNECT_MAX_MS = 30_000
 
@@ -231,7 +246,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       const kind = String(got.control?.controlType ?? 'unknown')
       // a first contact from a sender never seen only while the link is live (the holder's checkPropose bounds the rest)
       if (!live() && !relationship.has(peer.did)) { refuse('control-after-expiry', peer.did); return }
-      cfg.trace?.(kind.toLowerCase().includes('accept') ? 'xrfa received' : kind.toLowerCase().includes('invite') ? 'xrfi received' : `control ${kind.slice(0, 24)}`)
+      cfg.trace?.(kind.toLowerCase().includes('accept') ? 'xrfa received' : kind.toLowerCase().includes('invite') ? 'xrfi received' : 'control other')
       if (kind.toLowerCase().includes('invite')) {
         relationship.add(peer.did)
         try {
@@ -252,7 +267,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       form = 'envelope'
     }
     relationship.add(peer.did)
-    cfg.trace?.(`received ${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
+    cfg.trace?.(`received ${receivedWord(doc)}`)
     await cfg.onDocument(doc, peer.did)
     // the form this sender gets its answers in: the one of a document the holder took from it
     forms.set(peer.did, form)
@@ -288,7 +303,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       ...({ onClose: () => { if (session === s) { session = null; scheduleReconnect() } }, onError: () => { /* the close follows */ } } as object),
     })
     s.onProblem = (code) => {
-      refuse('direct/' + code)
+      refuse('direct/' + codeOnly(code))
       cfg.onRefused?.(code)
     }
     await s.connect()
