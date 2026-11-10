@@ -224,6 +224,7 @@ export const de: Translations = {
     'error.code-used': 'Dieser Code wurde schon verwendet. Bitte um einen neuen.',
     'error.failed': 'Etwas ist schiefgegangen. Bitte versuche es noch einmal.',
     recentFailure: 'Die letzte Verbindung ({time}) hat die andere App mit einem Fehler beendet:',
+    errorTitleConnectFailed: 'Die Verbindung wurde abgebrochen',
     'error.connect-failed': 'Die App der anderen Person hat die Verbindung mit einem Fehler beendet. Es wurde nichts angelegt; der Fehlercode steht unter Einstellungen › Entwicklung › Diagnose.',
     committing: 'Wird verifiziert…',
     capturing: 'Die Begegnung wird übernommen…',

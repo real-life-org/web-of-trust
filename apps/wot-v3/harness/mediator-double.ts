@@ -128,7 +128,7 @@ export interface MediatorDouble {
   readonly sockets: Map<string, FakeWs>
   readonly dropped: { why: string; sender: string }[]
   readonly forwarded: { session: string; outer: { sender: string; receiver: string; route: string[] }; inner: Uint8Array; outerBytes: number }[]
-  readonly direct: { session: string; sender: string; receiver: string }[]
+  readonly direct: { session: string; sender: string; receiver: string; bytes: Uint8Array }[]
   /** every binary frame a client put on its socket, with the TSP version it declares */
   readonly frames: { session: string; version: string }[]
   readonly opened: string[]
@@ -298,7 +298,7 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
         dropped.push({ why: refusal, sender: env.sender })
         return void job(problemReport(this, refusal))
       }
-      direct.push({ session: this.did, sender: env.sender, receiver: env.receiver })
+      direct.push({ session: this.did, sender: env.sender, receiver: env.receiver, bytes: qb2 })
       toClient(env.receiver, qb2)
     }
     close() {
@@ -309,8 +309,6 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     }
   }
 
-  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
-   *  message of another sender or type */
   /** the signing key of a socket's DID (the sender of a routed frame): did:key or did:peer */
   async function signerOf(did: string): Promise<{ ed: Uint8Array }> {
     if (did.startsWith('did:peer:')) {
@@ -330,6 +328,8 @@ export function mediatorDouble(mediatorDid = DOUBLE_DID, now: () => number = () 
     return { kid: typeof first === 'string' ? first : (first?.id ?? ''), x: peerKeys(did).encPub }
   }
 
+  /** the mediator's own problem report on a client's socket (authcrypt from the mediator's key), or a
+   *  message of another sender or type */
   async function problemReport(ws: FakeWs, code: string, opts: { from?: { did: string; kid: string; xSecret: Uint8Array }; type?: string } = {}) {
     const from = opts.from ?? { did: mediatorDid, kid, xSecret }
     const client = await clientOf(ws.did)

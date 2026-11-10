@@ -1,5 +1,5 @@
 // The wire of one shared-connect enactment (shared-connect 0.1, interop/ceremonies/shared-connect.ceremony.json;
-// lib 0.16.0 `shared-connect-holder`): a TSP 1.0 session at the build's mediator under the
+// lib 0.18.0 `shared-connect-holder`): a TSP 1.0 session at the build's mediator under the
 // enactment's messaging identity, the did:peer:2 the holder put into the link (`sharedconnect.shown`)
 // or read from it (`sharedconnect.proposed`). It carries frames, nothing else: every document that
 // arrives goes to the holder (`sharedConnectReceive(doc, senderDid)`), every document the holder
@@ -21,13 +21,15 @@
 //    before its documents (as the reference CLI does; Keyring's inviter takes a propose only from a
 //    sender that formed the relationship). At the inviter's relay (`routed`) the XRFI and every
 //    document travel routed through that mediator, as Keyring's scanner sends them: a mediator
-//    drops or refuses a direct frame between parties whose relationship it never saw form. The inviter answers an XRFI from a sender never seen with
-//    XRFA while the link is live; after the link expired only
-//    senders already seen reach the holder;
+//    drops or refuses a direct frame between parties whose relationship it never saw form. The
+//    inviter answers an XRFI from a sender never seen with XRFA while the link is live; after the
+//    link expired only senders already seen reach the holder;
 //  - application messages of kind `direct` carry a Trust Task document, bare or inside the
 //    registry's TSP binding envelope `{ type: …/binding/tsp/0.1/envelope, document }`; the wire
-//    replies in the form the counterpart used, the envelope until a bare one came (a reader that
-//    knows only the envelope, Keyring, sees a bare document as no Trust Task at all, silently);
+//    answers each sender in the form that sender used for a document the holder took, the envelope
+//    until a bare one came from it (a reader that knows only the envelope, Keyring, sees a bare
+//    document as no Trust Task at all, silently; a stranger's bare document changes nothing for the
+//    counterpart);
 //  - a frame is acknowledged at the mediator only after the holder took its document (`onDocument`
 //    resolved): one it could not take comes again at the next connect;
 //  - frames are handled one after another (the session does not serialise them; the holder's act
@@ -186,8 +188,9 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
   const relationship = new Set<string>()
   if (cfg.peerDid) relationship.add(cfg.peerDid)
   // the registry's TSP binding envelope by default: a counterpart that reads only envelopes (Keyring)
-  // sees a bare document as no Trust Task at all, silently; one that writes bare gets bare back
-  let form: 'bare' | 'envelope' = 'envelope'
+  // sees a bare document as no Trust Task at all, silently; a sender that wrote bare gets bare back
+  type Form = 'bare' | 'envelope'
+  const forms = new Map<string, Form>()
   let closed = false
   let session: SharedConnectSession | null = null
   /** the mediator's X25519 key, from the handshake: the outer layer of a routed frame is sealed to it */
@@ -243,13 +246,16 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     let body: unknown
     try { body = JSON.parse(td.decode(got.payload)) } catch { refuse('not-json', peer.did); return }
     let doc = body
+    let form: Form = 'bare'
     if (body && typeof body === 'object' && (body as { type?: unknown }).type === BINDING_ENVELOPE && (body as { document?: unknown }).document) {
       doc = (body as { document: unknown }).document
       form = 'envelope'
-    } else form = 'bare'
+    }
     relationship.add(peer.did)
     cfg.trace?.(`received ${String((doc as { ceremony?: { step?: unknown } } | null)?.ceremony?.step ?? 'untyped').slice(0, 24)}`)
     await cfg.onDocument(doc, peer.did)
+    // the form this sender gets its answers in: the one of a document the holder took from it
+    forms.set(peer.did, form)
   }
 
   const backoffMs = (n: number) => Math.min(SC_RECONNECT_MIN_MS * 2 ** n, SC_RECONNECT_MAX_MS)
@@ -287,9 +293,8 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
     }
     await s.connect()
     if (closed) { s.close(); return }
-    session = s
-    backoff = 0
-    // the responder: the relationship-forming XRFI to the inviter, before any document on this socket
+    // the responder: the relationship-forming XRFI to the inviter, before any document on this socket;
+    // `session` is set after it, so a send meanwhile sees the wire down and the carriage sends later
     if (cfg.peerDid) {
       try {
         const peer = await peerOf(cfg.peerDid)
@@ -299,9 +304,17 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
           const inv = await packInvite(cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x }, cfg.routed ? { route: [cfg.mediatorDid, cfg.did] } : undefined)
           s.sendBinary(await frameTo(inv.bytes, peer))
           cfg.trace?.('xrfi sent')
-        }
+        } else refuse('invite-no-peer', cfg.peerDid)
       } catch { refuse('invite-failed', cfg.peerDid) }
     }
+    if (closed) { s.close(); return }
+    if (!s.isOpen) {
+      // the socket went while the relationship formed: the close came before `session` named it
+      scheduleReconnect()
+      return
+    }
+    session = s
+    backoff = 0
     cfg.trace?.('connected')
     cfg.onState?.('connected')
   }
@@ -315,6 +328,7 @@ export async function openSharedConnectWire(cfg: SharedConnectWireConfig): Promi
       if (!peer) throw new Error('shared-connect: the recipient is no peer DID this wire knows')
       const s = session
       if (!s?.isOpen) throw new Error('shared-connect wire is down')
+      const form = forms.get(peer.did) ?? 'envelope'
       for (const doc of docs) {
         const body = form === 'envelope' ? { type: BINDING_ENVELOPE, document: doc } : doc
         const msg = await tspPack(te.encode(JSON.stringify(body)), cfg.did, peer.did, { senderSigningKey: keys.edSecret, receiverEncryptionKey: peer.x })

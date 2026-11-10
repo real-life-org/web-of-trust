@@ -1,4 +1,4 @@
-// The carriage of the shared-connect enactments of one opening (shared-connect 0.1; lib 0.16.0
+// The carriage of the shared-connect enactments of one opening (shared-connect 0.1; lib 0.18.0
 // `shared-connect-holder`). The holder runs the ceremony: its flow machines hold every enactment,
 // its commits name the documents to send (`sharedconnect.send`) and its view names them again after
 // a restart (`outbox`). This module only keeps a wire per enactment (shared-connect-wire.ts) and
@@ -84,6 +84,10 @@ interface Run {
   opening: boolean
   /** the keys do not fit the enactment's identity: nothing to try again */
   dead: boolean
+  /** the mediator refused a frame: the outbox goes again when this timer ends (cancel), paced */
+  hold: (() => void) | null
+  /** refusals in a row, for the pace */
+  refusals: number
   tries: number
   retry: (() => void) | null
   /** the socket was open once: a later `connected` is a reconnect */
@@ -103,11 +107,12 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
  *  handshake (`http-403`), a socket that did not open, a relay that could not be resolved, else `other` */
 export function openFailure(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e)
-  const status = /\b([45]\d\d)\b/.exec(m)
+  if (/no socket endpoint/i.test(m)) return 'no-endpoint'
+  // a status on its own, not the port of an address (`:443/`) and not part of a longer number
+  const status = /(?<![\d:.])([45]\d\d)(?![\d/])/.exec(m)
   if (status) return `http-${status[1]}`
   if (/resolv/i.test(m)) return 'resolve'
   if (/socket|websocket|network|fetch/i.test(m)) return 'socket'
-  if (/no socket endpoint/i.test(m)) return 'no-endpoint'
   return 'other'
 }
 
@@ -196,6 +201,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     owed.delete(r.id)
     r.retry?.()
     r.retry = null
+    r.hold?.()
+    r.hold = null
     r.until?.cancel()
     r.until = null
     const w = r.wire
@@ -252,7 +259,8 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
         // the responder listens and sends where the inviter's identifier says (its relay), as the inviter
         // listens at the carrier it put into its link; a link naming no mediator relay falls back to ours
         const relay = v.role === 'responder' ? (await sc.parsePeer(v.link.from))?.relays.find((x) => x.kind === 'tsp-mediator')?.address : undefined
-        deps.diagnose?.('shared-connect-wire', `${v.role} ${relay ? 'their relay' : 'our relay'} opening`)
+        // the first opening and every fourth after it, as the failures: a relay that is down fills no ring
+        if (r.tries % 4 === 0) deps.diagnose?.('shared-connect-wire', `${v.role} ${relay ? 'their relay' : 'our relay'} opening`)
         const wire = await deps.open({
           did: v.did,
           keys,
@@ -261,7 +269,10 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
           // between strangers); at our own carrier direct, as before
           ...(relay ? { mediatorDid: relay, routed: true } : {}),
           ...(peerDid !== null ? { peerDid } : {}),
-          onDocument: (doc, sender) => track(receive(doc, sender)),
+          onDocument: (doc, sender) => {
+            r.refusals = 0
+            return track(receive(doc, sender))
+          },
           onState: (s) => {
             if (s !== 'connected' || stopped || runs.get(r.id) !== r) return
             if (r.connected) {
@@ -272,12 +283,19 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
             r.connected = true
           },
           onRefused: () => {
-            // the mediator took a frame from the socket and refused it: the outbox goes again, and the
-            // attempt does not count as one (a sticky refusal is bounded by SC_OWED_MS)
+            // the mediator took a frame from the socket and refused it: the outbox goes again, paced
+            // like the openings (a mediator that refuses everything is not asked at round-trip speed),
+            // and the attempt does not count as one (a sticky refusal is bounded by SC_OWED_MS)
             if (stopped || runs.get(r.id) !== r) return
             r.resync = true
             if (attempts && attempts[r.id] !== undefined) void record(r.id, undefined)
-            reconcile()
+            if (r.hold) return
+            const wait = SC_OPEN_RETRY_MS[Math.min(r.refusals, SC_OPEN_RETRY_MS.length - 1)] as number
+            r.refusals++
+            r.hold = deps.setTimer(deps.now() + wait, () => {
+              r.hold = null
+              reconcile()
+            })
           },
           report: (x) => deps.diagnose?.(x.code, x.detail),
           // the wire's steps, with the enactment's role and the relay class (ours or the counterpart's)
@@ -327,7 +345,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
   /** `covered`: how many of the owed commits the view was read after (its outbox holds their documents) */
   const flush = async (r: Run, v: SharedConnectView, covered: number): Promise<void> => {
     const wire = r.wire
-    if (!wire?.isOpen()) return
+    if (!wire?.isOpen() || r.hold) return
     const list = owed.get(r.id) ?? []
     if (r.resync) {
       if (v.theirDid !== null && v.outbox.length > 0) {
@@ -399,7 +417,7 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     for (const { v, until } of wanted.values()) {
       let r = runs.get(v.id)
       if (!r) {
-        r = { id: v.id, wire: null, opening: false, dead: false, tries: 0, retry: null, connected: false, resync: true, until: null, startedAt: now }
+        r = { id: v.id, wire: null, opening: false, dead: false, hold: null, refusals: 0, tries: 0, retry: null, connected: false, resync: true, until: null, startedAt: now }
         runs.set(v.id, r)
       }
       if (r.until?.at !== until) {
@@ -440,9 +458,15 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
       for (const e of events) {
         if (!e.type.startsWith('sharedconnect.')) continue
         mine = true
-        if (e.type === 'sharedconnect.send' && e.to !== '' && e.docs.length > 0) owed.set(e.id, [...(owed.get(e.id) ?? []), { to: e.to, docs: e.docs }])
-        // how an enactment went wrong, for the diagnostics: codes and step names, never a document
-        if (e.type === 'sharedconnect.failed') deps.diagnose?.('shared-connect-failed', e.code.slice(0, 120))
+        if (e.type === 'sharedconnect.send' && e.to !== '' && e.docs.length > 0) {
+          // into the list a flush may be working through, never a new one
+          const list = owed.get(e.id) ?? []
+          list.push({ to: e.to, docs: e.docs })
+          owed.set(e.id, list)
+        }
+        // how an enactment went wrong, for the diagnostics: codes and step names, never a document; the
+        // counterpart's code only in the shape of a code (a sentence in it stays out of a shared log)
+        if (e.type === 'sharedconnect.failed') deps.diagnose?.('shared-connect-failed', /^[a-z0-9._:/#-]{1,64}$/i.test(e.code) ? e.code : '[text]')
         if (e.type === 'sharedconnect.refused') deps.diagnose?.('shared-connect-step-refused', `${e.docType.split('/').slice(-2).join('/').slice(0, 60)}/${e.reason.slice(0, 40)}`)
       }
       if (mine) reconcile()
@@ -455,10 +479,12 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     },
     poke() {
       if (stopped) return
-      // a planned attempt runs now
+      // a planned attempt runs now, a held outbox too
       for (const r of runs.values()) {
         r.retry?.()
         r.retry = null
+        r.hold?.()
+        r.hold = null
       }
       reconcile()
     },

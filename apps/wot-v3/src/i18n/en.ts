@@ -225,6 +225,7 @@ export const en = {
     'error.code-used': 'This code was used already. Ask for a new one.',
     'error.failed': 'Something went wrong. Please try again.',
     recentFailure: 'The other app ended the last connection ({time}) with an error:',
+    errorTitleConnectFailed: 'The connection was ended',
     'error.connect-failed': 'The other person’s app ended the connection with an error. Nothing was created; the error code is under Settings › Development › Diagnostics.',
     committing: 'Verifying…',
     capturing: 'Taking over the encounter…',

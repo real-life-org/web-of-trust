@@ -389,7 +389,7 @@ describe('the wire over the mediator double', () => {
     await bob.settle()
     await flush()
     expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(envelope)]])
-    expect(med.direct).toEqual([{ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did }])
+    expect(med.direct.map(({ session, sender, receiver }) => ({ session, sender, receiver }))).toEqual([{ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did }])
     expect(med.forwarded).toEqual([])
     expect(wireB.sentFrames()[0]).toMatchObject({ mode: 'direct', outer: null })
     expect(new Set(med.opened)).toEqual(new Set([A.ids.conn.did, B.ids.conn.did]))
@@ -441,7 +441,7 @@ describe('the wire over the mediator double', () => {
     await flush()
     expect(bob.status(id)?.state).toBe('accepted')
     expect(alice.collect(clock.now()).items.map((i) => [...i.bytes])).toEqual([[...sealBytes(next)]])
-    expect(med.direct.at(-1)).toEqual({ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did })
+    expect(med.direct.at(-1)).toMatchObject({ session: B.ids.conn.did, sender: B.ids.conn.did, receiver: A.ids.conn.did })
     close(alice, bob, wireA, wireB)
   })
 
