@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.1](https://github.com/real-life-org/web-of-trust/compare/app-v0.4.0...app-v0.4.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **deps:** Capacitor 8.5.3, out of GHSA-rvm3-566m-v7fv ([a3c002f](https://github.com/real-life-org/web-of-trust/commit/a3c002f52e7dc383ea2dc3eecaf5e88596d2e4d4))
+* **deps:** Capacitor 8.5.3, out of GHSA-rvm3-566m-v7fv ([17bbe4e](https://github.com/real-life-org/web-of-trust/commit/17bbe4e0b891a05fe970eb00b9bcd1ab8edefd9d))
+* **deps:** demo native projects synced to Capacitor 8.5.3 ([be743c9](https://github.com/real-life-org/web-of-trust/commit/be743c91face252485f2ed177feefebc2c22893a))
+* **deps:** update dependency happy-dom to v21 [security] ([12e476b](https://github.com/real-life-org/web-of-trust/commit/12e476ba2e3ca20083e84b5bf11247018c0e39ea))
+* **deps:** update dependency happy-dom to v21 [security] ([e5375c5](https://github.com/real-life-org/web-of-trust/commit/e5375c552a2918492431c924ac37858f3ac21a3e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @web_of_trust/adapter-automerge bumped to 0.3.1
+    * @web_of_trust/adapter-yjs bumped to 0.3.1
+    * @web_of_trust/core bumped to 0.6.1
+
 ## [0.4.0](https://github.com/real-life-org/web-of-trust/compare/app-v0.3.8...app-v0.4.0) (2026-10-01)
 
 
