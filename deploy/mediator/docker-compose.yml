@@ -20,7 +20,7 @@ name: mediator
 
 services:
   redis:
-    image: redis:7.4.11-alpine@sha256:d9436322172a5b482c187bf1f363d3c4fea086fcca6b9c8a94de8f0f39ed3193
+    image: redis:7.4.12-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     container_name: mediator-redis
     restart: unless-stopped
     command:
@@ -54,7 +54,7 @@ services:
         max-file: "3"
 
   mediator:
-    image: ghcr.io/affinidi/messaging-mediator:v0.45.0@sha256:3e53ea634d9a3a26352480ff0b5266b8486489e0e672faa6bd6705549005f538
+    image: ghcr.io/affinidi/messaging-mediator:v0.51.0@sha256:443bdb7bef6addad866e8626afdf34501c936a147d0408c95b96af23a9a24f9f
     container_name: mediator
     restart: unless-stopped
     # Run as the owner of ./secrets (anton), so the 0600 secrets file stays
@@ -162,7 +162,7 @@ services:
   # the first entry; the mediator itself can only hold one entry (see
   # DID_WEB_SELF_HOSTED above).
   did-log:
-    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     container_name: mediator-did-log
     restart: unless-stopped
     user: "${MEDIATOR_UID}:${MEDIATOR_GID}"
