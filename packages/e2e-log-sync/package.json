@@ -21,7 +21,7 @@
     "@types/ws": "^8.5.13",
     "fake-indexeddb": "^6.2.5",
     "tsx": "^4.19.0",
-    "typescript": "~5.7.2",
+    "typescript": "~5.9.0",
     "vitest": "^4.1.0",
     "ws": "^8.18.0",
     "yjs": "^13.6.30"

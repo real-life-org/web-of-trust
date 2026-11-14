@@ -22,12 +22,12 @@
     "measure:kdf": "node scripts/measure-kdf.mjs"
   },
   "dependencies": {
-    "@capacitor/android": "~8.5.1",
+    "@capacitor/android": "~8.6.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/clipboard": "^8",
-    "@capacitor/core": "~8.5.1",
+    "@capacitor/core": "~8.6.0",
     "@capacitor/filesystem": "^8.1.5",
-    "@capacitor/ios": "~8.5.1",
+    "@capacitor/ios": "~8.6.0",
     "@capacitor/keyboard": "^8.0.6",
     "@capacitor/local-notifications": "^8.3.1",
     "@capacitor/share": "^8.0.3",
@@ -49,7 +49,7 @@
     "capacitor-email-composer": "^8.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "d3-force": "3.0.0",
+    "d3-force": "3.0.1",
     "fflate": "0.8.3",
     "html5-qrcode": "^2.3.8",
     "qrcode": "^1.5.4",
@@ -59,7 +59,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@capacitor/cli": "~8.5.1",
+    "@capacitor/cli": "~8.6.0",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",
