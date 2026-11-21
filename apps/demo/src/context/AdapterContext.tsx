@@ -38,10 +38,9 @@ import type { YjsReplicationAdapter } from '@web_of_trust/adapter-yjs'
 import {
   ContactService,
   AttestationService,
-  InboxReceptionHost,
 } from '../services'
 import { x25519MultibaseToPublicKeyBytes, encryptionKeyMultibaseFromDidDocument } from '@web_of_trust/core/protocol'
-import { createProfileRecoveryWorkflow } from '@web_of_trust/core/application'
+import { createProfileRecoveryWorkflow, InboxReceptionHost } from '@web_of_trust/core/application'
 import { AutomergePublishStateStore } from '../adapters/AutomergePublishStateStore'
 import { AutomergeGraphCacheStore } from '../adapters/AutomergeGraphCacheStore'
 import { LocalCacheStore } from '../adapters/LocalCacheStore'

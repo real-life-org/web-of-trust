@@ -1,5 +1,4 @@
-import type { ProfileUpdateListener } from './InboxReceptionHost'
-import { applyContactProfile, type ContactProfileStorage } from './contactProfileWriter'
+import { applyContactProfile, type ContactProfileStorage, type ProfileUpdateListener } from '@web_of_trust/core/application'
 
 export interface ProfileUpdateListenerDeps {
   storage: ContactProfileStorage
