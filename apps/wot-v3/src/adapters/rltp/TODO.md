@@ -57,6 +57,9 @@ Membership RLTP-MT-3400); on an older library `invitedBy` is null and the role i
 An invitation shows as a card in the conversation with the inviter, answered there with accept or
 decline.
 
-Not built: any group screen; the group's name on an invitation (the library names a group once it is joined);
-the invitations sent (`invitesOut` is empty); whether the own vouch was given (`iVouched` is false);
+With library 0.19.0 the invitation's card names the group (`PromptView.groupName`, the inviter's
+statement); on an older library the card says who invites.
+
+Not built: any group screen; the invitations sent (`invitesOut` is empty); whether the own vouch was
+given (`iVouched` is false);
 group messages (`groupMessaging` is off: the library has no content in groups).

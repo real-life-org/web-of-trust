@@ -76,6 +76,13 @@ describe('rltp projection: groups', () => {
     expect(project(input({ prompts })).decisions).toEqual([{ id: 'p1', openedAt: T, expiresAt: T + 1000, state: 'open', kind: 'group-invite', inviterId: 'bea', groupName: null, candidacyChoice: { ok: false, reason: 'not-supported' } }])
   })
 
+  it('the invitation names its group where the library states it', () => {
+    const named = (groupName: unknown) => [{ commitSeq: '9', id: 'p1', kind: 'group-invite', contactId: 'bea', groupId: 'g2', groupName, openedAt: T }] as never
+    expect(project(input({ prompts: named('Garten') })).decisions).toMatchObject([{ kind: 'group-invite', groupName: 'Garten' }])
+    // nothing stated, or nothing usable: unknown, never an empty title
+    for (const none of ['', undefined, 7]) expect(project(input({ prompts: named(none) })).decisions).toMatchObject([{ groupName: null }])
+  })
+
   it('an open admission: its vouches against the threshold, vouching offered to a member', () => {
     const m = project(input({ groups: [group({ vouchThreshold: '2', pending: [{ member: CY, name: 'Cy', vouches: 1 }] })] }))
     expect(m.groups[0]?.openAdmissions).toBe(1)
