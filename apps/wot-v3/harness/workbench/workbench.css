@@ -138,34 +138,32 @@
 }
 .wb-edge {
   stroke: var(--wb-primary);
-  stroke-width: 6;
+  stroke-opacity: 0.8;
+  stroke-width: 3.6;
   stroke-linecap: round;
 }
-/* one-sided: dashed, with an arrow from the one who verified */
-.wb-edge.one {
-  stroke-dasharray: 8 7;
-  stroke-linecap: butt;
+/* one-sided or unproven: a lighter line, finer and dashed, with an arrow from the one who verified */
+.wb-edge.one,
+.wb-edge.via,
+.wb-edge.link {
+  stroke-width: 2.2;
+  stroke-dasharray: 6 7;
 }
 .wb-edge.via {
   stroke: var(--wb-amber);
-  stroke-dasharray: 8 7;
-  stroke-linecap: butt;
 }
 .wb-edge.link {
   stroke: var(--wb-red);
-  stroke-dasharray: 8 7;
-  stroke-linecap: butt;
 }
 /* the trust: a narrower line on its ground, which shows as its rim */
-.wb-edge.trust2 {
-  stroke: var(--wb-green);
-  stroke-width: 2.4;
-}
+.wb-edge.trust2,
 .wb-edge.trust1 {
   stroke: var(--wb-green);
-  stroke-width: 2.4;
-  stroke-dasharray: 8 7;
-  stroke-linecap: butt;
+  stroke-opacity: 1;
+  stroke-width: 1.6;
+}
+.wb-edge.trust1 {
+  stroke-dasharray: 6 7;
 }
 .wb-arrow.verified path {
   fill: var(--wb-primary);
@@ -183,12 +181,11 @@
 /* a group's membership: grey, solid by the log, dashed while joining */
 .wb-edge.member {
   stroke: var(--wb-muted);
-  stroke-opacity: 0.75;
-  stroke-width: 1.8;
+  stroke-opacity: 0.5;
+  stroke-width: 1.4;
 }
 .wb-edge.member.joining {
-  stroke-dasharray: 8 7;
-  stroke-linecap: butt;
+  stroke-dasharray: 6 7;
 }
 .wb-hub circle.ring {
   fill: var(--wb-bg);
@@ -298,7 +295,11 @@
   height: 8px;
 }
 .wb-legend svg line {
-  stroke-width: 3.4;
+  stroke-width: 3;
+}
+.wb-legend svg line.one,
+.wb-legend svg line.via {
+  stroke-width: 2;
 }
 .wb-legend svg line.trust1,
 .wb-legend svg line.trust2,

@@ -196,7 +196,7 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
     <svg role="group" aria-label="the trust graph">
       <defs>
         {(['verified', 'trust'] as const).map((k) => (
-          <marker key={k} id={`wb-arrow-${k}`} className={`wb-arrow ${k}`} viewBox="0 0 10 10" refX="27" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto">
+          <marker key={k} id={`wb-arrow-${k}`} className={`wb-arrow ${k}`} viewBox="0 0 10 10" refX="34" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto">
             <path d="M0,0 L10,5 L0,10 z" />
           </marker>
         ))}

@@ -40,8 +40,12 @@ const TRUST = 'var(--success)'
 const STAR = '#8b7ad8'
 const CARD_W = 196
 /** the ground line and the trust line on it */
-const GROUND_W = 4.2
-const TRUST_W = 1.8
+const GROUND_W = 3
+/** a one-sided or unproven ground is a lighter line: finer, and dashed */
+const GROUND_W_OPEN = 1.8
+const TRUST_W = 1.4
+/** dashes, not dots: dotted is the star's alone */
+const DASH = '5 6'
 
 /** your node: the gold ring around your avatar marks the middle of the graph */
 const ME_RING = 'shadow-[0_0_0_3px_oklch(0.72_0.15_75),0_0_0_7px_color-mix(in_oklab,oklch(0.72_0.15_75)_25%,transparent)]'
@@ -200,7 +204,7 @@ export function GraphScreen() {
         <div ref={box} className="relative min-h-0 flex-1 touch-none select-none overflow-hidden" onClick={() => setSelected(null)} data-graph>
           <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
             <defs>
-              {([['verified', GROUND.verified, 11], ['trust', TRUST, 8]] as const).map(([k, fill, w]) => (
+              {([['verified', GROUND.verified, 9], ['trust', TRUST, 9]] as const).map(([k, fill, w]) => (
                 <marker key={k} id={`g-arrow-${k}`} viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth={w} markerHeight={w} orient="auto">
                   <path d="M0,0 L10,5 L0,10 z" fill={fill} />
                 </marker>
@@ -225,10 +229,10 @@ export function GraphScreen() {
                   // grey a membership: solid by the log, dashed while you are joining; the contact's word
                   // dotted violet, as every star is
                   stroke={m.by === 'said' ? STAR : 'currentColor'}
-                  strokeOpacity={m.by === 'said' ? (selected === null ? 0.8 : touched ? 0.95 : 0.15) : selected === null ? 0.4 : touched ? 0.65 : 0.1}
-                  strokeWidth={m.by === 'said' ? 1.6 : 1.5}
-                  {...(m.by === 'said' ? { strokeDasharray: '1.5 5' } : m.by === 'joining' ? { strokeDasharray: '7 6' } : {})}
-                  strokeLinecap={m.by === 'joining' ? 'butt' : 'round'}
+                  strokeOpacity={m.by === 'said' ? (selected === null ? 0.7 : touched ? 0.95 : 0.15) : selected === null ? 0.28 : touched ? 0.6 : 0.1}
+                  strokeWidth={m.by === 'said' ? 1.5 : 1.2}
+                  {...(m.by === 'said' ? { strokeDasharray: '1.5 5' } : m.by === 'joining' ? { strokeDasharray: DASH } : {})}
+                  strokeLinecap="round"
                 />
               )
             })}
@@ -257,9 +261,10 @@ export function GraphScreen() {
               const look = lookOf(e)
               const touched = selected === e.contact
               const cluster = selected !== null && !touched && neighbours.has(e.contact)
-              const op = selected === null ? 0.85 : touched ? 1 : cluster ? 0.5 : 0.15
+              const op = selected === null ? 0.7 : touched ? 1 : cluster ? 0.45 : 0.12
               const ux = b.x - a.x, uy = b.y - a.y, len = Math.hypot(ux, uy) || 1
-              const r1 = 31, r2 = (sizes.get(e.contact) ?? 16) + 3
+              // clear of your gold ring, so an arrow toward you is seen
+              const r1 = 38, r2 = (sizes.get(e.contact) ?? 16) + 3
               const out = { x1: a.x + (ux / len) * r1, y1: a.y + (uy / len) * r1, x2: b.x - (ux / len) * r2, y2: b.y - (uy / len) * r2 }
               // an arrow points away from the one who acted: a line is drawn from them
               const from = (arrow: 'out' | 'in' | null) => (arrow === 'in' ? { x1: out.x2, y1: out.y2, x2: out.x1, y2: out.y1 } : out)
@@ -270,9 +275,9 @@ export function GraphScreen() {
                     data-ground={look.ground.kind}
                     {...from(look.ground.arrow)}
                     stroke={GROUND[look.ground.kind]}
-                    strokeWidth={GROUND_W}
-                    strokeLinecap={look.ground.dashed ? 'butt' : 'round'}
-                    {...(look.ground.dashed ? { strokeDasharray: '7 6' } : {})}
+                    strokeWidth={look.ground.dashed ? GROUND_W_OPEN : GROUND_W}
+                    strokeLinecap="round"
+                    {...(look.ground.dashed ? { strokeDasharray: DASH } : {})}
                     {...(look.ground.arrow && !look.trust ? { markerEnd: 'url(#g-arrow-verified)' } : {})}
                   />
                   {look.trust ? (
@@ -282,8 +287,8 @@ export function GraphScreen() {
                       {...from(look.trust.arrow)}
                       stroke={TRUST}
                       strokeWidth={TRUST_W}
-                      strokeLinecap={look.trust.dashed ? 'butt' : 'round'}
-                      {...(look.trust.dashed ? { strokeDasharray: '7 6' } : {})}
+                      strokeLinecap="round"
+                      {...(look.trust.dashed ? { strokeDasharray: DASH } : {})}
                       {...(look.trust.arrow ? { markerEnd: 'url(#g-arrow-trust)' } : {})}
                     />
                   ) : null}
