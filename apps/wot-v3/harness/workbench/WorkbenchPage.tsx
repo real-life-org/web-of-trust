@@ -62,7 +62,7 @@ function linksOf(scene: Scene): Link[] {
   // what the camera knows only through a contact's star: drawn, never pulling the layout
   for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
   for (const g of scene.groups) {
-    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.said ? 'wb-edge star said' : 'wb-edge member' + (m.joining ? ' joining' : ''), member: true })
+    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.by === 'said' ? 'wb-edge star said' : 'wb-edge member' + (m.by === 'joining' ? ' joining' : ''), member: true })
   }
   return out
 }

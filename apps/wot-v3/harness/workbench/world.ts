@@ -184,7 +184,8 @@ function groupsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof cont
         if (peer) said.push(peer)
       }
       const linked = [...new Set(members)].sort()
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: linked, said: [...new Set(said)].sort(), unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - linked.length), confirmed: g.knownMembers }
+      // joining until the log names the device's owner, as the app's graph has it
+      return { id: g.id, name: g.name, joining: g.membership === 'joining' || !selfListed, members: linked, said: [...new Set(said)].sort(), unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - linked.length), confirmed: g.knownMembers }
     })
 }
 

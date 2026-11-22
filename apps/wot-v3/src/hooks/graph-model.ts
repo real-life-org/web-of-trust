@@ -82,10 +82,16 @@ export interface MemberEdge {
   readonly hub: string
   /** 'me' or the contact id */
   readonly node: string
-  /** `log`: the group's log names this member and the device knows who it is. `said`: the contact's
-   *  group star names the group; which member of the log it is, or whether it still is one, is open */
-  readonly by: 'log' | 'said'
+  /** why the line is drawn */
+  readonly by: MemberBy
 }
+
+/** What the device knows of a person and a group:
+ *  `log`: the group's log names this member, and the device knows who it is: a confirmed membership.
+ *  `joining`: you accepted the invitation and the group has not confirmed you: not a member yet.
+ *  `said`: the contact's group star names the group; which member of the log it is, or whether it
+ *  still is one, is open. */
+export type MemberBy = 'log' | 'joining' | 'said'
 
 export interface GraphModel {
   readonly nodes: readonly GraphNode[]
@@ -128,7 +134,8 @@ export function graphModel(input: GraphInput): GraphModel {
     const id = `g:${g.id}`
     const linked = [...new Set(g.contacts)].filter((c) => held.has(c))
     hubs.push({ id, group: g.id, name: g.name, joining: g.joining, size: HUB_SIZE, members: g.knownMembers, unknown: Math.max(0, g.knownMembers - (g.selfListed ? 1 : 0) - linked.length) })
-    memberships.push({ key: `${id}|me`, hub: id, node: 'me', by: 'log' })
+    // your own line is a membership only once the log names you
+    memberships.push({ key: `${id}|me`, hub: id, node: 'me', by: g.joining || !g.selfListed ? 'joining' : 'log' })
     for (const c of linked) memberships.push({ key: `${id}|${c}`, hub: id, node: c, by: 'log' })
     // a contact's word takes no dot away: a dot goes only where the log's member is known to be the contact
     for (const c of new Set(g.said ?? [])) if (held.has(c) && !linked.includes(c)) memberships.push({ key: `${id}|${c}`, hub: id, node: c, by: 'said' })

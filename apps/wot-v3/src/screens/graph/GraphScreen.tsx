@@ -228,9 +228,10 @@ export function GraphScreen() {
                   data-by={m.by}
                   // the contact's word is drawn as every star is: dotted violet
                   stroke={m.by === 'said' ? STAR : 'currentColor'}
-                  strokeOpacity={m.by === 'said' ? (selected === null ? 0.7 : touched ? 0.9 : 0.15) : selected === null ? 0.28 : touched ? 0.6 : 0.1}
+                  strokeOpacity={(m.by === 'said' ? (selected === null ? 0.7 : touched ? 0.9 : 0.15) : selected === null ? 0.28 : touched ? 0.6 : 0.1) * (m.by === 'joining' ? 0.5 : 1)}
                   strokeWidth={m.by === 'said' ? 1.5 : touched ? 1.6 : 1.2}
-                  strokeDasharray={m.by === 'said' ? '1.5 5' : '5 5'}
+                  // not confirmed yet: the same line, fainter and wider apart
+                  strokeDasharray={m.by === 'said' ? '1.5 5' : m.by === 'joining' ? '3 8' : '5 5'}
                   strokeLinecap="round"
                 />
               )

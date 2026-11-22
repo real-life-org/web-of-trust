@@ -159,3 +159,38 @@ describe('members who know each other apart from the invitation (Anton 22.11.)',
     expect(g.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 1 }])
   })
 })
+
+describe('the own line to a group and the admission (#543)', () => {
+  it('after accepting, while the inviter is away: the device holds no group yet and draws no line; once the log names B: a membership', async () => {
+    const w = await met()
+    const founded = await w.A.port.trust.foundGroup({ name: 'Garten' }).done
+    if (!founded.ok) throw new Error('found')
+    const groupId = founded.value.groupId
+    expect((await w.A.port.trust.invite(groupId, w.aId).done).ok).toBe(true)
+    await w.settle()
+    const inv = value(w.B.port.stores.decisions).find((d) => d.kind === 'group-invite')!
+    // the card in the conversation says what B did, whatever became of it
+    const card = () => value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.find((i): i is DecisionCardItem => i.kind === 'decision' && i.decision === inv.id)
+
+    // the inviter is away: B's consent leaves, nobody answers it. The library holds a group for B only
+    // from the inviter's welcome on, so there is nothing to draw: never a membership ahead of the log
+    w.carrier.setOnline('A', false)
+    expect((await w.B.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
+    await w.settle()
+    expect(value(w.B.port.stores.groups)).toEqual([])
+    expect(graphModel(graphInputOf(w.B.port)!)).toMatchObject({ hubs: [], memberships: [] })
+    expect(card()?.resolution).toMatchObject({ choice: 'accept', basis: 'own-act' })
+
+    // the inviter is back and admits B: the log names B, the line is a membership
+    w.carrier.setOnline('A', true)
+    for (let i = 0; i < 6; i++) {
+      w.clock.advance(60_000)
+      await w.settle()
+    }
+    expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 2 }])
+    const after = graphModel(graphInputOf(w.B.port)!)
+    expect(after.memberships.filter((m) => m.node === 'me')).toMatchObject([{ hub: `g:${groupId}`, by: 'log' }])
+    expect(after.hubs).toMatchObject([{ joining: false, members: 2 }])
+    expect(card()?.resolution).toMatchObject({ choice: 'accept', basis: 'own-act' })
+  })
+})
