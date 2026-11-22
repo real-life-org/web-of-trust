@@ -565,6 +565,29 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     })
     return offering
   }
+  /** The members of the own groups are still to be asked for what their logs hold beyond this device's
+   *  (Access stage 1: the log travels between members, nobody keeps it for the group). Due once per
+   *  opening and again at every return to the foreground; it stays due until a request went through,
+   *  so a failure is tried again by the timer and a resume that failed first does not skip it (#534).
+   *  A deregistration-only opening asks nobody. */
+  let groupsDue = !deregOnly
+  const GROUPS_RETRY_MS = [1000, 5000, 30_000, 120_000] as const
+  let groupsFailures = 0
+  /** Runs after a completed resume. The requests leave from the holder's custody like every document;
+   *  one that reaches nobody is given up by the holder. A device in no group asks nobody. */
+  const catchUpGroups = async (): Promise<void> => {
+    if (stopped || !groupsDue) return
+    try {
+      const r = await gate.run((h) => h.syncGroups({ when: when() }))
+      groupsDue = false
+      groupsFailures = 0
+      if (r.ok && r.outbound.length > 0) await offer()
+    } catch {
+      // the gate closed or the storage failed: still due, the timer comes back with a growing pause
+      schedule(now() + GROUPS_RETRY_MS[Math.min(groupsFailures, GROUPS_RETRY_MS.length - 1)]!)
+      groupsFailures++
+    }
+  }
   /** a resume of this opening completed: the holder's time is reconciled, open records may be settled
    *  (review 421 R10-1) */
   let resumed = false
@@ -588,6 +611,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     resend = true
     await offer()
     if (deregOnly) return
+    await catchUpGroups()
     // a failed expiry or replay is tried again shortly, without activation or network (R10-3)
     await expireOpen().catch(() => schedule(now() + 1000))
     await replayOpen().catch(() => schedule(now() + 1000))
@@ -1673,19 +1697,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         wasOnline = online
       })
   undo.push(() => offStatus())
-  /** Asks the members of the own groups for what their logs hold beyond this device's (Access stage 1:
-   *  the log travels between members, nobody keeps it for the group): what a device does when it
-   *  comes back. The requests leave from the holder's custody like every document; one that reaches
-   *  nobody is given up by the holder. A device in no group asks nobody. */
-  const catchUpGroups = async (): Promise<void> => {
-    if (stopped || !resumed) return
-    const r = await gate.run((h) => h.syncGroups({ when: when() }))
-    if (r.ok && r.outbound.length > 0) void offer()
-  }
   const offLifecycle =
     (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
-      void track(due().then(catchUpGroups)).catch(() => undefined)
+      // coming back: the groups' members are asked again (due runs the request)
+      groupsDue = true
+      void track(due())
       sharedConnect?.poke()
       void track(replayOpen()).catch(() => undefined)
     }) ?? (() => undefined)
@@ -1702,8 +1719,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     await dropInvalidJournal()
     await due()
     await recover()
-    // what the own groups' members hold since this device closed
-    await catchUpGroups().catch(() => undefined)
     await sync()
     // a card displayed before a restart and still valid gets its instance again
     await announceDisplayed()
