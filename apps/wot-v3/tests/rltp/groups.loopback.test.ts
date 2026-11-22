@@ -72,6 +72,8 @@ describe('groups over the real adapter (loopback)', () => {
     // the card stays in the conversation as answered, by this device
     const after = value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.filter((i): i is DecisionCardItem => i.kind === 'decision')
     expect(after.find((c) => c.decision === open[0]!.id)?.resolution).toMatchObject({ choice: 'accept', by: 'this-device', basis: 'own-act' })
+    // and says what was answered: the line under it reads "You accepted", not "You confirmed"
+    expect(after.find((c) => c.decision === open[0]!.id)?.of).toBe('group-invite')
     expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, name: 'Garten', membership: 'member', knownMembers: 2 }])
     const atA = value(w.A.port.stores.group(groupId)) as GroupDetail
     const atB = value(w.B.port.stores.group(groupId)) as GroupDetail

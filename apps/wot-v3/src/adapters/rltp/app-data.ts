@@ -66,6 +66,8 @@ export type LogLine =
       readonly key: ConversationKey
       readonly at: number
       readonly decision: string
+      /** the prompt's kind, kept past its answer */
+      readonly of?: 'encounter-confirm' | 'group-invite'
       /** written with the own deciding intent (§3.4 step 4): survives the journal's clean-up */
       readonly resolution?: DecisionResolution
     }

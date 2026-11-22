@@ -206,6 +206,7 @@ export const en = {
       sub: '{name} invites you',
       cta: 'Accept',
       decline: 'Decline',
+      accepted: 'You accepted',
       declineNote: 'If you decline, {name} is not told.',
       failed: 'That did not go through. Please try again.',
     },

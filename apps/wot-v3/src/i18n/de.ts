@@ -205,6 +205,7 @@ export const de: Translations = {
       sub: '{name} lädt dich ein',
       cta: 'Annehmen',
       decline: 'Ablehnen',
+      accepted: 'Du hast angenommen',
       declineNote: 'Wenn du ablehnst, erfährt {name} davon nichts.',
       failed: 'Das ist nicht durchgegangen. Bitte versuche es noch einmal.',
     },
