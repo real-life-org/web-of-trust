@@ -22,8 +22,10 @@ function read(port: Port): GraphInput | null {
     }),
     groups: groupsOf(port).map((g) => {
       const d = port.stores.group(g.id).get()
-      const members = d.status === 'ready' && d.value ? d.value.visibleMembers : []
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, contacts: members.flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])) }
+      const members = d.status === 'ready' && d.value ? d.value.visibleMembers : null
+      // without the details the membership decides: a member is in the log, one who is joining is not yet
+      const selfListed = members ? members.some((m) => m.self) : g.membership === 'member'
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, selfListed, contacts: (members ?? []).flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])) }
     }),
   }
 }

@@ -52,7 +52,7 @@ describe('graphModel', () => {
 })
 
 describe('graphModel: groups are hubs', () => {
-  const group = (id: string, knownMembers: number, contacts: string[], joining = false) => ({ id: id as GroupId, name: id, joining, knownMembers, contacts: contacts as ContactId[] })
+  const group = (id: string, knownMembers: number, contacts: string[], joining = false) => ({ id: id as GroupId, name: id, joining, knownMembers, selfListed: !joining, contacts: contacts as ContactId[] })
   const g = graphModel({ ...input, groups: [group('garden', 5, ['noah', 'lea', 'stranger']), group('choir', 1, [], true)] })
 
   it('one hub per group, never under a contact\'s id; the people stay as they were', () => {
@@ -75,6 +75,15 @@ describe('graphModel: groups are hubs', () => {
   it('the members that are no contact are a number at the hub: all of them, less you and the ones drawn', () => {
     const by = Object.fromEntries(g.hubs.map((h) => [h.group, h]))
     expect(by.garden).toMatchObject({ members: 5, unknown: 2 })
-    expect(by.choir).toMatchObject({ members: 1, unknown: 0 })
+    expect(by.choir).toMatchObject({ members: 1, unknown: 1 })
+  })
+
+  it('#539: while you are joining the log does not name you yet: nothing is taken off for you', () => {
+    // the founder alone is in the log, and is no contact of yours: one dot, one member
+    const joining = graphModel({ ...input, groups: [group('choir', 1, [], true)] }).hubs[0]
+    expect(joining).toMatchObject({ joining: true, members: 1, unknown: 1 })
+    // the same log once it names you: you and the founder, still one dot
+    const confirmed = graphModel({ ...input, groups: [group('choir', 2, [])] }).hubs[0]
+    expect(confirmed).toMatchObject({ joining: false, members: 2, unknown: 1 })
   })
 })

@@ -60,6 +60,8 @@ export interface DeviceGroup {
   readonly members: readonly string[]
   /** the members the device knows by handle only */
   readonly unknown: number
+  /** the members the group's log names on this device: the device's owner among them only once confirmed */
+  readonly confirmed: number
 }
 
 /** a group in a scene: `g:${id}` is its node */
@@ -68,6 +70,8 @@ export interface SceneGroup {
   readonly name: string
   readonly members: readonly { readonly id: string; readonly joining: boolean }[]
   readonly unknown: number
+  /** the confirmed members: the number the hub shows. One who is joining has a line, and is not counted */
+  readonly confirmed: number
 }
 
 export interface Person {
@@ -148,7 +152,7 @@ function allGroups(people: readonly Person[], groups: Readonly<Record<string, re
       out.set(g.id, at)
     }
   }
-  return [...out.entries()].map(([id, g]) => ({ id, name: g.name, members: g.members, unknown: 0 }))
+  return [...out.entries()].map(([id, g]) => ({ id, name: g.name, members: g.members, unknown: 0, confirmed: g.members.filter((m) => !m.joining).length }))
 }
 
 export function sceneFor(
@@ -194,6 +198,7 @@ export function sceneFor(
       name: g.name,
       members: [{ id: me.id, joining: g.joining }, ...g.members.filter((m) => m !== me.id && peers.has(m)).map((m) => ({ id: m, joining: false }))],
       unknown: g.unknown + g.members.filter((m) => m !== me.id && !peers.has(m)).length,
+      confirmed: g.confirmed,
     })),
     note: `Only what ${me.name} holds on their device. Everyone else does not exist for them.`,
   }

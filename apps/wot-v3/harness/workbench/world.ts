@@ -167,12 +167,15 @@ function groupsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof cont
     .filter((g) => g.membership === 'member' || g.membership === 'joining')
     .map((g) => {
       const detail = d.port.stores.group(g.id).get()
-      const others = detail.status === 'ready' && detail.value ? detail.value.visibleMembers.filter((m) => !m.self) : []
+      const listed = detail.status === 'ready' && detail.value ? detail.value.visibleMembers : null
+      const others = (listed ?? []).filter((m) => !m.self)
+      // the device's owner is in the log once confirmed; without the details the membership decides
+      const selfListed = listed ? listed.some((m) => m.self) : g.membership === 'member'
       const members = others.flatMap((m) => {
         const peer = m.contactId ? resolve(id, m.contactId, m.name) : null
         return peer ? [peer] : []
       })
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: [...new Set(members)].sort(), unknown: Math.max(0, g.knownMembers - 1 - members.length) }
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: [...new Set(members)].sort(), unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - members.length), confirmed: g.knownMembers }
     })
 }
 

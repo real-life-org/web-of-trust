@@ -84,7 +84,7 @@ function hubNode(g: SceneGroup) {
         return <circle key={i} className="dot" r={3.4} cx={Math.cos(a) * (HUB_R + 10)} cy={Math.sin(a) * (HUB_R + 10)} />
       })}
       <text className="count" dy="0.35em" textAnchor="middle">
-        {g.members.length + g.unknown}
+        {g.confirmed}
       </text>
       <text y={HUB_R + 19} textAnchor="middle">
         {g.name}

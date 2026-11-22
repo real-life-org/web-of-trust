@@ -26,8 +26,10 @@ export interface GraphInput {
     readonly id: GroupId
     readonly name: string
     readonly joining: boolean
-    /** every member the group's log names, you included */
+    /** every member the group's log names: you among them once the group confirmed you */
     readonly knownMembers: number
+    /** the log names you: not yet, as a rule, while you are joining */
+    readonly selfListed: boolean
     /** the members this device holds as contacts (empty where the details did not arrive) */
     readonly contacts: readonly ContactId[]
   }[]
@@ -66,7 +68,7 @@ export interface GroupHub {
   readonly joining: boolean
   /** radius in px */
   readonly size: number
-  /** every member, you included */
+  /** the members the group's log names: you are one of them only once you are confirmed */
   readonly members: number
   /** the members that are no contact of yours: drawn as dots at the hub, nobody in particular */
   readonly unknown: number
@@ -119,7 +121,7 @@ export function graphModel(input: GraphInput): GraphModel {
   for (const g of input.groups ?? []) {
     const id = `g:${g.id}`
     const linked = [...new Set(g.contacts)].filter((c) => held.has(c))
-    hubs.push({ id, group: g.id, name: g.name, joining: g.joining, size: HUB_SIZE, members: g.knownMembers, unknown: Math.max(0, g.knownMembers - 1 - linked.length) })
+    hubs.push({ id, group: g.id, name: g.name, joining: g.joining, size: HUB_SIZE, members: g.knownMembers, unknown: Math.max(0, g.knownMembers - (g.selfListed ? 1 : 0) - linked.length) })
     memberships.push({ key: `${id}|me`, hub: id, node: 'me' })
     for (const c of linked) memberships.push({ key: `${id}|${c}`, hub: id, node: c })
   }
