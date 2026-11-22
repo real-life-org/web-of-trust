@@ -10,7 +10,7 @@ import type { FakeScanner, VirtualClock } from '../../src/platform/fake'
 import { virtualClock } from '../../src/platform/fake'
 import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from '../loopback'
 import { mediatorDouble, phoneNet, type MediatorDouble } from '../mediator-double'
-import { edgesOf, starEdgesOf, type DeviceContacts, type Edge, type StarEdge } from './graph'
+import { edgesOf, starEdgesOf, type DeviceContacts, type DeviceGroup, type Edge, type StarEdge } from './graph'
 import { tapDevice, type DeviceEvent } from './tap'
 
 /** a phone as one device knows it */
@@ -32,6 +32,14 @@ export const PEOPLE: readonly WorkbenchPerson[] = [
   { id: 'mara', name: 'Mara Kowalski' },
   { id: 'sam', name: 'Sam Okafor' },
 ]
+
+/** what the stage draws from: the edges, each device's stars and each device's groups */
+export interface WorkbenchGraph {
+  readonly edges: readonly Edge[]
+  readonly stars: Readonly<Record<string, readonly StarEdge[]>>
+  readonly groups: Readonly<Record<string, readonly DeviceGroup[]>>
+  readonly rev: number
+}
 
 export type WorkbenchCarrier = { readonly kind: 'memory' } | { readonly kind: 'mediator' } | { readonly kind: 'live'; readonly did: string; readonly insecure?: boolean }
 
@@ -77,7 +85,7 @@ export interface WorkbenchWorld {
   /** each phone's own name, as its profile holds it now; the frames and lists show this, so a rename
    *  in the app shows on the frame at once */
   readonly names: ReadStore<Readonly<Record<string, string>>>
-  readonly graph: ReadStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>
+  readonly graph: ReadStore<WorkbenchGraph>
   /** the phones' clock as the page shows it */
   readonly now: ReadStore<number>
   /** false over a live mediator: the clock follows the wall clock and cannot jump */
@@ -149,6 +157,26 @@ function contactsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof co
     const sharedPeers = shared.map((x) => resolve(id, x.id, x.name ?? nameOf.get(x.id) ?? null)).filter((p): p is string => p !== null)
     return { name: c.name, verification: c.verification, trust: c.trust, peer: resolve(id, c.id, c.name), sharedPeers }
   })
+}
+
+/** the groups a device is in or is joining, its members as the phones the device holds them as */
+function groupsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof contactResolver>): DeviceGroup[] {
+  const v = d.port.stores.groups.get()
+  if (v.status !== 'ready') return []
+  return v.value
+    .filter((g) => g.membership === 'member' || g.membership === 'joining')
+    .map((g) => {
+      const detail = d.port.stores.group(g.id).get()
+      const listed = detail.status === 'ready' && detail.value ? detail.value.visibleMembers : null
+      const others = (listed ?? []).filter((m) => !m.self)
+      // the device's owner is in the log once confirmed; without the details the membership decides
+      const selfListed = listed ? listed.some((m) => m.self) : g.membership === 'member'
+      const members = others.flatMap((m) => {
+        const peer = m.contactId ? resolve(id, m.contactId, m.name) : null
+        return peer ? [peer] : []
+      })
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: [...new Set(members)].sort(), unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - members.length), confirmed: g.knownMembers }
+    })
 }
 
 export async function createWorkbenchWorld(opts: {
@@ -310,7 +338,7 @@ export async function createWorkbenchWorld(opts: {
 
   // the graph: re-derived whenever any contact list changes
   const resolve = contactResolver(devices)
-  const graph = writableStore<{ readonly edges: readonly Edge[]; readonly stars: Readonly<Record<string, readonly StarEdge[]>>; readonly rev: number }>({ edges: [], stars: {}, rev: 0 })
+  const graph = writableStore<WorkbenchGraph>({ edges: [], stars: {}, groups: {}, rev: 0 })
   let rev = 0
   let last = ''
   const derive = () => {
@@ -321,10 +349,15 @@ export async function createWorkbenchWorld(opts: {
     const edges = edgesOf(views)
     const stars = starEdgesOf(views)
     // a new value only when something changed: the stage's simulation restarts on every value
-    const sig = JSON.stringify([edges, stars])
+    const groups = Object.fromEntries(opts.people.flatMap((p) => {
+      const d = devices.get(p.id)
+      const mine = d ? groupsOf(p.id, d, resolve) : []
+      return mine.length ? [[p.id, mine]] : []
+    }))
+    const sig = JSON.stringify([edges, stars, groups])
     if (sig === last) return
     last = sig
-    graph.set({ edges, stars, rev: ++rev })
+    graph.set({ edges, stars, groups, rev: ++rev })
   }
   // names and pictures, apart from the graph: a rename must not restart the layout
   const seen = writableStore<Readonly<Record<string, Readonly<Record<string, SeenPerson>>>>>({})
@@ -340,6 +373,7 @@ export async function createWorkbenchWorld(opts: {
     seen.set(next)
   }
   for (const d of devices.values()) d.port.stores.contacts.subscribe(() => (derive(), deriveSeen()))
+  for (const d of devices.values()) d.port.stores.groups.subscribe(derive)
 
   // each phone's own name, from its profile
   const names = writableStore<Readonly<Record<string, string>>>({})

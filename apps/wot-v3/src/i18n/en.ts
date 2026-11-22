@@ -58,6 +58,8 @@ export const en = {
     shared: 'Contacts in common: {names} · as {name} states it',
     full: 'Show on the whole screen',
     exitFull: 'Back to the app',
+    groupUnknown: '{n} of them are not among your contacts',
+    groupUnknownOne: '1 of them is not among your contacts',
   },
   contacts: {
     trustOn: 'Trust {name}',
