@@ -363,13 +363,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const [rawContacts, prompts, inbox, statusViews, connections, groups] = await gate.run((h) =>
         Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect(), h.groups()]),
       )
-      // who invited whom, per group this device holds the log of (lib 0.19.0; an older library tells nothing)
+      // who invited whom, per group this device holds the log of (Membership RLTP-MT-3400)
       const provenance: Record<string, Record<string, string[]>> = {}
       await gate.run(async (h) => {
-        const read = (h as Holder & { groupProvenance?: (groupId: string) => Promise<Record<string, string[]> | undefined> }).groupProvenance
-        if (typeof read !== 'function') return
         for (const g of groups) {
-          const p = await read.call(h, g.id)
+          const p = await h.groupProvenance(g.id)
           if (p) provenance[g.id] = p
         }
       })

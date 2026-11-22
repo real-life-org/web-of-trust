@@ -51,14 +51,9 @@ Replying (setting `replyTo`; received replies are shown), blocking anonymous gro
 Built: `foundGroup`, `invite`, `vouch`, `leaveGroup` as acts; the invitee's `decide`; `groups` and
 `group(id)` from the library's `groups()` (own standing, members with the contact they are known as,
 open admissions); a request to the groups' members when the app opens or comes to the foreground
-(`syncGroups`). With library 0.19.0 each member also names who invited it (`groupProvenance`,
-Membership RLTP-MT-3400); on an older library `invitedBy` is null and the role is `member`.
-
-An invitation shows as a card in the conversation with the inviter, answered there with accept or
-decline.
-
-With library 0.19.0 the invitation's card names the group (`PromptView.groupName`, the inviter's
-statement); on an older library the card says who invites.
+(`syncGroups`). Each member names who invited it (`groupProvenance`, Membership RLTP-MT-3400); the
+founder is the member nobody invited. An invitation shows as a card in the conversation with the
+inviter, with the group's name as the invitation states it, answered there with accept or decline.
 
 Not built: any group screen; the invitations sent (`invitesOut` is empty); whether the own vouch was
 given (`iVouched` is false);
