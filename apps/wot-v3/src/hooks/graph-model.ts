@@ -73,6 +73,8 @@ export function lookOf(e: Pick<MyEdge, 'verification' | 'trust'>): EdgeLook {
     : v === 'link' ? { kind: 'link', dashed: true, arrow: null }
     : v === 'outgoing' ? { kind: 'verified', dashed: true, arrow: 'out' }
     : v === 'incoming' ? { kind: 'verified', dashed: true, arrow: 'in' }
+    // met: an encounter, and neither side verified yet: open, and nobody's arrow
+    : v === 'met' ? { kind: 'verified', dashed: true, arrow: null }
     : { kind: 'verified', dashed: false, arrow: null }
   const trust: EdgeLook['trust'] =
     e.trust === 'both' ? { dashed: false, arrow: null } : e.trust === 'given' ? { dashed: true, arrow: 'out' } : e.trust === 'received' ? { dashed: true, arrow: 'in' } : null

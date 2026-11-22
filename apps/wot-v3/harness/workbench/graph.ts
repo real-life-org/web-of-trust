@@ -214,3 +214,56 @@ export function sceneFor(
     note: `Only what ${me.name} holds on their device. Everyone else does not exist for them.`,
   }
 }
+
+/** a line the stage draws: its class says the stroke (workbench.css), the same language as the app's graph */
+export interface SceneLink {
+  readonly key: string
+  readonly source: string
+  readonly target: string
+  readonly cls: string
+  /** an arrowhead at the target, in the verification's or the trust's colour */
+  readonly arrow?: 'verified' | 'trust'
+  /** false: drawn, but no force */
+  readonly layout?: boolean
+  /** a membership: long and soft, so the hub rests outside the people it joins */
+  readonly member?: boolean
+}
+
+/** who verified, where only one side did: the device that says "outgoing", or the one across from an "incoming" */
+function verifierOf(e: Edge): string | null {
+  for (const [id, v] of Object.entries(e.views)) {
+    if (v.verification === 'outgoing') return id
+    if (v.verification === 'incoming') return id === e.a ? e.b : e.a
+  }
+  return null
+}
+
+/** the links a scene draws: the ground (verification, introduction, link), and the trust as a narrower line on it */
+export function sceneLinks(scene: Scene): SceneLink[] {
+  const out: SceneLink[] = []
+  for (const e of scene.edges) {
+    const trusted = e.trust.length > 0
+    if (e.verification === 'introduced') out.push({ key: 'v:' + e.key, source: e.a, target: e.b, cls: 'wb-edge via' })
+    else if (e.verification === 'link') out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: 'wb-edge link' })
+    else if (e.verification === 'mutual') out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: 'wb-edge' })
+    // met, and neither side verified yet: open, and nobody's arrow
+    else if (e.verification === 'met') out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: 'wb-edge one' })
+    else {
+      const from = verifierOf(e) ?? e.a
+      // the arrow is the trust's where there is one: one arrowhead per line
+      out.push({ key: 'e:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge one', ...(trusted ? {} : { arrow: 'verified' as const }) })
+    }
+    if (e.trust.length === 2) out.push({ key: 't:' + e.key, source: e.a, target: e.b, cls: 'wb-edge trust2', layout: false })
+    else if (e.trust.length === 1) {
+      const from = e.trust[0] as string
+      out.push({ key: 't:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge trust1', arrow: 'trust', layout: false })
+    }
+  }
+  // what the camera knows only through a contact's star: drawn, never pulling the layout
+  for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
+  for (const g of scene.groups) {
+    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.by === 'said' ? 'wb-edge star said' : 'wb-edge member' + (m.by === 'joining' ? ' joining' : ''), member: true })
+  }
+  return out
+}
+

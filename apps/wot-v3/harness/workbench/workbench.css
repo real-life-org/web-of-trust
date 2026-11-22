@@ -212,17 +212,6 @@
   font-size: 13px;
   stroke: none;
 }
-.wb-edge.trust2 {
-  stroke: var(--wb-green);
-  stroke-opacity: 0.9;
-  stroke-width: 2.2;
-}
-.wb-edge.trust1 {
-  stroke: var(--wb-amber);
-  stroke-opacity: 0.85;
-  stroke-width: 1.8;
-  stroke-dasharray: 6 4;
-}
 .wb-cams {
   position: absolute;
   left: 12px;

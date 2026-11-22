@@ -117,7 +117,8 @@ describe('graphModel: groups are hubs', () => {
 describe('lookOf: how a line between you and a contact is drawn (Anton 22.11.)', () => {
   it('the ground by the verification: solid where it stands, dashed with an arrow from the one who verified', () => {
     expect(lookOf({ verification: 'mutual', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: false, arrow: null })
-    expect(lookOf({ verification: 'met', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: false, arrow: null })
+    // #546: met is an encounter nobody verified yet: not the solid line of a mutual verification
+    expect(lookOf({ verification: 'met', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: null })
     expect(lookOf({ verification: 'outgoing', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: 'out' })
     expect(lookOf({ verification: 'incoming', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: 'in' })
   })

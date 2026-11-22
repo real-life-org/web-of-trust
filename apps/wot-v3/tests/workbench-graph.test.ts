@@ -3,7 +3,9 @@
 // trust is directional, from what each side says it gave. A camera is a person: only the edges that
 // touch them, and only the people at their ends; God's eye draws everything, which nobody holds.
 import { describe, expect, it } from 'vitest'
-import { edgesOf, sceneFor, starEdgesOf, type DeviceContacts, type DeviceGroup } from '../harness/workbench/graph'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { edgesOf, sceneFor, sceneLinks, starEdgesOf, type DeviceContacts, type DeviceGroup } from '../harness/workbench/graph'
 
 const contact = (name: string, verification: 'mutual' | 'outgoing' | 'incoming' | 'met' | 'introduced', given = false, received = false) => ({
   name,
@@ -197,5 +199,52 @@ describe('sceneFor: groups are hubs, from what each device holds of them', () =>
 
   it('no groups: none in the scene', () => {
     expect(sceneFor('jonas', people, edges).groups).toEqual([])
+  })
+})
+
+describe('sceneLinks: the lines of the workbench, in the app graph\'s language (#545, #546)', () => {
+  const people = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
+  const edge = (verification: 'mutual' | 'outgoing' | 'incoming' | 'met' | 'introduced' | 'link', given = false, received = false) =>
+    sceneFor('god', people, edgesOf([
+      { id: 'a', name: 'A', contacts: [{ name: 'B', verification, trust: { given, received } }] },
+      { id: 'b', name: 'B', contacts: [] },
+    ]))
+  const links = (...args: Parameters<typeof edge>) => sceneLinks(edge(...args)).map((l) => [l.cls, l.source, l.target, l.arrow ?? null])
+
+  it('the ground: solid only for a mutual verification; met, and neither side verified, is open and nobody\'s arrow', () => {
+    expect(links('mutual')).toEqual([['wb-edge', 'a', 'b', null]])
+    expect(links('met')).toEqual([['wb-edge one', 'a', 'b', null]])
+  })
+
+  it('one-sided: dashed, with the arrow from the one who verified', () => {
+    expect(links('outgoing')).toEqual([['wb-edge one', 'a', 'b', 'verified']])
+    expect(links('incoming')).toEqual([['wb-edge one', 'b', 'a', 'verified']])
+  })
+
+  it('nothing proven keeps its own colour: an introduction, a contact over a link', () => {
+    expect(links('introduced')).toEqual([['wb-edge via', 'a', 'b', null]])
+    expect(links('link')).toEqual([['wb-edge link', 'a', 'b', null]])
+  })
+
+  it('the trust is a line of its own on the ground; one way it carries the only arrow', () => {
+    expect(links('mutual', true)).toEqual([['wb-edge', 'a', 'b', null], ['wb-edge trust1', 'a', 'b', 'trust']])
+    expect(links('outgoing', true)).toEqual([['wb-edge one', 'a', 'b', null], ['wb-edge trust1', 'a', 'b', 'trust']])
+  })
+
+  it('#545: the stylesheet draws each class once, the trust green and never amber', () => {
+    const css = readFileSync(resolve(__dirname, '../harness/workbench/workbench.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(',').map((s) => s.trim()), body: m[2]! }))
+    const strokeOf = (cls: string) => rules.filter((r) => r.selectors.includes(cls)).flatMap((r) => [...r.body.matchAll(/(?:^|[\s;])stroke:\s*([^;]+);/g)].map((m) => m[1]!.trim()))
+    expect(strokeOf('.wb-edge.trust1')).toEqual(['var(--wb-green)'])
+    expect(strokeOf('.wb-edge.trust2')).toEqual(['var(--wb-green)'])
+    expect(strokeOf('.wb-edge')).toEqual(['var(--wb-primary)'])
+    expect(strokeOf('.wb-edge.via')).toEqual(['var(--wb-amber)'])
+    expect(strokeOf('.wb-edge.link')).toEqual(['var(--wb-red)'])
+    expect(strokeOf('.wb-edge.member')).toEqual(['var(--wb-muted)'])
+    // a class has one width and one dash, wherever the stylesheet names it
+    for (const cls of ['.wb-edge', '.wb-edge.one', '.wb-edge.trust1', '.wb-edge.trust2', '.wb-edge.member', '.wb-edge.star']) {
+      const widths = rules.filter((r) => r.selectors.includes(cls)).flatMap((r) => [...r.body.matchAll(/stroke-width:\s*([^;]+);/g)])
+      expect(widths.length, cls).toBeLessThanOrEqual(1)
+    }
   })
 })

@@ -105,7 +105,7 @@ describe('the graph tab', () => {
     const strokes = () => [...document.querySelectorAll('[data-edge^="me:"], [data-edge^="trust:"]')].map((l) => `${l.getAttribute('data-edge')} ${l.getAttribute('stroke')} ${l.getAttribute('stroke-dasharray') ?? 'solid'}`)
     for (const c of contacts) {
       const ground = document.querySelector(`[data-edge="me:${c.id}"]`)!
-      const oneSided = c.verification === 'outgoing' || c.verification === 'incoming'
+      const oneSided = c.verification !== 'mutual'
       expect(ground.getAttribute('stroke')).toBe('var(--primary)')
       expect(ground.hasAttribute('stroke-dasharray')).toBe(oneSided)
       const trust = document.querySelector(`[data-edge="trust:${c.id}"]`)

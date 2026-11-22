@@ -9,7 +9,7 @@ import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
 import { avatarsSeenBy, useAvatars, type WorkbenchAvatar } from './avatars'
 import { startFlight, type Flight } from './flight'
-import { sceneFor, type Edge, type Scene, type SceneGroup } from './graph'
+import { sceneFor, sceneLinks, type Edge, type Scene, type SceneGroup } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
 
 /** the phone's own viewport: a small phone, so the app draws large on the stage and its code screen
@@ -39,7 +39,7 @@ interface Link extends SimulationLinkDatum<Node> {
  *  sure (solid stands, dashed is one-sided or open, dotted is someone else's word), the colour says what. */
 const EDGE_LEGEND = [
   { cls: 'wb-edge', text: 'verified, both ways' },
-  { cls: 'wb-edge one', text: 'verified, one way' },
+  { cls: 'wb-edge one', text: 'verified one way (arrow), or met and not verified yet' },
   { cls: 'wb-edge via', text: 'introduced, nothing proven' },
   { cls: 'wb-edge trust2', text: 'trust, both ways (on its ground)' },
   { cls: 'wb-edge trust1', text: 'trust, one way' },
@@ -47,42 +47,6 @@ const EDGE_LEGEND = [
   { cls: 'wb-edge member', text: 'member of a group' },
   { cls: 'wb-edge member joining', text: 'joining a group' },
 ]
-
-/** who verified, where only one side did: the device that says "outgoing", or the one across from an "incoming" */
-function verifierOf(e: Edge): string | null {
-  for (const [id, v] of Object.entries(e.views)) {
-    if (v.verification === 'outgoing') return id
-    if (v.verification === 'incoming') return id === e.a ? e.b : e.a
-  }
-  return null
-}
-
-/** the links a scene draws: the ground (verification, introduction, link), and the trust as a narrower line on it */
-function linksOf(scene: Scene): Link[] {
-  const out: Link[] = []
-  for (const e of scene.edges) {
-    const trusted = e.trust.length > 0
-    if (e.verification === 'introduced') out.push({ key: 'v:' + e.key, source: e.a, target: e.b, cls: 'wb-edge via' })
-    else if (e.verification === 'link') out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: 'wb-edge link' })
-    else if (e.verification === 'mutual' || e.verification === 'met') out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: 'wb-edge' })
-    else {
-      const from = verifierOf(e) ?? e.a
-      // the arrow is the trust's where there is one: one arrowhead per line
-      out.push({ key: 'e:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge one', ...(trusted ? {} : { arrow: 'verified' as const }) })
-    }
-    if (e.trust.length === 2) out.push({ key: 't:' + e.key, source: e.a, target: e.b, cls: 'wb-edge trust2', layout: false })
-    else if (e.trust.length === 1) {
-      const from = e.trust[0] as string
-      out.push({ key: 't:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge trust1', arrow: 'trust', layout: false })
-    }
-  }
-  // what the camera knows only through a contact's star: drawn, never pulling the layout
-  for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
-  for (const g of scene.groups) {
-    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.by === 'said' ? 'wb-edge star said' : 'wb-edge member' + (m.by === 'joining' ? ' joining' : ''), member: true })
-  }
-  return out
-}
 
 /** node radii on the stage: large enough to read from the back of a room */
 const NODE_R = 17
@@ -167,7 +131,7 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
       nodes.push(node)
     }
     const byId = new Map(nodes.map((n) => [n.id, n]))
-    const links = linksOf(scene).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
+    const links = sceneLinks(scene).map((l): Link => ({ ...l })).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
     const sim = forceSimulation<Node>(nodes)
       .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance((l) => (l.member ? 190 : 150)).strength((l) => (l.member ? 0.12 : 0.6)))
       .force('charge', forceManyBody().strength(-420))
@@ -190,7 +154,7 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const groupOf = new Map(scene.groups.map((g) => ['g:' + g.id, g]))
-  const links = linksOf(scene)
+  const links = sceneLinks(scene).map((l): Link => ({ ...l }))
   const at = (ref: string | number | Node) => (typeof ref === 'object' ? ref : byId.get(String(ref)))
   return (
     <svg role="group" aria-label="the trust graph">
