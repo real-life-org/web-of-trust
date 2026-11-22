@@ -17,7 +17,7 @@ import type { ContactId } from '../../port'
 import { useNav } from '../../hooks'
 import { useGraphInput } from '../../hooks/graph'
 import { useI18n } from '../../i18n'
-import { GroupsIcon, ListHeader, PersonAvatar, PrimaryAction } from '../../ui/components'
+import { BlockedBadge, GroupsIcon, ListHeader, PersonAvatar, PrimaryAction, TrustBadge, VerificationBadge } from '../../ui/components'
 import { graphModel, lookOf } from '../../hooks/graph-model'
 
 interface SimNode extends SimulationNodeDatum {
@@ -176,7 +176,6 @@ export function GraphScreen() {
   const selHub = selected ? hubById.get(selected) : undefined
   const selSaid = selHub ? model.memberships.filter((m) => m.hub === selHub.id && m.by === 'said').map((m) => nameOf(m.node)) : []
   const sel = selected ? contacts.get(selected) : undefined
-  const selEdge = selected ? model.mine.find((e) => e.contact === selected) : undefined
   const selShared = sel?.shared?.filter((id) => contacts.has(id)).map(nameOf) ?? []
 
   return (
@@ -397,9 +396,10 @@ export function GraphScreen() {
                 <PersonAvatar name={nameOf(selected)} image={sel.image} size={38} />
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold">{nameOf(selected)}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {t.verification[sel.verification]}
-                    {selEdge && selEdge.trust !== 'none' ? ` · ${selEdge.trust === 'both' ? t.trust.both : selEdge.trust === 'given' ? t.trust.given : t.trust.received}` : ''}
+                  {/* the relationship in the tags of the contact list (Anton 23.11.) */}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                    <VerificationBadge verification={sel.verification} />
+                    {sel.blocked ? <BlockedBadge /> : <TrustBadge trust={sel.trust} />}
                   </div>
                 </div>
               </div>
