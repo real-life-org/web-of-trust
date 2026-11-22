@@ -56,6 +56,29 @@ export interface MyEdge {
   readonly trust: TrustBetween
 }
 
+/** How a line between you and a contact is drawn, the same in the app and on the workbench.
+ *  The stroke says how sure: solid stands, dashed is one-sided or open (with an arrow from the one who
+ *  acted), dotted is someone else's word. The colour says what: blue the verification, yellow an
+ *  introduction, red a contact over a link, green the trust. The trust is a narrower line on its
+ *  ground, so the ground shows as its rim, and through the gaps of a one-sided trust. */
+export interface EdgeLook {
+  readonly ground: { readonly kind: 'verified' | 'introduced' | 'link'; readonly dashed: boolean; readonly arrow: 'out' | 'in' | null }
+  readonly trust: { readonly dashed: boolean; readonly arrow: 'out' | 'in' | null } | null
+}
+
+export function lookOf(e: Pick<MyEdge, 'verification' | 'trust'>): EdgeLook {
+  const v = e.verification
+  const ground: EdgeLook['ground'] =
+    v === 'introduced' ? { kind: 'introduced', dashed: true, arrow: null }
+    : v === 'link' ? { kind: 'link', dashed: true, arrow: null }
+    : v === 'outgoing' ? { kind: 'verified', dashed: true, arrow: 'out' }
+    : v === 'incoming' ? { kind: 'verified', dashed: true, arrow: 'in' }
+    : { kind: 'verified', dashed: false, arrow: null }
+  const trust: EdgeLook['trust'] =
+    e.trust === 'both' ? { dashed: false, arrow: null } : e.trust === 'given' ? { dashed: true, arrow: 'out' } : e.trust === 'received' ? { dashed: true, arrow: 'in' } : null
+  return { ground, trust }
+}
+
 export interface StarEdge {
   readonly key: string
   readonly a: ContactId

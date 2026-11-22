@@ -1,17 +1,16 @@
-// The graph tab (Anton 04.11.: "Graph" replaces the groups tab, which v3 does not have yet): the network
-// as this device knows it, in the picture language of the legacy app's Network page. You in gold in the
-// middle; your contacts with picture or initials, sized by the relationship; edges grey at rest. A tap
-// opens a contact into a card in place and colours its edge to you (mutual green, outgoing amber,
-// incoming blue, with an arrow), its neighbours' edges half, the rest faint. Dotted violet between two
-// contacts: one of them says by its star that they know each other (Trust §5). Nodes can be dragged; a
-// button shows the graph on the whole screen. Nobody appears whom the device does not hold.
+// The graph tab (Anton 04.11.: "Graph"): the network as this device knows it. You in gold in the middle;
+// your contacts with picture or initials, sized by the relationship; a group as a dashed circle on the
+// outer ring with its name, the members that are no contact of yours grey dots at it.
 //
-// Groups (Anton 22.11.), in the picture language of the graph simulator: a group is a dashed circle on
-// the outer ring with its name; a dashed line joins it to you and to every contact its log names as a
-// member; the members that are no contact of yours are grey dots at the circle, nobody in particular.
-// A contact that says by its group star that it is in the group is joined to it dotted violet, as every
-// star is; the dots stay, because the log does not say which member the contact is.
-// A tap opens the group into a card, "Open" leads to its details.
+// The lines (Anton 22.11.), the same as on the workbench, in colour at rest:
+//   stroke = how sure: solid stands · dashed is one-sided or open, with an arrow from the one who acted ·
+//            dotted is someone else's word
+//   colour = what: blue the verification · yellow an introduction · red a contact over a link ·
+//            green the trust · grey a group's membership · violet what a contact's star says
+// The trust is a narrower green line on its ground, so the ground shows as its rim, and through the gaps
+// of a one-sided trust. A tap opens a contact or a group into a card in place and fades what does not
+// touch it; nothing changes colour. Nodes can be dragged; a button shows the graph on the whole screen.
+// Nobody appears whom the device does not hold.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { forceCollide, forceLink, forceManyBody, forceRadial, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import type { ContactId } from '../../port'
@@ -19,7 +18,7 @@ import { useNav } from '../../hooks'
 import { useGraphInput } from '../../hooks/graph'
 import { useI18n } from '../../i18n'
 import { GroupsIcon, ListHeader, PersonAvatar, PrimaryAction } from '../../ui/components'
-import { graphModel, type MyEdge } from '../../hooks/graph-model'
+import { graphModel, lookOf } from '../../hooks/graph-model'
 
 interface SimNode extends SimulationNodeDatum {
   id: string
@@ -36,16 +35,13 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
 /** the dots a hub draws at most; a larger group shows these and says its number in the card */
 const MAX_DOTS = 12
 
-const EDGE_COLOR: Record<'mutual' | 'outgoing' | 'incoming', string> = { mutual: 'var(--success, #059669)', outgoing: '#f59e0b', incoming: '#3b82f6' }
+const GROUND = { verified: 'var(--primary)', introduced: 'var(--warning)', link: 'var(--destructive)' } as const
+const TRUST = 'var(--success)'
 const STAR = '#8b7ad8'
 const CARD_W = 196
-
-/** the direction of my edge to a contact, as the legacy graph drew it */
-function directionOf(e: MyEdge): 'mutual' | 'outgoing' | 'incoming' {
-  if (e.verification === 'outgoing') return 'outgoing'
-  if (e.verification === 'incoming') return 'incoming'
-  return 'mutual'
-}
+/** the ground line and the trust line on it */
+const GROUND_W = 4.2
+const TRUST_W = 1.8
 
 /** your node: the gold ring around your avatar marks the middle of the graph */
 const ME_RING = 'shadow-[0_0_0_3px_oklch(0.72_0.15_75),0_0_0_7px_color-mix(in_oklab,oklch(0.72_0.15_75)_25%,transparent)]'
@@ -204,9 +200,9 @@ export function GraphScreen() {
         <div ref={box} className="relative min-h-0 flex-1 touch-none select-none overflow-hidden" onClick={() => setSelected(null)} data-graph>
           <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
             <defs>
-              {(['outgoing', 'incoming'] as const).map((k) => (
-                <marker key={k} id={`g-arrow-${k}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-                  <path d="M0,0 L10,5 L0,10 z" fill={EDGE_COLOR[k]} />
+              {([['verified', GROUND.verified, 11], ['trust', TRUST, 8]] as const).map(([k, fill, w]) => (
+                <marker key={k} id={`g-arrow-${k}`} viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth={w} markerHeight={w} orient="auto">
+                  <path d="M0,0 L10,5 L0,10 z" fill={fill} />
                 </marker>
               ))}
             </defs>
@@ -226,13 +222,13 @@ export function GraphScreen() {
                   x2={b.x - (ux / len) * r2}
                   y2={b.y - (uy / len) * r2}
                   data-by={m.by}
-                  // the contact's word is drawn as every star is: dotted violet
+                  // grey a membership: solid by the log, dashed while you are joining; the contact's word
+                  // dotted violet, as every star is
                   stroke={m.by === 'said' ? STAR : 'currentColor'}
-                  strokeOpacity={(m.by === 'said' ? (selected === null ? 0.7 : touched ? 0.9 : 0.15) : selected === null ? 0.28 : touched ? 0.6 : 0.1) * (m.by === 'joining' ? 0.5 : 1)}
-                  strokeWidth={m.by === 'said' ? 1.5 : touched ? 1.6 : 1.2}
-                  // not confirmed yet: the same line, fainter and wider apart
-                  strokeDasharray={m.by === 'said' ? '1.5 5' : m.by === 'joining' ? '3 8' : '5 5'}
-                  strokeLinecap="round"
+                  strokeOpacity={m.by === 'said' ? (selected === null ? 0.8 : touched ? 0.95 : 0.15) : selected === null ? 0.4 : touched ? 0.65 : 0.1}
+                  strokeWidth={m.by === 'said' ? 1.6 : 1.5}
+                  {...(m.by === 'said' ? { strokeDasharray: '1.5 5' } : m.by === 'joining' ? { strokeDasharray: '7 6' } : {})}
+                  strokeLinecap={m.by === 'joining' ? 'butt' : 'round'}
                 />
               )
             })}
@@ -258,28 +254,40 @@ export function GraphScreen() {
             {model.mine.map((e) => {
               const a = at('me'), b = at(e.contact)
               if (!a || !b) return null
-              const dir = directionOf(e)
+              const look = lookOf(e)
               const touched = selected === e.contact
               const cluster = selected !== null && !touched && neighbours.has(e.contact)
-              const node = sizes.get(e.contact)
+              const op = selected === null ? 0.85 : touched ? 1 : cluster ? 0.5 : 0.15
               const ux = b.x - a.x, uy = b.y - a.y, len = Math.hypot(ux, uy) || 1
-              const r1 = 30, r2 = (node ?? 16) + 3
-              const [x1, y1, x2, y2] = [a.x + (ux / len) * r1, a.y + (uy / len) * r1, b.x - (ux / len) * r2, b.y - (uy / len) * r2]
-              const [lx1, ly1, lx2, ly2] = dir === 'incoming' ? [x2, y2, x1, y1] : [x1, y1, x2, y2]
+              const r1 = 31, r2 = (sizes.get(e.contact) ?? 16) + 3
+              const out = { x1: a.x + (ux / len) * r1, y1: a.y + (uy / len) * r1, x2: b.x - (ux / len) * r2, y2: b.y - (uy / len) * r2 }
+              // an arrow points away from the one who acted: a line is drawn from them
+              const from = (arrow: 'out' | 'in' | null) => (arrow === 'in' ? { x1: out.x2, y1: out.y2, x2: out.x1, y2: out.y1 } : out)
               return (
-                <line
-                  key={e.contact}
-                  data-edge={`me:${e.contact}`}
-                  x1={lx1}
-                  y1={ly1}
-                  x2={lx2}
-                  y2={ly2}
-                  stroke={touched || cluster ? EDGE_COLOR[dir] : 'currentColor'}
-                  strokeOpacity={selected === null ? 0.25 : touched ? 0.7 : cluster ? 0.35 : 0.12}
-                  strokeWidth={touched ? 2.2 : e.trust === 'both' ? 1.8 : 1.2}
-                  strokeLinecap="round"
-                  {...(dir !== 'mutual' && (touched || cluster) ? { markerEnd: `url(#g-arrow-${dir})` } : {})}
-                />
+                <g key={e.contact} opacity={op}>
+                  <line
+                    data-edge={`me:${e.contact}`}
+                    data-ground={look.ground.kind}
+                    {...from(look.ground.arrow)}
+                    stroke={GROUND[look.ground.kind]}
+                    strokeWidth={GROUND_W}
+                    strokeLinecap={look.ground.dashed ? 'butt' : 'round'}
+                    {...(look.ground.dashed ? { strokeDasharray: '7 6' } : {})}
+                    {...(look.ground.arrow && !look.trust ? { markerEnd: 'url(#g-arrow-verified)' } : {})}
+                  />
+                  {look.trust ? (
+                    <line
+                      data-edge={`trust:${e.contact}`}
+                      data-trust={e.trust}
+                      {...from(look.trust.arrow)}
+                      stroke={TRUST}
+                      strokeWidth={TRUST_W}
+                      strokeLinecap={look.trust.dashed ? 'butt' : 'round'}
+                      {...(look.trust.dashed ? { strokeDasharray: '7 6' } : {})}
+                      {...(look.trust.arrow ? { markerEnd: 'url(#g-arrow-trust)' } : {})}
+                    />
+                  ) : null}
+                </g>
               )
             })}
           </svg>
