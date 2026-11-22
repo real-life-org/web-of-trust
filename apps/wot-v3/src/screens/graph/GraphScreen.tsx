@@ -116,7 +116,7 @@ export function GraphScreen() {
           // a hub keeps room for its dots and for its name
           const r = n.size + (n.hub ? 22 : 4)
           n.x = Math.max(r, Math.min(size.w - r, n.x ?? cx))
-          n.y = Math.max(r, Math.min(size.h - r - 16, n.y ?? cy))
+          n.y = Math.max(r, Math.min(size.h - r - 22, n.y ?? cy))
           m.set(n.id, { x: n.x, y: n.y })
         }
         setPlaced(m)
@@ -264,7 +264,7 @@ export function GraphScreen() {
               const op = selected === null ? 0.7 : touched ? 1 : cluster ? 0.45 : 0.12
               const ux = b.x - a.x, uy = b.y - a.y, len = Math.hypot(ux, uy) || 1
               // clear of your gold ring, so an arrow toward you is seen
-              const r1 = 38, r2 = (sizes.get(e.contact) ?? 16) + 3
+              const r1 = 38, r2 = (sizes.get(e.contact) ?? 16) + 4
               const out = { x1: a.x + (ux / len) * r1, y1: a.y + (uy / len) * r1, x2: b.x - (ux / len) * r2, y2: b.y - (uy / len) * r2 }
               // an arrow points away from the one who acted: a line is drawn from them
               const from = (arrow: 'out' | 'in' | null) => (arrow === 'in' ? { x1: out.x2, y1: out.y2, x2: out.x1, y2: out.y1 } : out)
@@ -313,7 +313,8 @@ export function GraphScreen() {
                   // a click without a pointer is the keyboard (Enter, Space): it selects as a tap does
                   if (e.detail === 0 && !n.me) setSelected((s) => (s === n.id ? null : n.id))
                 }}
-                className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity"
+                // the avatar alone sits on the node's place, so every line meets its middle; the name hangs under it
+                className="absolute -translate-x-1/2 -translate-y-1/2 transition-opacity"
                 style={{ left: p.x, top: p.y, opacity: faint ? 0.4 : 1 }}
               >
                 {/* every node is the person's avatar; yours in the middle with the gold ring (Anton 05.11.) */}
@@ -323,7 +324,7 @@ export function GraphScreen() {
                 >
                   <PersonAvatar name={n.me ? (input?.me.name ?? g.you) : nameOf(n.id)} image={n.image} size={44} className="!size-full !text-[1em]" />
                 </span>
-                <span className={'max-w-24 truncate text-[11px] text-foreground' + (n.me ? ' font-semibold' : '')}>{n.me ? g.you : nameOf(n.id).split(' ')[0]}</span>
+                <span className={'absolute top-full left-1/2 mt-1 max-w-24 -translate-x-1/2 truncate text-[11px] text-foreground' + (n.me ? ' font-semibold' : '')}>{n.me ? g.you : nameOf(n.id).split(' ')[0]}</span>
               </button>
             )
           })}
