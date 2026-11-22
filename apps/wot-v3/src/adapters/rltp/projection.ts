@@ -2,7 +2,7 @@
 // The library's views and the app-db part come from the same fence (session.ts); this function only
 // maps. Structural sharing happens in the port's stores (writableStore).
 
-import type { ContactView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
+import type { ContactView, GroupView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE, sharedConnect as sc } from '@real-life/trust-protocol'
 import type {
   AnsweredCard,
@@ -23,7 +23,13 @@ import type {
   Decision,
   DecisionId,
   DecisionResolution,
+  GroupDetail,
+  GroupId,
+  GroupInviter,
+  GroupListItem,
+  GroupMember,
   IntentView,
+  MemberRef,
   MessageId,
   MessageItem,
   ProfileModel,
@@ -46,6 +52,11 @@ export interface ProjectionInput {
   readonly profile: ProfileView
   /** the holder's connection ceremonies (shared-connect enactments) */
   readonly connections?: readonly SharedConnectView[]
+  /** the holder's groups, the personal community left out by the library */
+  readonly groups?: readonly GroupView[]
+  /** by group id: per member anchor, the anchors of the members that invited it (lib 0.19.0
+   *  `groupProvenance`); a group without an entry: the library did not tell */
+  readonly provenance?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>
   readonly encounters: EncounterCache
   /** the cards displayed with a carrier offer, until their challenge ends (app-db `displayed`) */
   readonly displayed: DisplayedCards
@@ -65,6 +76,8 @@ export interface ReadModels {
   readonly reportable: ReadonlyMap<string, readonly MessageItem[]>
   readonly decisions: readonly Decision[]
   readonly connections: readonly Connection[]
+  readonly groups: readonly GroupListItem[]
+  readonly groupDetails: ReadonlyMap<string, GroupDetail>
   readonly profile: ProfileModel
   readonly standing: TrustStandingSummary
   readonly visibility: readonly VisibilityEntry[]
@@ -121,8 +134,79 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     const validUntil = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
     return { ...base, kind: 'connect-confirm', connection: v.id as ConnectionId, name: v.name, answers: now <= validUntil ? { card: v.id as CardRef, validUntil } : null }
   }
-  // group invitations, vouches and introductions come with their screens (not in this step)
+  // an invitation into a group, from the contact it came over; the library names the group only once it
+  // is joined, so the name is unknown here. One attributed to no relationship has no contact to show
+  if (p.kind === 'group-invite' && p.contactId !== undefined) {
+    return { ...base, kind: 'group-invite', inviterId: p.contactId as ContactId, groupName: null, candidacyChoice: NO('not-supported') }
+  }
+  // introductions come with their screens (not in this step)
   return null
+}
+
+/** the short form of a member anchor the app shows where a member has no name */
+export const memberHandle = (anchor: string): string => anchor.slice(-6)
+
+/** The groups as the port shows them: every member the group's log names, each with the contact this
+ *  device knows it as and with the members that invited it. */
+function groupsOf(input: ProjectionInput, running: Set<string>, names: ReadonlyMap<string, string | null>): { list: GroupListItem[]; details: Map<string, GroupDetail> } {
+  const details = new Map<string, GroupDetail>()
+  const list: GroupListItem[] = []
+  for (const g of input.groups ?? []) {
+    const key: ConversationKey = `g:${g.id}`
+    const told = input.provenance?.[g.id]
+    const byAnchor = new Map(g.members.map((m) => [m.anchor, m] as const))
+    // a contact's own name where this device knows the member as a contact, else the name on its card
+    const nameOf = (m: { name?: string; contactId?: string }): string | null => (m.contactId !== undefined ? (names.get(m.contactId) ?? null) : null) ?? m.name ?? null
+    const inviter = (anchor: string): GroupInviter => {
+      const m = byAnchor.get(anchor)
+      return { member: anchor as MemberRef, handle: memberHandle(anchor), self: m?.self ?? false, contactId: (m?.contactId ?? null) as ContactId | null, name: m ? nameOf(m) : null }
+    }
+    const members: GroupMember[] = g.members.map((m) => ({
+      member: m.anchor as MemberRef,
+      handle: memberHandle(m.anchor),
+      self: m.self,
+      contactId: (m.contactId ?? null) as ContactId | null,
+      name: nameOf(m),
+      invitedBy: told ? (told[m.anchor] ?? []).map(inviter) : null,
+    }))
+    const self = g.members.find((m) => m.self)
+    const member = g.phase === 'member'
+    const item: GroupListItem = {
+      id: g.id as GroupId,
+      name: g.name,
+      membership: g.phase,
+      // the founder is the one member nobody invited; unknown without the provenance
+      role: member && self && told && (told[self.anchor] ?? []).length === 0 ? 'founder' : 'member',
+      knownMembers: g.members.length,
+      myHandle: self ? memberHandle(self.anchor) : '',
+      openAdmissions: g.pending.length,
+      conversation: { key, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false },
+    }
+    list.push(item)
+    details.set(g.id, {
+      ...item,
+      visibleMembers: members,
+      anonymousMembers: 0,
+      admissions: g.pending.map((a) => ({
+        member: a.member as MemberRef,
+        name: a.name ?? null,
+        have: a.vouches,
+        need: Number(g.vouchThreshold),
+        iVouched: false,
+        vouch: !member ? NO('not-supported') : running.has(`vouch|g:${g.id}|${a.member}`) ? NO('in-flight') : OK,
+      })),
+      invitesOut: [],
+      listed: g.listed,
+      vouchThreshold: Number(g.vouchThreshold),
+      actions: {
+        invite: member ? OK : NO('not-supported'),
+        leave: !member ? NO('not-supported') : running.has(`leaveGroup|g:${g.id}`) ? NO('in-flight') : OK,
+        report: NO('not-supported'),
+      },
+    })
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1))
+  return { list, details }
 }
 
 /** A decision that is no longer open: what this device decided (its finished intent names the
@@ -405,10 +489,13 @@ export function project(raw: ProjectionInput): ReadModels {
       ...(r.state === 'needs-confirmation' && r.preview ? { confirm: { kind: 'card' as const, preview: r.preview } } : {}),
     }))
 
+  const groups = groupsOf(input, running, names)
   return {
     revision: input.revision,
     contacts,
     contactDetails,
+    groups: groups.list,
+    groupDetails: groups.details,
     conversations,
     reportable,
     decisions,
@@ -418,7 +505,7 @@ export function project(raw: ProjectionInput): ReadModels {
       trustYou: input.contacts.filter((c) => c.trust.received).length,
       youTrust: input.contacts.filter((c) => c.trust.given).length,
       mutuallyVerified: input.contacts.filter((c) => c.verification === 'mutual').length,
-      groups: 0,
+      groups: (input.groups ?? []).filter((g) => g.phase === 'member').length,
     },
     visibility: input.contacts.filter((c) => c.trust.given).map((c) => ({ contactId: c.id as ContactId, name: c.displayName ?? null, paused: c.trust.paused })),
     blocked: input.contacts

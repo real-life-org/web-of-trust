@@ -314,14 +314,28 @@ export interface DecisionResolution {
 }
 
 // ── Groups ──────────────────────────────────────────────────────────────────
+/** The own standing in a group: `joining` until the group confirms the admission, `member`, `left` by
+ *  the own leave, `void` for a join that did not take effect. */
+export type GroupMembership = 'joining' | 'member' | 'left' | 'void'
+
 export interface GroupListItem {
   readonly id: GroupId
   readonly name: string
+  readonly membership: GroupMembership
   readonly role: 'founder' | 'member'
   readonly knownMembers: number
   readonly myHandle: string
   readonly openAdmissions: number
   readonly conversation: ConversationSummary
+}
+
+/** A member that invited another one, as the group states it. One who has left since has no name. */
+export interface GroupInviter {
+  readonly member: MemberRef
+  readonly handle: string
+  readonly self: boolean
+  readonly contactId: ContactId | null
+  readonly name: string | null
 }
 
 export interface GroupMember {
@@ -331,6 +345,10 @@ export interface GroupMember {
   /** visible only with mutual trust */
   readonly contactId: ContactId | null
   readonly name: string | null
+  /** through whom this member came in: every member whose invitation the group admitted it on (two
+   *  where two members admitted the same person at once), none for the founder; null where the core
+   *  does not tell */
+  readonly invitedBy: readonly GroupInviter[] | null
 }
 
 export interface Admission {

@@ -160,8 +160,11 @@ export const de: Translations = {
       kind: 'Einladung',
       title: '{group}',
       titleUnknown: 'Einladung von {name} in eine Gruppe',
-      sub: '{name} lädt dich ein · Aufnahme braucht Bürgen',
-      cta: 'Antworten',
+      sub: '{name} lädt dich ein',
+      cta: 'Annehmen',
+      decline: 'Ablehnen',
+      declineNote: 'Wenn du ablehnst, erfährt {name} davon nichts.',
+      failed: 'Das ist nicht durchgegangen. Bitte versuche es noch einmal.',
     },
     vouch: {
       kind: 'Aufnahme',

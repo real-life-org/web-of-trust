@@ -4,7 +4,7 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
@@ -292,7 +292,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
-  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[] } | null = null
+  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; groups: GroupView[]; provenance: Record<string, Record<string, string[]>> } | null = null
   /** events announced but not yet taken over, and the ids already taken (dedupe of act results) */
   let pending: HolderEvent[] = []
   const seen = new Set<string>()
@@ -337,6 +337,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       prompts: lastViews.prompts,
       profile: lastViews.profile,
       connections: lastViews.connections,
+      groups: lastViews.groups,
+      provenance: lastViews.provenance,
       encounters,
       displayed: (snap.kv.get(KV.displayed) as DisplayedCards | undefined) ?? {},
       lines,
@@ -358,9 +360,19 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         (l): l is MessageLine => l.kind === 'message' && l.dir === 'out' && l.digest !== null && !statusFinal(l.status),
       )
       const a = (await gate.run((h) => h.profile())).commitSeq
-      const [rawContacts, prompts, inbox, statusViews, connections] = await gate.run((h) =>
-        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect()]),
+      const [rawContacts, prompts, inbox, statusViews, connections, groups] = await gate.run((h) =>
+        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect(), h.groups()]),
       )
+      // who invited whom, per group this device holds the log of (lib 0.19.0; an older library tells nothing)
+      const provenance: Record<string, Record<string, string[]>> = {}
+      await gate.run(async (h) => {
+        const read = (h as Holder & { groupProvenance?: (groupId: string) => Promise<Record<string, string[]> | undefined> }).groupProvenance
+        if (typeof read !== 'function') return
+        for (const g of groups) {
+          const p = await read.call(h, g.id)
+          if (p) provenance[g.id] = p
+        }
+      })
       // one reading of "verified" for ingest, projection and the flows (connectedContact)
       const contacts = rawContacts.map(connectedContact)
       const profile = await gate.run((h) => h.profile())
@@ -385,7 +397,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
-      lastViews = { commitSeq: a, contacts, prompts, profile, connections }
+      lastViews = { commitSeq: a, contacts, prompts, profile, connections, groups, provenance }
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
@@ -553,6 +565,29 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     })
     return offering
   }
+  /** The members of the own groups are still to be asked for what their logs hold beyond this device's
+   *  (Access stage 1: the log travels between members, nobody keeps it for the group). Due once per
+   *  opening and again at every return to the foreground; it stays due until a request went through,
+   *  so a failure is tried again by the timer and a resume that failed first does not skip it (#534).
+   *  A deregistration-only opening asks nobody. */
+  let groupsDue = !deregOnly
+  const GROUPS_RETRY_MS = [1000, 5000, 30_000, 120_000] as const
+  let groupsFailures = 0
+  /** Runs after a completed resume. The requests leave from the holder's custody like every document;
+   *  one that reaches nobody is given up by the holder. A device in no group asks nobody. */
+  const catchUpGroups = async (): Promise<void> => {
+    if (stopped || !groupsDue) return
+    try {
+      const r = await gate.run((h) => h.syncGroups({ when: when() }))
+      groupsDue = false
+      groupsFailures = 0
+      if (r.ok && r.outbound.length > 0) await offer()
+    } catch {
+      // the gate closed or the storage failed: still due, the timer comes back with a growing pause
+      schedule(now() + GROUPS_RETRY_MS[Math.min(groupsFailures, GROUPS_RETRY_MS.length - 1)]!)
+      groupsFailures++
+    }
+  }
   /** a resume of this opening completed: the holder's time is reconciled, open records may be settled
    *  (review 421 R10-1) */
   let resumed = false
@@ -576,6 +611,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     resend = true
     await offer()
     if (deregOnly) return
+    await catchUpGroups()
     // a failed expiry or replay is tried again shortly, without activation or network (R10-3)
     await expireOpen().catch(() => schedule(now() + 1000))
     await replayOpen().catch(() => schedule(now() + 1000))
@@ -1664,6 +1700,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const offLifecycle =
     (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
       if (st !== 'active' || stopped) return
+      // coming back: the groups' members are asked again (due runs the request)
+      groupsDue = true
       void track(due())
       sharedConnect?.poke()
       void track(replayOpen()).catch(() => undefined)

@@ -62,6 +62,26 @@ export function useDecline(): { readonly busy: DecisionId | null; run(id: Decisi
   return { busy, run }
 }
 
+/** Answer an invitation into a group: the port's decide. Accepting sends the consent to the inviter,
+ *  who admits this person; declining closes the invitation on this device only, nothing is sent. One
+ *  answer at a time. */
+export function useAnswerInvite(): { readonly busy: DecisionId | null; run(id: DecisionId, choice: 'accept' | 'decline'): Promise<Result> } {
+  const port = usePort()
+  const [busy, setBusy] = useState<DecisionId | null>(null)
+  const run = useCallback(
+    async (id: DecisionId, choice: 'accept' | 'decline') => {
+      setBusy(id)
+      try {
+        return await port.trust.decide(id, choice).done
+      } finally {
+        setBusy(null)
+      }
+    },
+    [port],
+  )
+  return { busy, run }
+}
+
 /** Copy text (the shown code, for manual entry on the other device). Never throws. */
 export function useCopy(): (text: string) => Promise<boolean> {
   const platform = usePlatform()
