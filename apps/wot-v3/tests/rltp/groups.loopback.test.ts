@@ -51,14 +51,16 @@ describe('groups over the real adapter (loopback)', () => {
     expect(value(w.A.port.stores.groups)).toMatchObject([{ id: groupId, name: 'Garten', membership: 'member', knownMembers: 1, openAdmissions: 0 }])
     expect(value(w.A.port.stores.standing).groups).toBe(1)
     const alone = value(w.A.port.stores.group(groupId)) as GroupDetail
-    expect(alone.visibleMembers).toMatchObject([{ self: true, contactId: null }])
+    // the founder: nobody invited it
+    expect(alone.role).toBe('founder')
+    expect(alone.visibleMembers).toMatchObject([{ self: true, contactId: null, invitedBy: [] }])
     expect(alone.actions).toMatchObject({ invite: { ok: true }, leave: { ok: true } })
 
     // the invitation reaches B as a decision, with its card in the conversation with A
     expect((await w.A.port.trust.invite(groupId, w.aId).done).ok).toBe(true)
     await w.settle()
     const open = value(w.B.port.stores.decisions).filter((d) => d.kind === 'group-invite')
-    expect(open).toMatchObject([{ kind: 'group-invite', inviterId: w.bId, groupName: null, state: 'open' }])
+    expect(open).toMatchObject([{ kind: 'group-invite', inviterId: w.bId, groupName: 'Garten', state: 'open' }])
     const cards = value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.filter((i): i is DecisionCardItem => i.kind === 'decision')
     expect(cards.some((c) => c.decision === open[0]!.id && c.resolution === null)).toBe(true)
     expect(value(w.B.port.stores.groups)).toEqual([])
@@ -77,6 +79,11 @@ describe('groups over the real adapter (loopback)', () => {
     // each knows the other member as its contact, under the contact's name
     expect(atA.visibleMembers.find((m) => !m.self)).toMatchObject({ contactId: w.aId, name: 'Bea' })
     expect(atB.visibleMembers.find((m) => !m.self)).toMatchObject({ contactId: w.bId, name: 'Al' })
+    // who invited whom, read from the group's log on both devices: A invited B, nobody invited A
+    expect(atA.visibleMembers.find((m) => !m.self)?.invitedBy).toMatchObject([{ self: true, name: 'Al' }])
+    expect(atB.visibleMembers.find((m) => m.self)?.invitedBy).toMatchObject([{ self: false, contactId: w.bId, name: 'Al' }])
+    expect(atB.visibleMembers.find((m) => !m.self)?.invitedBy).toEqual([])
+    expect([atA.role, atB.role]).toEqual(['founder', 'member'])
 
     // B leaves: it holds the group as left, A lists itself alone again
     expect((await w.B.port.trust.leaveGroup(groupId).done).ok).toBe(true)

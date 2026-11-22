@@ -54,8 +54,8 @@ export interface ProjectionInput {
   readonly connections?: readonly SharedConnectView[]
   /** the holder's groups, the personal community left out by the library */
   readonly groups?: readonly GroupView[]
-  /** by group id: per member anchor, the anchors of the members that invited it (lib 0.19.0
-   *  `groupProvenance`); a group without an entry: the library did not tell */
+  /** by group id: per member anchor, the anchors of the members that invited it (the library's
+   *  `groupProvenance`); a group without an entry: the library holds no log of it */
   readonly provenance?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>
   readonly encounters: EncounterCache
   /** the cards displayed with a carrier offer, until their challenge ends (app-db `displayed`) */
@@ -134,10 +134,11 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     const validUntil = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
     return { ...base, kind: 'connect-confirm', connection: v.id as ConnectionId, name: v.name, answers: now <= validUntil ? { card: v.id as CardRef, validUntil } : null }
   }
-  // an invitation into a group, from the contact it came over; the library names the group only once it
-  // is joined, so the name is unknown here. One attributed to no relationship has no contact to show
+  // an invitation into a group, from the contact it came over, with the group's name as the invitation
+  // states it (the inviter's statement). One attributed to no relationship has no contact to show
   if (p.kind === 'group-invite' && p.contactId !== undefined) {
-    return { ...base, kind: 'group-invite', inviterId: p.contactId as ContactId, groupName: null, candidacyChoice: NO('not-supported') }
+    const groupName = typeof p.groupName === 'string' && p.groupName.length > 0 ? p.groupName : null
+    return { ...base, kind: 'group-invite', inviterId: p.contactId as ContactId, groupName, candidacyChoice: NO('not-supported') }
   }
   // introductions come with their screens (not in this step)
   return null
