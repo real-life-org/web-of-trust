@@ -1,6 +1,6 @@
 // Found a group: its name, nothing else. The founder is its first member; everyone else comes in by
 // an invitation. A page in the content column.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { GroupId } from '../../port'
 import { usePort } from '../../hooks'
 import { useI18n } from '../../i18n'
@@ -16,6 +16,15 @@ export function GroupFoundScreen({ onBack, onFounded }: { onBack: () => void; on
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  // the page is still shown: a founding that ends after the person went elsewhere (another area, back)
+  // moves nobody; the group is in the list (#537)
+  const shown = useRef(true)
+  useEffect(() => {
+    shown.current = true
+    return () => {
+      shown.current = false
+    }
+  }, [])
   const name = value.trim()
   const ready = name.length > 0 && !busy
   const save = async () => {
@@ -24,10 +33,11 @@ export function GroupFoundScreen({ onBack, onFounded }: { onBack: () => void; on
     setFailed(false)
     try {
       const r = await port.trust.foundGroup({ name }).done
+      if (!shown.current) return
       if (r.ok) onFounded(r.value.groupId)
       else setFailed(true)
     } finally {
-      setBusy(false)
+      if (shown.current) setBusy(false)
     }
   }
   return (

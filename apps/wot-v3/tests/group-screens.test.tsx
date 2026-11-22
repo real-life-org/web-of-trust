@@ -36,17 +36,20 @@ const group = (over: Partial<GroupDetail> = {}): GroupDetail => ({
   ...over,
 })
 
-function mount(ui: ReactNode, over: { trust?: Partial<AppPort['trust']>; group?: GroupDetail | null } = {}, nav: NavStore = createNavStore()) {
+function mountBoth(ui: ReactNode, over: { trust?: Partial<AppPort['trust']>; group?: GroupDetail | null } = {}, nav: NavStore = createNavStore()) {
   const comp = composeScenario(iiw)
   const detail = writableStore(ready(over.group === undefined ? group() : over.group, '1:1:1' as Revision))
   const port: AppPort = { ...comp.port, stores: { ...comp.port.stores, group: () => detail }, trust: { ...comp.port.trust, ...over.trust } }
-  render(
+  const view = render(
     <LanguageProvider lang="en">
       <AppContextProvider value={{ port, platform: comp.platform, nav }}>{ui}</AppContextProvider>
     </LanguageProvider>,
   )
-  return nav
+  return { nav, view }
 }
+
+const mount = (...a: Parameters<typeof mountBoth>) => mountBoth(...a).nav
+const mountView = (...a: Parameters<typeof mountBoth>) => mountBoth(...a).view
 
 describe('navigation and frames', () => {
   it('a group\'s routes belong to the groups, every other route to the contacts', () => {
@@ -161,6 +164,21 @@ describe('founding a group', () => {
     fireEvent.click(go)
     await waitFor(() => expect(foundGroup).toHaveBeenCalledWith({ name: 'Garten' }))
     await waitFor(() => expect(onFounded).toHaveBeenCalledWith('g9'))
+  })
+
+  it('a founding that ends after the page was left moves nobody (#537)', async () => {
+    let finish: (r: Result<{ groupId: GroupId }>) => void = () => undefined
+    const foundGroup = vi.fn(() => ({ actId: 'x' as never, done: new Promise<Result<{ groupId: GroupId }>>((r) => (finish = r)) }))
+    const onFounded = vi.fn()
+    const view = mountView(<GroupFoundScreen onBack={() => undefined} onFounded={onFounded} />, { trust: { foundGroup } })
+    fireEvent.change(screen.getByLabelText('Name of the group'), { target: { value: 'Garten' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Found the group' }))
+    await waitFor(() => expect(foundGroup).toHaveBeenCalled())
+    // the person goes to another area while the founding runs: the page is gone
+    view.unmount()
+    finish({ ok: true, value: { groupId: 'g9' as GroupId } })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(onFounded).not.toHaveBeenCalled()
   })
 
   it('a failure says so and stays on the page', async () => {
