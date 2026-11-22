@@ -121,7 +121,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
         const d = openDecisions.get(item.decision)
         if (!d || item.resolution !== null) {
           const r = item.resolution
-          const own = r?.basis === 'own-act' ? (r.choice === 'accept' ? t.decision.resolvedAccept : r.choice === 'decline' ? t.decision.resolvedDecline : null) : null
+          const own = r?.basis === 'own-act' ? (r.choice === 'accept' ? (item.of === 'group-invite' ? t.decision['group-invite'].accepted : t.decision.resolvedAccept) : r.choice === 'decline' ? t.decision.resolvedDecline : null) : null
           return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]

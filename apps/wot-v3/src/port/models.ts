@@ -207,6 +207,8 @@ export interface DecisionCardItem {
   readonly kind: 'decision'
   readonly id: string
   readonly decision: DecisionId
+  /** what was asked, where the device still knows it: the result line words an answer by it */
+  readonly of?: Decision['kind']
   readonly at: number
   /** open: current decision from `decisions`; resolved: result line */
   readonly resolution: DecisionResolution | null
