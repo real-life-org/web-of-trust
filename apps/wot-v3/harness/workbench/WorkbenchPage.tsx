@@ -9,7 +9,7 @@ import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
 import { avatarsSeenBy, useAvatars, type WorkbenchAvatar } from './avatars'
 import { startFlight, type Flight } from './flight'
-import { sceneFor, type Edge, type Scene } from './graph'
+import { sceneFor, type Edge, type Scene, type SceneGroup } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
 
 /** the phone's own viewport: a small phone, so the app draws large on the stage and its code screen
@@ -22,6 +22,8 @@ interface Node extends SimulationNodeDatum {
   id: string
   name: string
   me: boolean
+  /** a group's hub, not a phone */
+  hub?: boolean
 }
 interface Link extends SimulationLinkDatum<Node> {
   key: string
@@ -29,6 +31,8 @@ interface Link extends SimulationLinkDatum<Node> {
   arrow?: boolean
   /** false: drawn, but no force (a star line) */
   layout?: boolean
+  /** a membership: long and soft, so the hub rests outside the people it joins */
+  member?: boolean
 }
 
 const EDGE_LEGEND = [
@@ -36,6 +40,7 @@ const EDGE_LEGEND = [
   { cls: 'wb-edge trust2', text: 'identity disclosed, both ways', color: 'oklch(70% 0.15 145)' },
   { cls: 'wb-edge trust1', text: 'one way, introduced, or waiting', color: '#fbbf24' },
   { cls: 'wb-edge star', text: 'known through a contact’s star', color: '#c4b5fd' },
+  { cls: 'wb-edge member', text: 'member of a group', color: '#94a3b8' },
 ]
 
 /** the links a scene draws: the meeting line, and the trust line on top of it */
@@ -56,12 +61,37 @@ function linksOf(scene: Scene): Link[] {
   }
   // what the camera knows only through a contact's star: drawn, never pulling the layout
   for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
+  for (const g of scene.groups) {
+    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: 'wb-edge member' + (m.joining ? ' joining' : ''), member: true })
+  }
   return out
 }
 
 /** node radii on the stage: large enough to read from the back of a room */
 const NODE_R = 17
 const NODE_R_ME = 21
+const HUB_R = 24
+
+/** a group's hub, as the graph simulator drew it: a dashed circle with the group's name, and a dot at
+ *  it for every member the camera's device knows by handle only */
+function hubNode(g: SceneGroup) {
+  const n = Math.min(g.unknown, 12)
+  return (
+    <>
+      <circle className="ring" r={HUB_R} />
+      {Array.from({ length: n }, (_, i) => {
+        const a = Math.PI * 0.75 + ((i + 0.5) / n) * Math.PI * 1.5
+        return <circle key={i} className="dot" r={3.4} cx={Math.cos(a) * (HUB_R + 10)} cy={Math.sin(a) * (HUB_R + 10)} />
+      })}
+      <text className="count" dy="0.35em" textAnchor="middle">
+        {g.members.length + g.unknown}
+      </text>
+      <text y={HUB_R + 19} textAnchor="middle">
+        {g.name}
+      </text>
+    </>
+  )
+}
 
 /** a node as the person's avatar in the app: their picture, else their initials on their palette colour */
 function avatarNode(n: Node, a: WorkbenchAvatar | undefined) {
@@ -111,16 +141,24 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
       nodesRef.current.set(n.id, node)
       return node
     })
+    for (const [i, g] of scene.groups.entries()) {
+      const id = 'g:' + g.id
+      // a new hub starts outside the people, by its place in the scene
+      const a = -Math.PI / 4 + (i / Math.max(1, scene.groups.length)) * Math.PI * 2
+      const node: Node = nodesRef.current.get(id) ?? { id, name: g.name, me: false, hub: true, x: cx + Math.cos(a) * 190, y: cy + Math.sin(a) * 150 }
+      nodesRef.current.set(id, node)
+      nodes.push(node)
+    }
     const byId = new Map(nodes.map((n) => [n.id, n]))
     const links = linksOf(scene).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
     const sim = forceSimulation<Node>(nodes)
-      .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance(150).strength(0.6))
+      .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance((l) => (l.member ? 190 : 150)).strength((l) => (l.member ? 0.12 : 0.6)))
       .force('charge', forceManyBody().strength(-420))
       // a pull to the corridor's centre (as the legacy graph had), not only a shift of the centroid:
       // every node stays near the middle, and the tick keeps it on the stage, clear of the wire below
       .force('x', forceX(cx).strength(0.05))
       .force('y', forceY(cy).strength(0.07))
-      .force('collide', forceCollide(46))
+      .force('collide', forceCollide<Node>().radius((d) => (d.hub ? 64 : 46)))
       .alpha(0.9)
       .on('tick', () => {
         for (const n of nodes) {
@@ -134,6 +172,7 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
+  const groupOf = new Map(scene.groups.map((g) => ['g:' + g.id, g]))
   const links = linksOf(scene)
   const at = (ref: string | number | Node) => (typeof ref === 'object' ? ref : byId.get(String(ref)))
   return (
@@ -148,7 +187,15 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
         if (!a || !b) return null
         return <line key={l.key} className={l.cls} data-edge={l.key} x1={a.x} y1={a.y} x2={b.x} y2={b.y} {...(l.arrow ? { markerEnd: 'url(#wb-arrow)' } : {})} />
       })}
-      {nodes.map((n) => (
+      {nodes.map((n) => {
+        const g = groupOf.get(n.id)
+        return g ? (
+          <g key={n.id} className="wb-hub" data-hub={g.id} transform={`translate(${n.x ?? 0},${n.y ?? 0})`}>
+            {hubNode(g)}
+          </g>
+        ) : null
+      })}
+      {nodes.filter((n) => !n.hub).map((n) => (
         <g key={n.id} className={'wb-node' + (open.includes(n.id) ? ' open' : '')} data-node={n.id} transform={`translate(${n.x ?? 0},${n.y ?? 0})`} onClick={() => onOpen(n.id)} role="button" tabIndex={0} aria-label={`${n.name}: open the phone`} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ' ? onOpen(n.id) : undefined)}>
           {avatarNode(n, avatars.get(n.id))}
         </g>
@@ -341,7 +388,7 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
   const advance = (ms: number) => world.advance(ms)
   const jumpOff = 'Over a live mediator the clock follows the wall clock: the mediator issues its tokens on real time'
   const fmt = useMemo(() => new Intl.DateTimeFormat('en-GB', { timeZone: world.clock.timeZone(), dateStyle: 'medium', timeStyle: 'short' }), [world])
-  const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[], graph.stars), [camera, world.people, graph])
+  const scene = useMemo(() => sceneFor(camera, world.people, graph.edges as readonly Edge[], graph.stars, graph.groups), [camera, world.people, graph])
   const visible = layout.open.filter((id) => !layout.collapsed[id])
   const centre = corridor(stage, visible.length).cx
   const screen = screenH(stage)

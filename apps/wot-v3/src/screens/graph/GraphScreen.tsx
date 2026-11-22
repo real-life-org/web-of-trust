@@ -5,16 +5,34 @@
 // incoming blue, with an arrow), its neighbours' edges half, the rest faint. Dotted violet between two
 // contacts: one of them says by its star that they know each other (Trust §5). Nodes can be dragged; a
 // button shows the graph on the whole screen. Nobody appears whom the device does not hold.
+//
+// Groups (Anton 22.11.), in the picture language of the graph simulator: a group is a dashed circle on
+// the outer ring with its name; a dashed line joins it to you and to every contact its log names as a
+// member; the members that are no contact of yours are grey dots at the circle, nobody in particular.
+// A tap opens the group into a card, "Open" leads to its details.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
+import { forceCollide, forceLink, forceManyBody, forceRadial, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
 import type { ContactId } from '../../port'
 import { useNav } from '../../hooks'
 import { useGraphInput } from '../../hooks/graph'
 import { useI18n } from '../../i18n'
-import { ListHeader, PersonAvatar, PrimaryAction } from '../../ui/components'
-import { graphModel, type GraphNode, type MyEdge } from '../../hooks/graph-model'
+import { GroupsIcon, ListHeader, PersonAvatar, PrimaryAction } from '../../ui/components'
+import { graphModel, type MyEdge } from '../../hooks/graph-model'
 
-interface SimNode extends SimulationNodeDatum, GraphNode {}
+interface SimNode extends SimulationNodeDatum {
+  id: string
+  me: boolean
+  /** a group's hub, not a person */
+  hub: boolean
+  size: number
+}
+interface SimLink extends SimulationLinkDatum<SimNode> {
+  /** a membership: long and soft, so the hub rests outside the people it joins */
+  member?: boolean
+}
+
+/** the dots a hub draws at most; a larger group shows these and says its number in the card */
+const MAX_DOTS = 12
 
 const EDGE_COLOR: Record<'mutual' | 'outgoing' | 'incoming', string> = { mutual: 'var(--success, #059669)', outgoing: '#f59e0b', incoming: '#3b82f6' }
 const STAR = '#8b7ad8'
@@ -41,7 +59,7 @@ export function GraphScreen() {
   const [placed, setPlaced] = useState<ReadonlyMap<string, { x: number; y: number }>>(new Map())
   const [selected, setSelected] = useState<string | null>(null)
   const [full, setFull] = useState(false)
-  const sim = useRef<Simulation<SimNode, SimulationLinkDatum<SimNode>> | null>(null)
+  const sim = useRef<Simulation<SimNode, SimLink> | null>(null)
   const nodesRef = useRef<Map<string, SimNode>>(new Map())
 
   useEffect(() => {
@@ -58,31 +76,43 @@ export function GraphScreen() {
   useEffect(() => {
     if (!model) return
     const cx = size.w / 2, cy = size.h / 2
-    const nodes: SimNode[] = model.nodes.map((n, i) => {
+    // the hubs' ring: outside the people, inside the box
+    const ring = Math.max(90, Math.min(size.w, size.h) / 2 - 56)
+    const people: SimNode[] = model.nodes.map((n, i) => {
       const prev = nodesRef.current.get(n.id)
       const a = (i / Math.max(1, model.nodes.length - 1)) * Math.PI * 2
-      const node: SimNode = prev ? Object.assign(prev, n) : { ...n, x: n.me ? cx : cx + Math.cos(a) * 110, y: n.me ? cy : cy + Math.sin(a) * 110 }
+      const node: SimNode = prev ? Object.assign(prev, { size: n.size }) : { id: n.id, me: n.me, hub: false, size: n.size, x: n.me ? cx : cx + Math.cos(a) * 110, y: n.me ? cy : cy + Math.sin(a) * 110 }
       if (n.me) {
         node.fx = cx
         node.fy = cy
       }
       return node
     })
+    const hubs: SimNode[] = model.hubs.map((h, i) => {
+      const prev = nodesRef.current.get(h.id)
+      // a new hub starts on the ring, between the top and the sides: the same place every time
+      const a = -Math.PI / 4 + (i / Math.max(1, model.hubs.length)) * Math.PI * 2
+      return prev ? Object.assign(prev, { size: h.size }) : { id: h.id, me: false, hub: true, size: h.size, x: cx + Math.cos(a) * ring, y: cy + Math.sin(a) * ring }
+    })
+    const nodes = [...people, ...hubs]
     nodesRef.current = new Map(nodes.map((n) => [n.id, n]))
-    const links: SimulationLinkDatum<SimNode>[] = [
-      ...model.mine.map((e) => ({ source: 'me', target: e.contact })),
-      ...model.stars.map((e) => ({ source: e.a, target: e.b })),
+    const links: SimLink[] = [
+      ...model.mine.map((e) => ({ source: 'me', target: e.contact as string })),
+      ...model.stars.map((e) => ({ source: e.a as string, target: e.b as string })),
+      ...model.memberships.map((e) => ({ source: e.node, target: e.hub, member: true })),
     ]
     const s = forceSimulation<SimNode>(nodes)
-      .force('link', forceLink<SimNode, SimulationLinkDatum<SimNode>>(links).id((d) => d.id).distance(120).strength(0.4))
+      .force('link', forceLink<SimNode, SimLink>(links).id((d) => d.id).distance((l) => (l.member ? ring : 120)).strength((l) => (l.member ? 0.08 : 0.4)))
       .force('charge', forceManyBody().strength(-420).distanceMin(60))
-      .force('collide', forceCollide<SimNode>().radius((d) => d.size + 26))
+      .force('collide', forceCollide<SimNode>().radius((d) => d.size + (d.hub ? 34 : 26)))
+      .force('ring', forceRadial<SimNode>(ring, cx, cy).strength((d) => (d.hub ? 0.5 : 0)))
       .force('x', forceX(cx).strength(0.04))
       .force('y', forceY(cy).strength(0.04))
       .on('tick', () => {
         const m = new Map<string, { x: number; y: number }>()
         for (const n of nodes) {
-          const r = n.size + 4
+          // a hub keeps room for its dots and for its name
+          const r = n.size + (n.hub ? 22 : 4)
           n.x = Math.max(r, Math.min(size.w - r, n.x ?? cx))
           n.y = Math.max(r, Math.min(size.h - r - 16, n.y ?? cy))
           m.set(n.id, { x: n.x, y: n.y })
@@ -97,6 +127,7 @@ export function GraphScreen() {
 
   const contacts = new Map((input?.contacts ?? []).map((c) => [c.id as string, c]))
   const sizes = new Map(model.nodes.map((n) => [n.id, n.size]))
+  const hubById = new Map(model.hubs.map((h) => [h.id, h]))
   const nameOf = (id: string) => (id === 'me' ? (input?.me.name ?? t.contacts.unnamed) : (contacts.get(id)?.name ?? t.contacts.unnamed))
   const at = (id: string) => placed.get(id)
   const neighbours = new Set<string>()
@@ -105,6 +136,11 @@ export function GraphScreen() {
     for (const s of model.stars) {
       if (s.a === selected) neighbours.add(s.b)
       if (s.b === selected) neighbours.add(s.a)
+    }
+    // a group and its members stand together: the hub with everyone it joins, a person with their hubs
+    for (const m of model.memberships) {
+      if (m.hub === selected) neighbours.add(m.node)
+      if (m.node === selected) neighbours.add(m.hub)
     }
   }
   const drag = (id: string) => (e: ReactPointerEvent<HTMLElement>) => {
@@ -134,7 +170,8 @@ export function GraphScreen() {
   }
 
   const count = model.nodes.length - 1
-  const empty = count === 0
+  const empty = count === 0 && model.hubs.length === 0
+  const selHub = selected ? hubById.get(selected) : undefined
   const sel = selected ? contacts.get(selected) : undefined
   const selEdge = selected ? model.mine.find((e) => e.contact === selected) : undefined
   const selShared = sel?.shared?.filter((id) => contacts.has(id)).map(nameOf) ?? []
@@ -170,6 +207,40 @@ export function GraphScreen() {
                 </marker>
               ))}
             </defs>
+            {model.memberships.map((m) => {
+              const a = at(m.node), b = at(m.hub)
+              const hub = hubById.get(m.hub)
+              if (!a || !b || !hub) return null
+              const touched = selected !== null && (m.hub === selected || m.node === selected)
+              const ux = b.x - a.x, uy = b.y - a.y, len = Math.hypot(ux, uy) || 1
+              const r1 = (m.node === 'me' ? 30 : (sizes.get(m.node) ?? 16) + 3), r2 = hub.size + 2
+              return (
+                <line
+                  key={m.key}
+                  data-edge={`member:${m.key}`}
+                  x1={a.x + (ux / len) * r1}
+                  y1={a.y + (uy / len) * r1}
+                  x2={b.x - (ux / len) * r2}
+                  y2={b.y - (uy / len) * r2}
+                  stroke="currentColor"
+                  strokeOpacity={selected === null ? 0.28 : touched ? 0.6 : 0.1}
+                  strokeWidth={touched ? 1.6 : 1.2}
+                  strokeDasharray="5 5"
+                  strokeLinecap="round"
+                />
+              )
+            })}
+            {model.hubs.map((h) => {
+              const p = at(h.id)
+              if (!p || h.id === selected) return null
+              const n = Math.min(h.unknown, MAX_DOTS)
+              const faint = selected !== null && !neighbours.has(h.id)
+              // the members nobody here knows: dots around the upper half and the sides, clear of the name
+              return Array.from({ length: n }, (_, i) => {
+                const a = Math.PI * 0.75 + ((i + 0.5) / n) * Math.PI * 1.5
+                return <circle key={`${h.id}:${i}`} data-dot={h.id} cx={p.x + Math.cos(a) * (h.size + 8)} cy={p.y + Math.sin(a) * (h.size + 8)} r={2.6} fill="currentColor" fillOpacity={faint ? 0.12 : 0.38} />
+              })
+            })}
             {model.stars.map((s) => {
               const a = at(s.a), b = at(s.b)
               if (!a || !b) return null
@@ -237,6 +308,57 @@ export function GraphScreen() {
               </button>
             )
           })}
+          {model.hubs.map((h) => {
+            const p = at(h.id)
+            if (!p || h.id === selected) return null
+            const faint = selected !== null && !neighbours.has(h.id)
+            return (
+              <button
+                key={h.id}
+                type="button"
+                data-hub={h.group}
+                aria-label={h.name}
+                onPointerDown={drag(h.id)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (e.detail === 0) setSelected((s) => (s === h.id ? null : h.id))
+                }}
+                className="absolute -translate-x-1/2 -translate-y-1/2 transition-opacity"
+                style={{ left: p.x, top: p.y, width: h.size * 2, height: h.size * 2, opacity: faint ? 0.4 : 1 }}
+              >
+                <span className={'flex size-full items-center justify-center rounded-full border-[1.5px] border-dashed text-muted-foreground ' + (h.joining ? 'border-muted-foreground/40' : 'border-muted-foreground/80')}>
+                  <GroupsIcon width={h.size} height={h.size} />
+                </span>
+                {/* the name hangs under the circle and does not move it off its place */}
+                <span className="absolute top-full left-1/2 mt-1 max-w-28 -translate-x-1/2 truncate text-[11px] text-muted-foreground">{h.name}</span>
+              </button>
+            )
+          })}
+          {selHub && selected && at(selected) ? (
+            <div
+              role="dialog"
+              aria-label={selHub.name}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => {
+                if ((e.target as HTMLElement).closest('button')) return
+                drag(selected)(e)
+              }}
+              className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-2xl border-[1.5px] border-dashed border-muted-foreground/80 bg-card p-3 text-left shadow-lg"
+              style={{ left: Math.min(Math.max(at(selected)!.x, CARD_W / 2 + 8), size.w - CARD_W / 2 - 8), top: at(selected)!.y, width: CARD_W }}
+            >
+              <div className="flex items-center gap-2">
+                <PersonAvatar name={selHub.name} shape="square" size={38} />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{selHub.name}</div>
+                  <div className="text-[11px] text-muted-foreground">{selHub.joining ? t.groups.joining : selHub.members <= 1 ? t.groups.oneMember : f(t.groups.members, { n: String(selHub.members) })}</div>
+                </div>
+              </div>
+              {selHub.unknown > 0 ? <p className="m-0 text-[11px] text-pretty text-muted-foreground">{f(selHub.unknown === 1 ? g.groupUnknownOne : g.groupUnknown, { n: String(selHub.unknown) })}</p> : null}
+              <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground" onClick={() => send({ type: 'push', route: { kind: 'group', id: selHub.group } })}>
+                {g.open}
+              </button>
+            </div>
+          ) : null}
           {sel && selected && at(selected) ? (
             <div
               role="dialog"

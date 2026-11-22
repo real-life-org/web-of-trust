@@ -4,6 +4,10 @@
 // either side reports, its trust the set of sides that gave it. A camera is a person: the scene then
 // holds only the edges that touch them and the people at their ends. God's eye holds everything, and
 // says so, because no device does.
+//
+// A group is a hub: for a person's camera the groups their device is in, joined to them and to the
+// members the device holds as contacts, the other members a number at the hub; for God's eye every
+// group, joined to every phone that is in it.
 
 import type { Verification } from '../../src/port'
 
@@ -46,6 +50,26 @@ export interface Edge {
   readonly views: Readonly<Record<string, { readonly verification: Verification; readonly given: boolean; readonly received: boolean }>>
 }
 
+/** a group as one device holds it */
+export interface DeviceGroup {
+  readonly id: string
+  readonly name: string
+  /** the device's own membership is not confirmed yet */
+  readonly joining: boolean
+  /** the members the device holds as contacts, as the devices they are */
+  readonly members: readonly string[]
+  /** the members the device knows by handle only */
+  readonly unknown: number
+}
+
+/** a group in a scene: `g:${id}` is its node */
+export interface SceneGroup {
+  readonly id: string
+  readonly name: string
+  readonly members: readonly { readonly id: string; readonly joining: boolean }[]
+  readonly unknown: number
+}
+
 export interface Person {
   readonly id: string
   readonly name: string
@@ -61,6 +85,7 @@ export interface Scene {
   readonly edges: readonly Edge[]
   /** pairs the camera knows of through its contacts' stars (person cameras only) */
   readonly stars: readonly StarEdge[]
+  readonly groups: readonly SceneGroup[]
   readonly note: string
 }
 
@@ -113,10 +138,30 @@ export function starEdgesOf(devices: readonly DeviceContacts[]): Readonly<Record
   return out
 }
 
-export function sceneFor(camera: string, people: readonly Person[], edges: readonly Edge[], stars: Readonly<Record<string, readonly StarEdge[]>> = {}): Scene {
+/** every group once, with every phone that is in it: what no device holds */
+function allGroups(people: readonly Person[], groups: Readonly<Record<string, readonly DeviceGroup[]>>): SceneGroup[] {
+  const out = new Map<string, { name: string; members: { id: string; joining: boolean }[] }>()
+  for (const p of people) {
+    for (const g of groups[p.id] ?? []) {
+      const at = out.get(g.id) ?? { name: g.name, members: [] }
+      at.members.push({ id: p.id, joining: g.joining })
+      out.set(g.id, at)
+    }
+  }
+  return [...out.entries()].map(([id, g]) => ({ id, name: g.name, members: g.members, unknown: 0 }))
+}
+
+export function sceneFor(
+  camera: string,
+  people: readonly Person[],
+  edges: readonly Edge[],
+  stars: Readonly<Record<string, readonly StarEdge[]>> = {},
+  groups: Readonly<Record<string, readonly DeviceGroup[]>> = {},
+): Scene {
   const me = people.find((p) => p.id === camera)
   if (!me) {
     return {
+      groups: allGroups(people, groups),
       camera: 'god',
       nodes: people.map((p) => ({ ...p, me: false })),
       edges: [...edges],
@@ -143,6 +188,13 @@ export function sceneFor(camera: string, people: readonly Person[], edges: reado
     nodes: people.filter((p) => p.id === me.id || peers.has(p.id)).map((p) => ({ ...p, me: p.id === me.id })),
     edges: mine,
     stars: heard,
+    // the device's own groups; a member is drawn where the device holds them as a contact
+    groups: (groups[me.id] ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      members: [{ id: me.id, joining: g.joining }, ...g.members.filter((m) => m !== me.id && peers.has(m)).map((m) => ({ id: m, joining: false }))],
+      unknown: g.unknown + g.members.filter((m) => m !== me.id && !peers.has(m)).length,
+    })),
     note: `Only what ${me.name} holds on their device. Everyone else does not exist for them.`,
   }
 }

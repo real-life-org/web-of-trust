@@ -78,6 +78,25 @@ describe('the graph tab', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
   })
 
+  it('the groups you are in are hubs (Anton 22.11.): a tap opens the group into a card, "Open" leads to its details', async () => {
+    const { comp, nav } = show()
+    const v = comp.port.stores.groups.get()
+    const groups = v.status === 'ready' ? v.value : []
+    expect(groups.length).toBeGreaterThan(0)
+    await waitFor(() => expect(document.querySelectorAll('[data-hub]').length).toBe(groups.length))
+    const first = groups[0]!
+    // the device holds none of its members as a contact: one dashed line, to you, and dots at the hub
+    expect(document.querySelectorAll(`[data-edge^="member:g:${first.id}|"]`).length).toBe(1)
+    expect(document.querySelectorAll(`[data-dot="g:${first.id}"]`).length).toBeGreaterThan(0)
+    const hub = document.querySelector(`[data-hub="${first.id}"]`) as HTMLElement
+    fireEvent.pointerDown(hub, { clientX: 10, clientY: 10 })
+    fireEvent.pointerUp(window)
+    const card = await screen.findByRole('dialog', { name: first.name })
+    expect(within(card).getByText(`${first.knownMembers} members`)).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: 'Open' }))
+    expect(nav.get().stack).toEqual([{ kind: 'group', id: first.id }])
+  })
+
   it('no contacts: you alone, and the way in is the encounter', async () => {
     const empty = SCENARIOS.empty
     if (!empty) throw new Error('scenario empty')

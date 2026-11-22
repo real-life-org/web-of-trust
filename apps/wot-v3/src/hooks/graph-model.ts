@@ -2,8 +2,12 @@
 // contacts, sized by the relationship (waiting small, mutual larger, with trust largest); their edges to
 // you by verification and trust; edges between two contacts where a contact's star names the other
 // (Trust §5, ContactDetail.sharedContacts). Nobody appears whom the device does not hold.
+//
+// Groups are hubs: one per group you are in or are joining, an edge from you and from every contact the
+// group's log names as a member. The members the device knows by handle only have no node; the hub
+// carries their number.
 
-import type { ContactId, TrustState, Verification } from '../port'
+import type { ContactId, GroupId, TrustState, Verification } from '../port'
 
 export interface GraphInput {
   readonly me: { readonly name: string | null; readonly image: string | null }
@@ -16,6 +20,16 @@ export interface GraphInput {
     readonly blocked: boolean
     /** the contacts this contact's star names (null: none arrived) */
     readonly shared: readonly ContactId[] | null
+  }[]
+  /** the groups this device is in or is joining */
+  readonly groups?: readonly {
+    readonly id: GroupId
+    readonly name: string
+    readonly joining: boolean
+    /** every member the group's log names, you included */
+    readonly knownMembers: number
+    /** the members this device holds as contacts (empty where the details did not arrive) */
+    readonly contacts: readonly ContactId[]
   }[]
 }
 
@@ -43,13 +57,38 @@ export interface StarEdge {
   readonly b: ContactId
 }
 
+export interface GroupHub {
+  /** `g:${group}`: never a contact's id */
+  readonly id: string
+  readonly group: GroupId
+  readonly name: string
+  /** your membership is not confirmed yet */
+  readonly joining: boolean
+  /** radius in px */
+  readonly size: number
+  /** every member, you included */
+  readonly members: number
+  /** the members that are no contact of yours: drawn as dots at the hub, nobody in particular */
+  readonly unknown: number
+}
+
+export interface MemberEdge {
+  readonly key: string
+  readonly hub: string
+  /** 'me' or the contact id */
+  readonly node: string
+}
+
 export interface GraphModel {
   readonly nodes: readonly GraphNode[]
   readonly mine: readonly MyEdge[]
   readonly stars: readonly StarEdge[]
+  readonly hubs: readonly GroupHub[]
+  readonly memberships: readonly MemberEdge[]
 }
 
 const ME_SIZE = 28
+const HUB_SIZE = 19
 
 function sizeOf(verification: Verification, trust: TrustBetween): number {
   if (verification !== 'mutual' && verification !== 'met') return 12
@@ -75,5 +114,14 @@ export function graphModel(input: GraphInput): GraphModel {
       stars.set(`${a}|${b}`, { key: `${a}|${b}`, a, b })
     }
   }
-  return { nodes, mine, stars: [...stars.values()] }
+  const hubs: GroupHub[] = []
+  const memberships: MemberEdge[] = []
+  for (const g of input.groups ?? []) {
+    const id = `g:${g.id}`
+    const linked = [...new Set(g.contacts)].filter((c) => held.has(c))
+    hubs.push({ id, group: g.id, name: g.name, joining: g.joining, size: HUB_SIZE, members: g.knownMembers, unknown: Math.max(0, g.knownMembers - 1 - linked.length) })
+    memberships.push({ key: `${id}|me`, hub: id, node: 'me' })
+    for (const c of linked) memberships.push({ key: `${id}|${c}`, hub: id, node: c })
+  }
+  return { nodes, mine, stars: [...stars.values()], hubs, memberships }
 }

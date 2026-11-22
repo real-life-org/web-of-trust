@@ -158,6 +158,40 @@
   stroke-dasharray: 2 5;
   stroke-linecap: round;
 }
+.wb-edge.member {
+  stroke: var(--wb-muted);
+  stroke-opacity: 0.7;
+  stroke-width: 1.6;
+  stroke-dasharray: 6 5;
+}
+.wb-edge.member.joining {
+  stroke-opacity: 0.35;
+}
+.wb-hub circle.ring {
+  fill: var(--wb-bg);
+  stroke: var(--wb-muted);
+  stroke-opacity: 0.8;
+  stroke-width: 1.8;
+  stroke-dasharray: 6 5;
+}
+.wb-hub circle.dot {
+  fill: var(--wb-muted);
+  fill-opacity: 0.7;
+}
+.wb-hub text {
+  font-size: 14px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--wb-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  fill: var(--wb-muted);
+  pointer-events: none;
+}
+.wb-hub text.count {
+  font-size: 13px;
+  stroke: none;
+}
 .wb-edge.trust2 {
   stroke: var(--wb-green);
   stroke-opacity: 0.9;

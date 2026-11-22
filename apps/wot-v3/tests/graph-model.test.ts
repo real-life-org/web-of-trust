@@ -4,7 +4,7 @@
 // Nobody appears whom the device does not hold.
 import { describe, expect, it } from 'vitest'
 import { graphModel, type GraphInput } from '../src/hooks/graph-model'
-import type { ContactId, Verification } from '../src/port'
+import type { ContactId, GroupId, Verification } from '../src/port'
 
 const c = (id: string, verification: Verification, given = false, received = false, shared: string[] | null = null, blocked = false) => ({
   id: id as ContactId,
@@ -47,6 +47,34 @@ describe('graphModel', () => {
   })
 
   it('no contacts: you alone', () => {
-    expect(graphModel({ me: { name: null, image: null }, contacts: [] })).toEqual({ nodes: [expect.objectContaining({ id: 'me' })], mine: [], stars: [] })
+    expect(graphModel({ me: { name: null, image: null }, contacts: [] })).toEqual({ nodes: [expect.objectContaining({ id: 'me' })], mine: [], stars: [], hubs: [], memberships: [] })
+  })
+})
+
+describe('graphModel: groups are hubs', () => {
+  const group = (id: string, knownMembers: number, contacts: string[], joining = false) => ({ id: id as GroupId, name: id, joining, knownMembers, contacts: contacts as ContactId[] })
+  const g = graphModel({ ...input, groups: [group('garden', 5, ['noah', 'lea', 'stranger']), group('choir', 1, [], true)] })
+
+  it('one hub per group, never under a contact\'s id; the people stay as they were', () => {
+    expect(g.hubs.map((h) => [h.id, h.group, h.joining])).toEqual([
+      ['g:garden', 'garden', false],
+      ['g:choir', 'choir', true],
+    ])
+    expect(g.nodes.map((n) => n.id)).toEqual(['me', 'noah', 'lea', 'sam', 'mara'])
+  })
+
+  it('a membership edge from you and from every member the device holds as a contact, nobody else', () => {
+    expect(g.memberships.map((m) => [m.hub, m.node])).toEqual([
+      ['g:garden', 'me'],
+      ['g:garden', 'noah'],
+      ['g:garden', 'lea'],
+      ['g:choir', 'me'],
+    ])
+  })
+
+  it('the members that are no contact are a number at the hub: all of them, less you and the ones drawn', () => {
+    const by = Object.fromEntries(g.hubs.map((h) => [h.group, h]))
+    expect(by.garden).toMatchObject({ members: 5, unknown: 2 })
+    expect(by.choir).toMatchObject({ members: 1, unknown: 0 })
   })
 })
