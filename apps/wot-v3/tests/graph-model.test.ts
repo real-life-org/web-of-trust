@@ -78,6 +78,17 @@ describe('graphModel: groups are hubs', () => {
     expect(by.choir).toMatchObject({ members: 1, unknown: 1 })
   })
 
+  it('#542: a contact whose group star names the group is joined by its word, and takes no dot away', () => {
+    // the log names you, Noah and one member nobody here knows; Lea says she is in it
+    const said = graphModel({ ...input, groups: [{ ...group('garden', 3, ['noah']), said: ['lea', 'noah', 'stranger'] as ContactId[] }] })
+    expect(said.memberships.map((m) => [m.node, m.by])).toEqual([['me', 'log'], ['noah', 'log'], ['lea', 'said']])
+    expect(said.hubs[0]).toMatchObject({ members: 3, unknown: 1 })
+    // the log names you alone, and Lea's last star still names the group: one member, a line by her word
+    const stale = graphModel({ ...input, groups: [{ ...group('garden', 1, []), said: ['lea'] as ContactId[] }] })
+    expect(stale.hubs[0]).toMatchObject({ members: 1, unknown: 0 })
+    expect(stale.memberships.map((m) => [m.node, m.by])).toEqual([['me', 'log'], ['lea', 'said']])
+  })
+
   it('#539: while you are joining the log does not name you yet: nothing is taken off for you', () => {
     // the founder alone is in the log, and is no contact of yours: one dot, one member
     const joining = graphModel({ ...input, groups: [group('choir', 1, [], true)] }).hubs[0]

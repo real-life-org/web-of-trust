@@ -5,7 +5,8 @@
 //
 // Groups are hubs: one per group you are in or are joining, an edge from you and from every contact the
 // group's log names as a member. The members the device knows by handle only have no node; the hub
-// carries their number.
+// carries their number. A contact whose group star names the group is joined to it in the star's own
+// line: the contact says so, and no member of the log is known to be that contact.
 
 import type { ContactId, GroupId, TrustState, Verification } from '../port'
 
@@ -30,9 +31,10 @@ export interface GraphInput {
     readonly knownMembers: number
     /** the log names you: not yet, as a rule, while you are joining */
     readonly selfListed: boolean
-    /** the members this device holds as contacts: by the group's log, or by the contact's group star
-     *  (empty where neither arrived) */
+    /** the members of the group's log this device holds as contacts (empty where the details did not arrive) */
     readonly contacts: readonly ContactId[]
+    /** the contacts whose group star names this group: the contact's word, tied to no member of the log */
+    readonly said?: readonly ContactId[]
   }[]
 }
 
@@ -80,6 +82,9 @@ export interface MemberEdge {
   readonly hub: string
   /** 'me' or the contact id */
   readonly node: string
+  /** `log`: the group's log names this member and the device knows who it is. `said`: the contact's
+   *  group star names the group; which member of the log it is, or whether it still is one, is open */
+  readonly by: 'log' | 'said'
 }
 
 export interface GraphModel {
@@ -123,8 +128,10 @@ export function graphModel(input: GraphInput): GraphModel {
     const id = `g:${g.id}`
     const linked = [...new Set(g.contacts)].filter((c) => held.has(c))
     hubs.push({ id, group: g.id, name: g.name, joining: g.joining, size: HUB_SIZE, members: g.knownMembers, unknown: Math.max(0, g.knownMembers - (g.selfListed ? 1 : 0) - linked.length) })
-    memberships.push({ key: `${id}|me`, hub: id, node: 'me' })
-    for (const c of linked) memberships.push({ key: `${id}|${c}`, hub: id, node: c })
+    memberships.push({ key: `${id}|me`, hub: id, node: 'me', by: 'log' })
+    for (const c of linked) memberships.push({ key: `${id}|${c}`, hub: id, node: c, by: 'log' })
+    // a contact's word takes no dot away: a dot goes only where the log's member is known to be the contact
+    for (const c of new Set(g.said ?? [])) if (held.has(c) && !linked.includes(c)) memberships.push({ key: `${id}|${c}`, hub: id, node: c, by: 'said' })
   }
   return { nodes, mine, stars: [...stars.values()], hubs, memberships }
 }

@@ -39,7 +39,7 @@ const EDGE_LEGEND = [
   { cls: 'wb-edge', text: 'a real meeting happened', color: '#60a5fa' },
   { cls: 'wb-edge trust2', text: 'identity disclosed, both ways', color: 'oklch(70% 0.15 145)' },
   { cls: 'wb-edge trust1', text: 'one way, introduced, or waiting', color: '#fbbf24' },
-  { cls: 'wb-edge star', text: 'known through a contact’s star', color: '#c4b5fd' },
+  { cls: 'wb-edge star', text: 'known through a contact’s star, or in a group by it', color: '#c4b5fd' },
   { cls: 'wb-edge member', text: 'member of a group', color: '#94a3b8' },
 ]
 
@@ -62,7 +62,7 @@ function linksOf(scene: Scene): Link[] {
   // what the camera knows only through a contact's star: drawn, never pulling the layout
   for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
   for (const g of scene.groups) {
-    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: 'wb-edge member' + (m.joining ? ' joining' : ''), member: true })
+    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.said ? 'wb-edge star said' : 'wb-edge member' + (m.joining ? ' joining' : ''), member: true })
   }
   return out
 }

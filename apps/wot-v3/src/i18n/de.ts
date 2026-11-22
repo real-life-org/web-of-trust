@@ -58,6 +58,7 @@ export const de: Translations = {
     shared: 'Gemeinsame Kontakte: {names} · so sagt es {name}',
     full: 'Auf dem ganzen Bildschirm zeigen',
     exitFull: 'Zurück zur App',
+    groupSaid: 'Dabei, so sagen sie es selbst: {names}',
     groupUnknown: '{n} davon sind keine Kontakte von dir',
     groupUnknownOne: '1 davon ist kein Kontakt von dir',
   },

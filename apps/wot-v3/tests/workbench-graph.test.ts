@@ -186,6 +186,15 @@ describe('sceneFor: groups are hubs, from what each device holds of them', () =>
     expect(sceneFor('jonas', people, edges, {}, pending).groups[0]).toMatchObject({ members: [{ id: 'jonas', joining: false }], unknown: 0, confirmed: 1 })
   })
 
+  it("#542: a contact's word is a line of its own kind for that camera; the dots stay", () => {
+    // Noah's log names him and two he cannot place; Lea, his contact, says by her star that she is in it
+    const said = { noah: [{ id: 'garden', name: 'Garden Crew', joining: false, members: [], said: ['lea', 'mara'], unknown: 2, confirmed: 3 }] }
+    const scene = sceneFor('noah', people, edges, {}, said)
+    // Mara is held as a contact too (scanned once): both are drawn by their word
+    expect(scene.groups[0]?.members).toEqual([{ id: 'noah', joining: false }, { id: 'lea', joining: false, said: true }, { id: 'mara', joining: false, said: true }])
+    expect(scene.groups[0]).toMatchObject({ unknown: 2, confirmed: 3 })
+  })
+
   it('no groups: none in the scene', () => {
     expect(sceneFor('jonas', people, edges).groups).toEqual([])
   })

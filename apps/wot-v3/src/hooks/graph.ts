@@ -16,7 +16,7 @@ export function graphInputOf(port: Port): GraphInput | null {
   if (list.status !== 'ready') return null
   // who is in which group apart from the group's own log: a contact's group star says the groups it
   // shares with this device (ContactDetail.sharedGroups). Which member of the group the contact is the
-  // star does not say; that the contact is one of them it does.
+  // star does not say, nor does the log confirm it: it is the contact's word.
   const starred = new Map<string, ContactId[]>()
   for (const c of list.value) {
     const d = port.stores.contact(c.id).get()
@@ -34,7 +34,7 @@ export function graphInputOf(port: Port): GraphInput | null {
       const members = d.status === 'ready' && d.value ? d.value.visibleMembers : null
       // without the details the membership decides: a member is in the log, one who is joining is not yet
       const selfListed = members ? members.some((m) => m.self) : g.membership === 'member'
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, selfListed, contacts: [...(members ?? []).flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])), ...(starred.get(g.id) ?? [])] }
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, selfListed, contacts: (members ?? []).flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])), said: starred.get(g.id) ?? [] }
     }),
   }
 }

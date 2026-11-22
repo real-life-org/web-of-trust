@@ -151,9 +151,11 @@ describe('members who know each other apart from the invitation (Anton 22.11.)',
     // the group's own log still names C only by its handle at B: the star says who, not which member
     const atB = value(B.port.stores.group(groupId)) as GroupDetail
     expect(atB.visibleMembers.filter((m) => !m.self && m.contactId !== null)).toHaveLength(1)
-    // the graph at B: the group joined to B, to A (who invited B) and to C (by its star); nobody left as a dot
+    // the graph at B: the group joined to B and to A (who invited B) by the log, to C by C's word; C's
+    // member of the log stays a dot, because nothing says that it is C (#542)
     const g = graphModel(graphInputOf(B.port)!)
-    expect(g.memberships.map((m) => m.node).sort()).toEqual([...value(B.port.stores.contacts).map((c) => c.id as string), 'me'].sort())
-    expect(g.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 0 }])
+    const aAtB = value(B.port.stores.contacts).find((c) => c.name === 'Al')!
+    expect(g.memberships.map((m) => [m.node, m.by]).sort()).toEqual([[aAtB.id, 'log'], [cAtB.id, 'said'], ['me', 'log']].sort())
+    expect(g.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 1 }])
   })
 })

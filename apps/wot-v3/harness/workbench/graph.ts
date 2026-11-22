@@ -7,7 +7,8 @@
 //
 // A group is a hub: for a person's camera the groups their device is in, joined to them and to the
 // members the device holds as contacts, the other members a number at the hub; for God's eye every
-// group, joined to every phone that is in it.
+// group, joined to every phone that is in it. A contact that says by its group star that it shares a
+// group is joined to it for that camera in the star's line: nothing in the log says which member it is.
 
 import type { Verification } from '../../src/port'
 
@@ -56,8 +57,11 @@ export interface DeviceGroup {
   readonly name: string
   /** the device's own membership is not confirmed yet */
   readonly joining: boolean
-  /** the members the device holds as contacts, as the devices they are */
+  /** the members of the group's log the device holds as contacts, as the devices they are */
   readonly members: readonly string[]
+  /** the contacts whose group star names this group, as the devices they are: their word, tied to no
+   *  member of the log */
+  readonly said?: readonly string[]
   /** the members the device knows by handle only */
   readonly unknown: number
   /** the members the group's log names on this device: the device's owner among them only once confirmed */
@@ -68,7 +72,7 @@ export interface DeviceGroup {
 export interface SceneGroup {
   readonly id: string
   readonly name: string
-  readonly members: readonly { readonly id: string; readonly joining: boolean }[]
+  readonly members: readonly { readonly id: string; readonly joining: boolean; /** by the contact's group star only */ readonly said?: boolean }[]
   readonly unknown: number
   /** the confirmed members: the number the hub shows. One who is joining has a line, and is not counted */
   readonly confirmed: number
@@ -196,7 +200,12 @@ export function sceneFor(
     groups: (groups[me.id] ?? []).map((g) => ({
       id: g.id,
       name: g.name,
-      members: [{ id: me.id, joining: g.joining }, ...g.members.filter((m) => m !== me.id && peers.has(m)).map((m) => ({ id: m, joining: false }))],
+      members: [
+        { id: me.id, joining: g.joining },
+        ...g.members.filter((m) => m !== me.id && peers.has(m)).map((m) => ({ id: m, joining: false })),
+        // a contact's word: a line of its own kind, and no dot fewer
+        ...(g.said ?? []).filter((m) => m !== me.id && peers.has(m) && !g.members.includes(m)).map((m) => ({ id: m, joining: false, said: true })),
+      ],
       unknown: g.unknown + g.members.filter((m) => m !== me.id && !peers.has(m)).length,
       confirmed: g.confirmed,
     })),

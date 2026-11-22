@@ -175,15 +175,16 @@ function groupsOf(id: string, d: LoopbackDevice, resolve: ReturnType<typeof cont
         const peer = m.contactId ? resolve(id, m.contactId, m.name) : null
         return peer ? [peer] : []
       })
-      // and the contacts whose group star says they share this group (ContactDetail.sharedGroups)
+      // the contacts whose group star says they share this group (ContactDetail.sharedGroups): their word
+      const said: string[] = []
       const contacts = d.port.stores.contacts.get()
       for (const c of contacts.status === 'ready' ? contacts.value : []) {
         const cd = d.port.stores.contact(c.id).get()
         const peer = cd.status === 'ready' && cd.value?.sharedGroups?.includes(g.id) ? resolve(id, c.id, c.name) : null
-        if (peer) members.push(peer)
+        if (peer) said.push(peer)
       }
       const linked = [...new Set(members)].sort()
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: linked, unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - linked.length), confirmed: g.knownMembers }
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', members: linked, said: [...new Set(said)].sort(), unknown: Math.max(0, g.knownMembers - (selfListed ? 1 : 0) - linked.length), confirmed: g.knownMembers }
     })
 }
 
