@@ -22,7 +22,21 @@ export function ContactsIcon(p: IconProps) {
   )
 }
 
-/** The network symbol: groups tab and logo. */
+/** Three people: the groups tab. */
+export function GroupsIcon(p: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden {...stroke} {...p}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M6.5 20v-1.5a5.5 5.5 0 0 1 11 0V20" />
+      <circle cx="4.6" cy="10.4" r="2.1" />
+      <path d="M1.5 18.5v-.8a3.4 3.4 0 0 1 3.4-3.4" />
+      <circle cx="19.4" cy="10.4" r="2.1" />
+      <path d="M22.5 18.5v-.8a3.4 3.4 0 0 0-3.4-3.4" />
+    </svg>
+  )
+}
+
+/** The network symbol: graph tab and logo. */
 export function NetworkIcon({ filled, ...p }: IconProps & { filled?: boolean }) {
   return (
     <svg viewBox={filled ? '0 1 23 22' : '0 0 24 24'} aria-hidden {...stroke} fill={filled ? 'currentColor' : 'none'} {...p}>

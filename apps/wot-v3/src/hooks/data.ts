@@ -9,6 +9,8 @@ import type {
   ConversationKey,
   Connection,
   Decision,
+  GroupDetail,
+  GroupId,
   GroupListItem,
   InteropProbe,
   InteropProbeState,
@@ -43,6 +45,10 @@ export function useContact(id: ContactId): Loadable<ContactDetail | null> {
 
 export function useGroups(): Loadable<readonly GroupListItem[]> {
   return useStore(usePort().stores.groups)
+}
+
+export function useGroup(id: GroupId): Loadable<GroupDetail | null> {
+  return useStore(usePort().stores.group(id))
 }
 
 export function useDecisions(): Loadable<readonly Decision[]> {

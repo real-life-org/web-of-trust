@@ -19,7 +19,7 @@ import type { Route, Tab } from './nav'
  *  columns only appear where they fit */
 export const WIDE_QUERY = '(min-width: 64rem)'
 
-const PAGE_ROUTES: ReadonlySet<Route['kind']> = new Set(['verify', 'report', 'profile-name'])
+const PAGE_ROUTES: ReadonlySet<Route['kind']> = new Set(['verify', 'report', 'profile-name', 'group-found', 'group-invite'])
 
 /** a page: an act with its own steps and an end, not a detail of the list (messenger pattern) */
 export function isPageRoute(route: Route): boolean {
@@ -52,7 +52,8 @@ export function shellPanes(stack: readonly Route[], area: { readonly tab: Tab; r
       break
     }
   }
-  const columns = detail !== null || (area.tab === 'contacts' && !area.empty)
+  // the two areas with a list to pick from: contacts and groups
+  const columns = detail !== null || ((area.tab === 'contacts' || area.tab === 'groups') && !area.empty)
   return { mode: columns ? 'columns' : 'single', detail, page: null, listHidden }
 }
 

@@ -36,4 +36,10 @@ export const SCREENS: readonly ScreenEntry[] = [
   { id: 'system/error', states: [{ state: 'error', scenario: 'none' }] },
   { id: 'verify/verify', states: [{ state: 'every state of the verify machine', scenario: 'catalog (harness/catalog-verify.ts)' }, { state: 'two phones, both roles', scenario: 'encounter' }] },
   { id: 'contacts/detail', states: [{ state: 'mutual, incoming', scenario: 'encounter' }] },
+  // Groups: the list on the simulation; details, founding and inviting on two phones with the real
+  // library (the simulation has no group details), tests/group-screens.test.tsx for every state
+  { id: 'groups/list', states: [{ state: 'ready-with-open-invitation', scenario: 'iiw' }, { state: 'empty', scenario: 'empty' }] },
+  { id: 'groups/detail', states: [{ state: 'member, left', scenario: 'conversation' }] },
+  { id: 'groups/found', states: [{ state: 'name', scenario: 'conversation' }] },
+  { id: 'groups/invite', states: [{ state: 'contacts to invite, nobody left', scenario: 'conversation' }] },
 ]

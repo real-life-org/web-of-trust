@@ -12,13 +12,14 @@ export interface NavItem {
   onSelect: () => void
 }
 
-/** Mobile bottom bar with three tabs (design: isMobile). */
+/** Mobile bottom bar: one column per area, all in one row (design: isMobile). */
 export function BottomNav({ items }: { items: readonly NavItem[] }) {
   const { t } = useI18n()
   return (
     <nav
       aria-label={t.nav.primary}
-      className="grid flex-none grid-cols-3 border-t border-border bg-card pb-[var(--safe-bottom)] md:hidden"
+      className="grid flex-none border-t border-border bg-card pb-[var(--safe-bottom)] md:hidden"
+      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
     >
       {items.map((it) => (
         <button
