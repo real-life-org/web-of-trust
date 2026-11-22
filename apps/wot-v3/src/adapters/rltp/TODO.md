@@ -55,6 +55,9 @@ open admissions); a request to the groups' members when the app opens or comes t
 founder is the member nobody invited. An invitation shows as a card in the conversation with the
 inviter, with the group's name as the invitation states it, answered there with accept or decline.
 
-Not built: any group screen; the invitations sent (`invitesOut` is empty); whether the own vouch was
+The screens (`screens/groups`): the list with the open invitations, a group's details with who invited
+whom, founding, inviting a contact, leaving.
+
+Not built: the invitations sent (`invitesOut` is empty); whether the own vouch was
 given (`iVouched` is false);
 group messages (`groupMessaging` is off: the library has no content in groups).

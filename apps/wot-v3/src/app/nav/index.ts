@@ -1,18 +1,26 @@
 // Navigation as a pure machine over { tab, stack, sheet } (architecture §4.1). No router.
 // Back: close sheet → pop stack → tab "contacts" → leave the app (Android backButton, web popstate).
-// Routes so far: chat, contact (details behind the chat head, messenger pattern), verify, report, interop (developer area). The
-// remaining routes and sheets of the prototype join with their screens.
+// Routes so far: chat, contact (details behind the chat head, messenger pattern), verify, report, interop (developer area),
+// and the groups: a group's details, founding one, inviting a contact into one. The remaining routes and
+// sheets of the prototype join with their screens.
 
-import type { ContactId, ConversationKey, ReadStore } from '../../port'
+import type { ContactId, ConversationKey, GroupId, ReadStore } from '../../port'
 import { writableStore } from '../../port'
 
-/** the middle tab is the graph (Anton 04.11.: it replaces groups, which v3 does not have yet) */
-export type Tab = 'contacts' | 'graph' | 'profile'
+/** contacts, groups, graph, profile (Anton 22.11.: groups get a menu entry of their own) */
+export type Tab = 'contacts' | 'groups' | 'graph' | 'profile'
 export type Route =
   | { readonly kind: 'chat'; readonly key: ConversationKey }
   | { readonly kind: 'contact'; readonly id: ContactId }
   | { readonly kind: 'verify' }
   | { readonly kind: 'report'; readonly id: ContactId }
+  /** a group's details: its members and what the person can do in it. A group has no conversation
+   *  yet, so the list opens the details; a conversation will slide in front of them later */
+  | { readonly kind: 'group'; readonly id: GroupId }
+  /** found a group */
+  | { readonly kind: 'group-found' }
+  /** invite a contact into a group */
+  | { readonly kind: 'group-invite'; readonly id: GroupId }
   /** the own name, from the profile tab */
   | { readonly kind: 'profile-name' }
   /** the interop probe of the developer area (only in a build that has one) */
@@ -39,6 +47,8 @@ export type NavEvent =
 
 export const INITIAL_NAV: NavState = { tab: 'contacts', stack: [], sheet: null }
 
+const isGroupRoute = (r: Route): boolean => r.kind === 'group' || r.kind === 'group-found' || r.kind === 'group-invite'
+
 /** Pure transition. `exit` is true when back has nothing left to close. */
 export function navTransition(state: NavState, event: NavEvent): { state: NavState; exit: boolean } {
   switch (event.type) {
@@ -49,8 +59,9 @@ export function navTransition(state: NavState, event: NavEvent): { state: NavSta
     case 'pop':
       return { state: { ...state, stack: state.stack.slice(0, -1) }, exit: false }
     case 'open':
-      // every route belongs to the contacts (the graph tab has no routes of its own)
-      return { state: { tab: 'contacts', stack: [event.route], sheet: null }, exit: false }
+      // a group's routes belong to the groups, every other route to the contacts (the graph tab has
+      // no routes of its own)
+      return { state: { tab: isGroupRoute(event.route) ? 'groups' : 'contacts', stack: [event.route], sheet: null }, exit: false }
     case 'reset':
       return { state: INITIAL_NAV, exit: false }
     case 'back':

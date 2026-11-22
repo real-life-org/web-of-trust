@@ -1,13 +1,13 @@
 // App shell after the prototype: desktop = sidebar + list column (380 px) + detail pane where there is
-// content, one column where there is none (an empty list, the groups placeholder, the profile);
-// mobile = list or conversation full screen, bottom bar with three tabs. Flows (verify, report, and the
+// content, one column where there is none (an empty list, the graph, the profile);
+// mobile = list or conversation full screen, bottom bar with four tabs. Flows (verify, report, and the
 // identity flows the gate hands over) are pages in the content column, with the sidebar; the
 // questions (counter-verification, success) are dialogs over whatever is shown (app/layout.ts).
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
-import { flowAsks, flowCovers, useBackDispatch, useContacts, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
+import { flowAsks, flowCovers, useBackDispatch, useContacts, useDecisions, useGroups, useIdentityActions, useIncoming, useMediaQuery, useMutualMoments, useNav, useNavStore, usePort, useStore, useSystemBack, type LinkInbox, type VerifyState } from '../hooks'
 import { useI18n } from '../i18n'
 import { cn, useToast } from '../ui/primitives'
-import { BottomNav, CenteredNote, ContactsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
+import { BottomNav, CenteredNote, ContactsIcon, GroupsIcon, MainLandmark, NetworkIcon, PageFrame, ProfileIcon, SideNav, type NavItem } from '../ui/components'
 import { ContactListScreen } from '../screens/contacts/ContactListScreen'
 import { DiagnosticsScreen } from './error-report'
 import { ConversationScreen } from '../screens/chat/ConversationScreen'
@@ -19,27 +19,34 @@ import { ReportScreen } from '../screens/report/ReportScreen'
 import { InteropProbeScreen } from '../screens/developer/InteropProbeScreen'
 import { ProfileNameScreen } from '../screens/identity/ProfileNameScreen'
 import { GraphScreen } from '../screens/graph/GraphScreen'
+import { GroupListScreen } from '../screens/groups/GroupListScreen'
+import { GroupDetailScreen } from '../screens/groups/GroupDetailScreen'
+import { GroupFoundScreen } from '../screens/groups/GroupFoundScreen'
+import { GroupInviteScreen } from '../screens/groups/GroupInviteScreen'
 import { IdentitySettingsScreen } from '../screens/identity/IdentitySettingsScreen'
 import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
 import { useIdentityPage } from './identity-page'
 import { createLinkJobs } from './link-job'
-import type { ContactId } from '../port'
+import type { ContactId, GroupId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
   const contacts = useContacts()
   const unreadContacts = contacts.status === 'ready' ? contacts.value.filter((c) => c.conversation.unread > 0).length : 0
-  return { contacts: unreadContacts, graph: 0, profile: 0 }
+  // the invitations into a group that wait for an answer
+  const decisions = useDecisions()
+  const invitations = decisions.status === 'ready' ? decisions.value.filter((d) => d.kind === 'group-invite').length : 0
+  return { contacts: unreadContacts, groups: invitations, graph: 0, profile: 0 }
 }
 
-/** the three areas of the sidebar and the bottom bar; `before` runs ahead of a change of area */
+/** the four areas of the sidebar and the bottom bar; `before` runs ahead of a change of area */
 /** `before`: asked first when a page is open; false keeps the page and the area (a flow that holds) */
 function useNavItems(before?: () => boolean): NavItem[] {
   const { t } = useI18n()
   const { state, send } = useNav()
   const badges = useTabBadges()
-  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, graph: <NetworkIcon />, profile: <ProfileIcon /> }
-  return (['contacts', 'graph', 'profile'] as const).map((tab) => ({
+  const icons: Record<Tab, ReactElement> = { contacts: <ContactsIcon />, groups: <GroupsIcon />, graph: <NetworkIcon />, profile: <ProfileIcon /> }
+  return (['contacts', 'groups', 'graph', 'profile'] as const).map((tab) => ({
     id: tab,
     label: t.nav[tab],
     icon: icons[tab],
@@ -77,7 +84,10 @@ export function Shell({ links }: { links: LinkInbox }) {
   const wide = useMediaQuery(WIDE_QUERY)
   // empty only once loaded: a list still loading keeps the two columns, so the start does not jump
   // from one column to two (review 481 B3)
-  const panes = shellPanes(state.stack, { tab: state.tab, empty: contacts.status === 'ready' && contacts.value.length === 0 })
+  const groups = useGroups()
+  const decisions = useDecisions()
+  const noGroups = groups.status === 'ready' && groups.value.length === 0 && decisions.status === 'ready' && !decisions.value.some((d) => d.kind === 'group-invite')
+  const panes = shellPanes(state.stack, { tab: state.tab, empty: state.tab === 'groups' ? noGroups : contacts.status === 'ready' && contacts.value.length === 0 })
   // an identity flow handed over by the gate is the page; the navigation stays as it is below it
   const mode = identityPage ? 'page' : panes.mode
   const escape = useBackDispatch()
@@ -155,7 +165,18 @@ export function Shell({ links }: { links: LinkInbox }) {
   const onLinkTaken = () => jobs.taken()
 
   const items = useNavItems(identityPage ? leaveIdentity : undefined)
-  const route = (r: Route) => <RouteScreen route={r} onVerifyExit={onVerifyExit} onVerifyState={onVerifyState} link={link} onLinkTaken={onLinkTaken} onReportExit={onReportExit} onBack={() => send({ type: 'back' })} />
+  const route = (r: Route) => (
+    <RouteScreen
+      route={r}
+      onVerifyExit={onVerifyExit}
+      onVerifyState={onVerifyState}
+      link={link}
+      onLinkTaken={onLinkTaken}
+      onReportExit={onReportExit}
+      onBack={() => send({ type: 'back' })}
+      onFounded={(id) => send({ type: 'open', route: { kind: 'group', id } })}
+    />
+  )
 
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background text-foreground">
@@ -178,6 +199,8 @@ export function Shell({ links }: { links: LinkInbox }) {
         >
           {state.tab === 'contacts' ? (
             <ContactListScreen alone={wide && mode === 'single'} />
+          ) : state.tab === 'groups' ? (
+            <GroupListScreen alone={wide && mode === 'single'} />
           ) : state.tab === 'profile' ? (
             <IdentitySettingsScreen onChangeProtection={identity.openProtection} onDelete={identity.openDelete} onLock={identity.lock} />
           ) : (
@@ -238,6 +261,7 @@ function RouteScreen({
   onLinkTaken,
   onReportExit,
   onBack,
+  onFounded,
 }: {
   route: Route
   onVerifyExit: (s: Extract<VerifyState, { name: 'exit' }>) => void
@@ -246,6 +270,7 @@ function RouteScreen({
   onLinkTaken: () => void
   onReportExit: (to: 'back' | 'chat', contactId: ContactId) => void
   onBack: () => void
+  onFounded: (id: GroupId) => void
 }) {
   switch (route.kind) {
     case 'chat':
@@ -262,5 +287,11 @@ function RouteScreen({
       return <DiagnosticsScreen onBack={onBack} />
     case 'profile-name':
       return <ProfileNameScreen onBack={onBack} />
+    case 'group':
+      return <GroupDetailScreen key={route.id} groupId={route.id} />
+    case 'group-found':
+      return <GroupFoundScreen onBack={onBack} onFounded={onFounded} />
+    case 'group-invite':
+      return <GroupInviteScreen key={route.id} groupId={route.id} onBack={onBack} />
   }
 }
