@@ -161,8 +161,11 @@ export const en = {
       kind: 'Invitation',
       title: '{group}',
       titleUnknown: 'Invitation from {name} to a group',
-      sub: '{name} invites you · admission needs vouchers',
-      cta: 'Respond',
+      sub: '{name} invites you',
+      cta: 'Accept',
+      decline: 'Decline',
+      declineNote: 'If you decline, {name} is not told.',
+      failed: 'That did not go through. Please try again.',
     },
     vouch: {
       kind: 'Admission',

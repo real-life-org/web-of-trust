@@ -54,19 +54,22 @@ describe('groups over the real adapter (loopback)', () => {
     expect(alone.visibleMembers).toMatchObject([{ self: true, contactId: null }])
     expect(alone.actions).toMatchObject({ invite: { ok: true }, leave: { ok: true } })
 
-    // the invitation reaches B as a decision; its card in the conversation comes with the group screens
+    // the invitation reaches B as a decision, with its card in the conversation with A
     expect((await w.A.port.trust.invite(groupId, w.aId).done).ok).toBe(true)
     await w.settle()
     const open = value(w.B.port.stores.decisions).filter((d) => d.kind === 'group-invite')
     expect(open).toMatchObject([{ kind: 'group-invite', inviterId: w.bId, groupName: null, state: 'open' }])
     const cards = value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.filter((i): i is DecisionCardItem => i.kind === 'decision')
-    expect(cards.some((c) => c.decision === open[0]!.id)).toBe(false)
+    expect(cards.some((c) => c.decision === open[0]!.id && c.resolution === null)).toBe(true)
     expect(value(w.B.port.stores.groups)).toEqual([])
 
     // B accepts: A admits it, B fetches the group's log from A and is a member once it confirms
     expect((await w.B.port.trust.decide(open[0]!.id, 'accept').done).ok).toBe(true)
     await w.settle()
     expect(value(w.B.port.stores.decisions).filter((d) => d.kind === 'group-invite')).toEqual([])
+    // the card stays in the conversation as answered, by this device
+    const after = value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.filter((i): i is DecisionCardItem => i.kind === 'decision')
+    expect(after.find((c) => c.decision === open[0]!.id)?.resolution).toMatchObject({ choice: 'accept', by: 'this-device', basis: 'own-act' })
     expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, name: 'Garten', membership: 'member', knownMembers: 2 }])
     const atA = value(w.A.port.stores.group(groupId)) as GroupDetail
     const atB = value(w.B.port.stores.group(groupId)) as GroupDetail

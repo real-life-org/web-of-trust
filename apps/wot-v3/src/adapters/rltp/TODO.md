@@ -54,7 +54,9 @@ open admissions); a request to the groups' members when the app opens or comes t
 (`syncGroups`). With library 0.19.0 each member also names who invited it (`groupProvenance`,
 Membership RLTP-MT-3400); on an older library `invitedBy` is null and the role is `member`.
 
-Not built: any group screen and the card of an invitation in the conversation (the decision is in
-`decisions` only); the group's name on an invitation (the library names a group once it is joined);
+An invitation shows as a card in the conversation with the inviter, answered there with accept or
+decline.
+
+Not built: any group screen; the group's name on an invitation (the library names a group once it is joined);
 the invitations sent (`invitesOut` is empty); whether the own vouch was given (`iVouched` is false);
 group messages (`groupMessaging` is off: the library has no content in groups).

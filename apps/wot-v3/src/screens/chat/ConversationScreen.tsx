@@ -3,7 +3,7 @@
 // this device only, the other person is not told). Group conversations follow.
 import { useRef, useState } from 'react'
 import type { ContactId, ConversationItem, ConversationKey, Decision, DecisionId, MessageItem } from '../../port'
-import { clipText, useContact, useContacts, useConversation, useDecisions, useDecline, useDraft, useFormat, useNav } from '../../hooks'
+import { clipText, useContact, useContacts, useConversation, useAnswerInvite, useDecisions, useDecline, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import { deliveryWord } from './delivery-word'
 import { firstUnreadId } from './first-unread'
@@ -78,6 +78,8 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
   const [counterFor, setCounterFor] = useState<ContactId | null>(null)
   const decline = useDecline()
   const [declineFailed, setDeclineFailed] = useState<DecisionId | null>(null)
+  const invite = useAnswerInvite()
+  const [inviteFailed, setInviteFailed] = useState<DecisionId | null>(null)
   const threadFocus = useRef<HTMLDivElement>(null)
   const draft = useDraft(conversationKey)
   // the first unread message at open: taken once, from the unread count of the list, before the open
@@ -123,6 +125,30 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
           return <SystemLine key={item.id} glyph={own && r?.choice === 'accept' ? '✓' : '·'} tone="muted" text={own ?? t.decision.resolved} />
         }
         const g = DECISION_GLYPH[d.kind]
+        // an invitation into a group: accept or decline on the card itself. Accepting sends the consent
+        // to the inviter; declining closes it here and the inviter is not told
+        if (d.kind === 'group-invite') {
+          const x = t.decision['group-invite']
+          const free = d.state === 'open' && invite.busy === null
+          const answer = (choice: 'accept' | 'decline') => () => {
+            if (!free) return
+            setInviteFailed(null)
+            void invite.run(d.id, choice).then((r) => setInviteFailed(r.ok ? null : d.id))
+          }
+          return (
+            <DecisionCard
+              key={item.id}
+              glyph={g.glyph}
+              tone={g.tone}
+              resolved={null}
+              {...decisionTexts(d, names, i18n)}
+              onAction={answer('accept')}
+              secondary={{ label: x.decline, note: f(x.declineNote, { name: firstName(names.get(d.inviterId) ?? t.contacts.unnamed) }), onClick: answer('decline') }}
+              busy={!free}
+              error={inviteFailed === d.id ? x.failed : null}
+            />
+          )
+        }
         const open = d.kind === 'encounter-confirm' && d.state === 'open' && decline.busy === null
         const onAction = open ? () => setCounterFor(d.contactId) : undefined
         // A2: a quiet second action; the request closes here only, nothing is sent, the counter-step stays
