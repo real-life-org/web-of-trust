@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import type { Conversation, DecisionCardItem, GroupDetail, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { graphInputOf } from '../../src/hooks/graph'
+import { graphModel } from '../../src/hooks/graph-model'
 
 const T0 = Date.parse('2026-11-22T10:00:00Z')
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -93,5 +95,104 @@ describe('groups over the real adapter (loopback)', () => {
     expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'left' }])
     expect((value(w.B.port.stores.group(groupId)) as GroupDetail).actions).toMatchObject({ invite: { ok: false }, leave: { ok: false } })
     expect(value(w.A.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 1 }])
+  })
+})
+
+describe('members who know each other apart from the invitation (Anton 22.11.)', () => {
+  it('B and C, both invited by A, meet: each learns from the other\'s group star that they share the group', async () => {
+    const carrier = memoryCarrier()
+    const clock = virtualClock(T0, 'UTC')
+    const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 61 })
+    const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 63 })
+    const C = await loopbackDevice({ carrier, id: 'C', name: 'Cem', words: LOOPBACK_PHRASES[2], clock, seed: 65 })
+    const all = [A, B, C]
+    const settle = async () => {
+      for (let i = 0; i < 12; i++) {
+        await carrier.settled()
+        for (const d of all) await d.port.session()?.idle()
+      }
+    }
+    const meet = async (x: typeof A, y: typeof A) => {
+      const shown = await y.port.trust.showCard().done
+      if (!shown.ok) throw new Error('show')
+      const scanned = await x.port.trust.confirmCard(shown.value.qr).done
+      if (!scanned.ok) throw new Error('scan')
+      await settle()
+      const open = value(y.port.stores.decisions).find((d) => d.kind === 'encounter-confirm')
+      if (!open || open.kind !== 'encounter-confirm') throw new Error('no confirmation')
+      await y.port.trust.counterVerify(open.contactId).done
+      await settle()
+    }
+    await meet(A, B)
+    await meet(A, C)
+    const founded = await A.port.trust.foundGroup({ name: 'Garten' }).done
+    if (!founded.ok) throw new Error('found')
+    const groupId = founded.value.groupId
+    for (const c of value(A.port.stores.contacts)) {
+      expect((await A.port.trust.invite(groupId, c.id).done).ok).toBe(true)
+      await settle()
+    }
+    for (const d of [B, C]) {
+      const inv = value(d.port.stores.decisions).find((x) => x.kind === 'group-invite')
+      if (!inv) throw new Error('no invitation')
+      expect((await d.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
+      await settle()
+    }
+    expect(value(B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 3 }])
+    expect(value(C.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 3 }])
+
+    await meet(B, C)
+    clock.advance(60_000)
+    await settle()
+    const cAtB = value(B.port.stores.contacts).find((c) => c.name === 'Cem')!
+    const bAtC = value(C.port.stores.contacts).find((c) => c.name === 'Bea')!
+    const detailAtB = value(B.port.stores.contact(cAtB.id))
+    const detailAtC = value(C.port.stores.contact(bAtC.id))
+    expect(detailAtB?.sharedGroups).toEqual([groupId])
+    expect(detailAtC?.sharedGroups).toEqual([groupId])
+    // the group's own log still names C only by its handle at B: the star says who, not which member
+    const atB = value(B.port.stores.group(groupId)) as GroupDetail
+    expect(atB.visibleMembers.filter((m) => !m.self && m.contactId !== null)).toHaveLength(1)
+    // the graph at B: the group joined to B and to A (who invited B) by the log, to C by C's word; C's
+    // member of the log stays a dot, because nothing says that it is C (#542)
+    const g = graphModel(graphInputOf(B.port)!)
+    const aAtB = value(B.port.stores.contacts).find((c) => c.name === 'Al')!
+    expect(g.memberships.map((m) => [m.node, m.by]).sort()).toEqual([[aAtB.id, 'log'], [cAtB.id, 'said'], ['me', 'log']].sort())
+    expect(g.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 1 }])
+  })
+})
+
+describe('the own line to a group and the admission (#543)', () => {
+  it('after accepting, while the inviter is away: the device holds no group yet and draws no line; once the log names B: a membership', async () => {
+    const w = await met()
+    const founded = await w.A.port.trust.foundGroup({ name: 'Garten' }).done
+    if (!founded.ok) throw new Error('found')
+    const groupId = founded.value.groupId
+    expect((await w.A.port.trust.invite(groupId, w.aId).done).ok).toBe(true)
+    await w.settle()
+    const inv = value(w.B.port.stores.decisions).find((d) => d.kind === 'group-invite')!
+    // the card in the conversation says what B did, whatever became of it
+    const card = () => value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.find((i): i is DecisionCardItem => i.kind === 'decision' && i.decision === inv.id)
+
+    // the inviter is away: B's consent leaves, nobody answers it. The library holds a group for B only
+    // from the inviter's welcome on, so there is nothing to draw: never a membership ahead of the log
+    w.carrier.setOnline('A', false)
+    expect((await w.B.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
+    await w.settle()
+    expect(value(w.B.port.stores.groups)).toEqual([])
+    expect(graphModel(graphInputOf(w.B.port)!)).toMatchObject({ hubs: [], memberships: [] })
+    expect(card()?.resolution).toMatchObject({ choice: 'accept', basis: 'own-act' })
+
+    // the inviter is back and admits B: the log names B, the line is a membership
+    w.carrier.setOnline('A', true)
+    for (let i = 0; i < 6; i++) {
+      w.clock.advance(60_000)
+      await w.settle()
+    }
+    expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 2 }])
+    const after = graphModel(graphInputOf(w.B.port)!)
+    expect(after.memberships.filter((m) => m.node === 'me')).toMatchObject([{ hub: `g:${groupId}`, by: 'log' }])
+    expect(after.hubs).toMatchObject([{ joining: false, members: 2 }])
+    expect(card()?.resolution).toMatchObject({ choice: 'accept', basis: 'own-act' })
   })
 })

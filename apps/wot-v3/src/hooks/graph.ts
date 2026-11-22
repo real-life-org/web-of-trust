@@ -9,10 +9,19 @@ import { usePort } from './context'
 
 type Port = ReturnType<typeof usePort>
 
-function read(port: Port): GraphInput | null {
+/** the graph's input as the port's stores hold it now */
+export function graphInputOf(port: Port): GraphInput | null {
   const list = port.stores.contacts.get()
   const profile = port.stores.profile.get()
   if (list.status !== 'ready') return null
+  // who is in which group apart from the group's own log: a contact's group star says the groups it
+  // shares with this device (ContactDetail.sharedGroups). Which member of the group the contact is the
+  // star does not say, nor does the log confirm it: it is the contact's word.
+  const starred = new Map<string, ContactId[]>()
+  for (const c of list.value) {
+    const d = port.stores.contact(c.id).get()
+    for (const g of (d.status === 'ready' && d.value?.sharedGroups) || []) starred.set(g, [...(starred.get(g) ?? []), c.id])
+  }
   return {
     me: profile.status === 'ready' ? { name: profile.value.name, image: profile.value.image } : { name: null, image: null },
     contacts: list.value.map((c) => {
@@ -25,7 +34,7 @@ function read(port: Port): GraphInput | null {
       const members = d.status === 'ready' && d.value ? d.value.visibleMembers : null
       // without the details the membership decides: a member is in the log, one who is joining is not yet
       const selfListed = members ? members.some((m) => m.self) : g.membership === 'member'
-      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, selfListed, contacts: (members ?? []).flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])) }
+      return { id: g.id, name: g.name, joining: g.membership === 'joining', knownMembers: g.knownMembers, selfListed, contacts: (members ?? []).flatMap((m) => (!m.self && m.contactId ? [m.contactId] : [])), said: starred.get(g.id) ?? [] }
     }),
   }
 }
@@ -38,10 +47,10 @@ function groupsOf(port: Port) {
 
 export function useGraphInput(): GraphInput | null {
   const port = usePort()
-  const [snap, setSnap] = useState<GraphInput | null>(() => read(port))
+  const [snap, setSnap] = useState<GraphInput | null>(() => graphInputOf(port))
   useEffect(() => {
     let details: (() => void)[] = []
-    const refresh = () => setSnap(read(port))
+    const refresh = () => setSnap(graphInputOf(port))
     const watchDetails = () => {
       for (const off of details) off()
       const list = port.stores.contacts.get()

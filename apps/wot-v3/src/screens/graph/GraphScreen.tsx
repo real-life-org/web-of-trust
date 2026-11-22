@@ -9,6 +9,8 @@
 // Groups (Anton 22.11.), in the picture language of the graph simulator: a group is a dashed circle on
 // the outer ring with its name; a dashed line joins it to you and to every contact its log names as a
 // member; the members that are no contact of yours are grey dots at the circle, nobody in particular.
+// A contact that says by its group star that it is in the group is joined to it dotted violet, as every
+// star is; the dots stay, because the log does not say which member the contact is.
 // A tap opens the group into a card, "Open" leads to its details.
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { forceCollide, forceLink, forceManyBody, forceRadial, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
@@ -172,6 +174,7 @@ export function GraphScreen() {
   const count = model.nodes.length - 1
   const empty = count === 0 && model.hubs.length === 0
   const selHub = selected ? hubById.get(selected) : undefined
+  const selSaid = selHub ? model.memberships.filter((m) => m.hub === selHub.id && m.by === 'said').map((m) => nameOf(m.node)) : []
   const sel = selected ? contacts.get(selected) : undefined
   const selEdge = selected ? model.mine.find((e) => e.contact === selected) : undefined
   const selShared = sel?.shared?.filter((id) => contacts.has(id)).map(nameOf) ?? []
@@ -222,10 +225,13 @@ export function GraphScreen() {
                   y1={a.y + (uy / len) * r1}
                   x2={b.x - (ux / len) * r2}
                   y2={b.y - (uy / len) * r2}
-                  stroke="currentColor"
-                  strokeOpacity={selected === null ? 0.28 : touched ? 0.6 : 0.1}
-                  strokeWidth={touched ? 1.6 : 1.2}
-                  strokeDasharray="5 5"
+                  data-by={m.by}
+                  // the contact's word is drawn as every star is: dotted violet
+                  stroke={m.by === 'said' ? STAR : 'currentColor'}
+                  strokeOpacity={(m.by === 'said' ? (selected === null ? 0.7 : touched ? 0.9 : 0.15) : selected === null ? 0.28 : touched ? 0.6 : 0.1) * (m.by === 'joining' ? 0.5 : 1)}
+                  strokeWidth={m.by === 'said' ? 1.5 : touched ? 1.6 : 1.2}
+                  // not confirmed yet: the same line, fainter and wider apart
+                  strokeDasharray={m.by === 'said' ? '1.5 5' : m.by === 'joining' ? '3 8' : '5 5'}
                   strokeLinecap="round"
                 />
               )
@@ -353,6 +359,7 @@ export function GraphScreen() {
                   <div className="text-[11px] text-muted-foreground">{selHub.joining ? t.groups.joining : selHub.members <= 1 ? t.groups.oneMember : f(t.groups.members, { n: String(selHub.members) })}</div>
                 </div>
               </div>
+              {selSaid.length > 0 ? <p className="m-0 text-[11px] text-pretty text-muted-foreground">{f(g.groupSaid, { names: selSaid.join(', ') })}</p> : null}
               {selHub.unknown > 0 ? <p className="m-0 text-[11px] text-pretty text-muted-foreground">{f(selHub.unknown === 1 ? g.groupUnknownOne : g.groupUnknown, { n: String(selHub.unknown) })}</p> : null}
               <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground" onClick={() => send({ type: 'push', route: { kind: 'group', id: selHub.group } })}>
                 {g.open}

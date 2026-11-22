@@ -155,20 +155,20 @@ describe('sceneFor: groups are hubs, from what each device holds of them', () =>
 
   it("a person's camera: their own groups, joined to them and to the members they hold as contacts; the rest a number", () => {
     const scene = sceneFor('jonas', people, edges, {}, groups)
-    expect(scene.groups).toEqual([{ id: 'garden', name: 'Garden Crew', members: [{ id: 'jonas', joining: false }, { id: 'lea', joining: false }], unknown: 2, confirmed: 3 }])
-    expect(sceneFor('noah', people, edges, {}, groups).groups[0]).toMatchObject({ members: [{ id: 'noah', joining: false }], unknown: 3 })
+    expect(scene.groups).toEqual([{ id: 'garden', name: 'Garden Crew', members: [{ id: 'jonas', by: 'log' }, { id: 'lea', by: 'log' }], unknown: 2, confirmed: 3 }])
+    expect(sceneFor('noah', people, edges, {}, groups).groups[0]).toMatchObject({ members: [{ id: 'noah', by: 'log' }], unknown: 3 })
   })
 
   it('a member the camera does not hold as a contact has no node: one more of the unknown', () => {
     const scene = sceneFor('mara', people, edges, {}, { mara: [garden(['jonas'], 2, true)] })
-    expect(scene.groups[0]).toEqual({ id: 'garden', name: 'Garden Crew', members: [{ id: 'mara', joining: true }], unknown: 3, confirmed: 3 })
+    expect(scene.groups[0]).toEqual({ id: 'garden', name: 'Garden Crew', members: [{ id: 'mara', by: 'joining' }], unknown: 3, confirmed: 3 })
   })
 
   it("God's eye: every group once, joined to every phone that is in it", () => {
     const scene = sceneFor('god', people, edges, {}, groups)
     expect(scene.groups).toHaveLength(1)
     expect(scene.groups[0]?.members.map((m) => m.id).sort()).toEqual(['jonas', 'lea', 'mara', 'noah'])
-    expect(scene.groups[0]?.members.find((m) => m.id === 'mara')?.joining).toBe(true)
+    expect(scene.groups[0]?.members.find((m) => m.id === 'mara')?.by).toBe('joining')
     expect(scene.groups[0]?.unknown).toBe(0)
   })
 
@@ -179,11 +179,20 @@ describe('sceneFor: groups are hubs, from what each device holds of them', () =>
       mara: [{ id: 'duo', name: 'Duo', joining: true, members: [], unknown: 1, confirmed: 1 }],
     }
     const god = sceneFor('god', people, edges, {}, pending).groups[0]
-    expect(god?.members).toEqual([{ id: 'jonas', joining: false }, { id: 'mara', joining: true }])
+    expect(god?.members).toEqual([{ id: 'jonas', by: 'log' }, { id: 'mara', by: 'joining' }])
     expect(god?.confirmed).toBe(1)
     const mara = sceneFor('mara', people, edges, {}, pending).groups[0]
-    expect(mara).toMatchObject({ members: [{ id: 'mara', joining: true }], unknown: 1, confirmed: 1 })
-    expect(sceneFor('jonas', people, edges, {}, pending).groups[0]).toMatchObject({ members: [{ id: 'jonas', joining: false }], unknown: 0, confirmed: 1 })
+    expect(mara).toMatchObject({ members: [{ id: 'mara', by: 'joining' }], unknown: 1, confirmed: 1 })
+    expect(sceneFor('jonas', people, edges, {}, pending).groups[0]).toMatchObject({ members: [{ id: 'jonas', by: 'log' }], unknown: 0, confirmed: 1 })
+  })
+
+  it("#542: a contact's word is a line of its own kind for that camera; the dots stay", () => {
+    // Noah's log names him and two he cannot place; Lea, his contact, says by her star that she is in it
+    const said = { noah: [{ id: 'garden', name: 'Garden Crew', joining: false, members: [], said: ['lea', 'mara'], unknown: 2, confirmed: 3 }] }
+    const scene = sceneFor('noah', people, edges, {}, said)
+    // Mara is held as a contact too (scanned once): both are drawn by their word
+    expect(scene.groups[0]?.members).toEqual([{ id: 'noah', by: 'log' }, { id: 'lea', by: 'said' }, { id: 'mara', by: 'said' }])
+    expect(scene.groups[0]).toMatchObject({ unknown: 2, confirmed: 3 })
   })
 
   it('no groups: none in the scene', () => {

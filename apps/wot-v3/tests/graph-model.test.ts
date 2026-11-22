@@ -64,11 +64,12 @@ describe('graphModel: groups are hubs', () => {
   })
 
   it('a membership edge from you and from every member the device holds as a contact, nobody else', () => {
-    expect(g.memberships.map((m) => [m.hub, m.node])).toEqual([
-      ['g:garden', 'me'],
-      ['g:garden', 'noah'],
-      ['g:garden', 'lea'],
-      ['g:choir', 'me'],
+    expect(g.memberships.map((m) => [m.hub, m.node, m.by])).toEqual([
+      ['g:garden', 'me', 'log'],
+      ['g:garden', 'noah', 'log'],
+      ['g:garden', 'lea', 'log'],
+      // not confirmed in the choir yet: your line there is no membership
+      ['g:choir', 'me', 'joining'],
     ])
   })
 
@@ -76,6 +77,31 @@ describe('graphModel: groups are hubs', () => {
     const by = Object.fromEntries(g.hubs.map((h) => [h.group, h]))
     expect(by.garden).toMatchObject({ members: 5, unknown: 2 })
     expect(by.choir).toMatchObject({ members: 1, unknown: 1 })
+  })
+
+  it('#542: a contact whose group star names the group is joined by its word, and takes no dot away', () => {
+    // the log names you, Noah and one member nobody here knows; Lea says she is in it
+    const said = graphModel({ ...input, groups: [{ ...group('garden', 3, ['noah']), said: ['lea', 'noah', 'stranger'] as ContactId[] }] })
+    expect(said.memberships.map((m) => [m.node, m.by])).toEqual([['me', 'log'], ['noah', 'log'], ['lea', 'said']])
+    expect(said.hubs[0]).toMatchObject({ members: 3, unknown: 1 })
+    // the log names you alone, and Lea's last star still names the group: one member, a line by her word
+    const stale = graphModel({ ...input, groups: [{ ...group('garden', 1, []), said: ['lea'] as ContactId[] }] })
+    expect(stale.hubs[0]).toMatchObject({ members: 1, unknown: 0 })
+    expect(stale.memberships.map((m) => [m.node, m.by])).toEqual([['me', 'log'], ['lea', 'said']])
+  })
+
+  it('#543: your own line changes with the admission, the same line before and after', () => {
+    // you accepted; the log names the founder alone
+    const before = graphModel({ ...input, groups: [group('choir', 1, [], true)] })
+    expect(before.memberships).toEqual([{ key: 'g:choir|me', hub: 'g:choir', node: 'me', by: 'joining' }])
+    expect(before.hubs[0]).toMatchObject({ joining: true, members: 1 })
+    // the log names you
+    const after = graphModel({ ...input, groups: [group('choir', 2, [])] })
+    expect(after.memberships).toEqual([{ key: 'g:choir|me', hub: 'g:choir', node: 'me', by: 'log' }])
+    expect(after.hubs[0]).toMatchObject({ joining: false, members: 2 })
+    // a membership the device holds while the log does not name you yet stays a joining line
+    const unlisted = graphModel({ ...input, groups: [{ ...group('choir', 1, []), selfListed: false }] })
+    expect(unlisted.memberships[0]?.by).toBe('joining')
   })
 
   it('#539: while you are joining the log does not name you yet: nothing is taken off for you', () => {
