@@ -5,7 +5,7 @@
 import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
-import type { CommandName, ConnectionId, ContactId, DecisionId, EncounterOutcome, MessageId } from '../../port'
+import type { CommandName, ConnectionId, ContactId, DecisionId, EncounterOutcome, GroupId, MessageId } from '../../port'
 import type { LogLine, MessageLine } from './app-data'
 import type { IntentPolicy } from './journal'
 
@@ -289,6 +289,32 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       // again as a new message" (review 421 R8-2)
       return [ownMessageLine(input, when, { status: { phase: 'failed', reason: 'rejected', retry: { ok: false, reason: 'not-supported' } } })]
     },
+  },
+  // Groups (Membership Tasks on Access stage 1): the group is a log every member holds. Founding and
+  // leaving are own operations in it; an invitation goes to a contact over its relationship, and the
+  // contact's accept (its `decide`) makes this device author the admission.
+  foundGroup: {
+    policy: 'replay',
+    run: (h, i, o) => h.foundGroup({ name: str(i, 'name'), ...(typeof i.listed === 'boolean' ? { listed: i.listed } : {}) }, o),
+    outcome: (events) => {
+      const founded = ev(events, 'group.founded')[0]
+      return founded ? { groupId: founded.groupId as GroupId } : null
+    },
+  },
+  invite: {
+    policy: 'replay',
+    run: (h, i, o) => h.invite(str(i, 'groupId'), str(i, 'contactId'), o),
+    outcome: () => undefined,
+  },
+  vouch: {
+    policy: 'replay',
+    run: (h, i, o) => h.vouchFor(str(i, 'groupId'), str(i, 'member'), o),
+    outcome: () => undefined,
+  },
+  leaveGroup: {
+    policy: 'replay',
+    run: (h, i, o) => h.leaveGroup(str(i, 'groupId'), o),
+    outcome: () => undefined,
   },
   decide: {
     policy: 'replay',

@@ -313,6 +313,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
     return {
       id: g.id as GroupId,
       name: g.name,
+      membership: 'member' as const,
       role: g.role,
       knownMembers: g.knownMembers,
       myHandle: g.myHandle,

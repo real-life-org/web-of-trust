@@ -17,6 +17,7 @@ import type {
   Connectivity,
   ContactDetail,
   Conversation,
+  GroupDetail,
   IntentHandle,
   IntentView,
   InteropProbe,
@@ -81,7 +82,7 @@ const CAPABILITIES: Capabilities = {
   // report: a mail draft to the publisher (paper §6), built in the app; block in the holder state (§7)
   report: true,
   block: 'full',
-  leaveGroup: false,
+  leaveGroup: true,
   vouchThresholdAboveOne: false,
   candidacyVisibility: false,
   introduce: 'later',
@@ -100,7 +101,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
   const loadable = <T>(pick: (m: ReadModels) => T): Loadable<T> => (models ? ready(pick(models), models.revision) : LOADING)
   const top = {
     contacts: writableStore(loadable((m) => m.contacts)),
-    groups: writableStore(loadable(() => [] as never[])),
+    groups: writableStore(loadable((m) => m.groups)),
     decisions: writableStore(loadable((m) => m.decisions)),
     connections: writableStore(loadable((m) => m.connections)),
     candidacies: writableStore(loadable(() => [] as never[])),
@@ -115,6 +116,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
   const conversations = new Map<string, WritableStore<Loadable<Conversation>>>()
   const details = new Map<string, WritableStore<Loadable<ContactDetail | null>>>()
   const reportables = new Map<string, WritableStore<Loadable<readonly MessageItem[]>>>()
+  const groupDetails = new Map<string, WritableStore<Loadable<GroupDetail | null>>>()
+  const groupValue = (id: string): Loadable<GroupDetail | null> => loadable((m) => m.groupDetails.get(id) ?? null)
   const conversationValue = (key: string): Loadable<Conversation> => {
     if (!models) return LOADING
     const c = models.conversations.get(key as Conversation['key'])
@@ -127,7 +130,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     models = next
     // atomic swap (§2.1 rule 6): every cache first, notifications follow in one microtask
     top.contacts.set(loadable((m) => m.contacts))
-    top.groups.set(loadable(() => []))
+    top.groups.set(loadable((m) => m.groups))
     top.decisions.set(loadable((m) => m.decisions))
     top.connections.set(loadable((m) => m.connections))
     top.candidacies.set(loadable(() => []))
@@ -140,6 +143,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     for (const [k, s] of conversations) s.set(conversationValue(k))
     for (const [k, s] of details) s.set(detailValue(k))
     for (const [k, s] of reportables) s.set(reportableValue(k))
+    for (const [k, s] of groupDetails) s.set(groupValue(k))
   }
 
   const listeners = new Set<(e: AppEvent) => void>()
@@ -203,7 +207,11 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
       if (!s) reportables.set(id, (s = writableStore(reportableValue(id))))
       return s
     },
-    group: () => fixed<Loadable<null>>({ status: 'error', error: { kind: 'unavailable', reason: 'not-supported' } }),
+    group(id) {
+      let s = groupDetails.get(id)
+      if (!s) groupDetails.set(id, (s = writableStore(groupValue(id))))
+      return s
+    },
   }
 
   const handle = <T>(r: Result<T>): IntentHandle<T> => ({ actId: entropy.uuid() as ActId, done: Promise.resolve(r) })
@@ -263,10 +271,11 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     retry: unsupported,
     markRead: (key, upTo) => session?.markRead(key, upTo),
     loadEarlier: later,
-    foundGroup: unsupported,
-    invite: unsupported,
-    vouch: unsupported,
-    leaveGroup: unsupported,
+    // the name as the gesture: founding under the same name again finds the open record
+    foundGroup: (input) => withSession((s) => s.intent('foundGroup', 'groups', `foundGroup|${input.name}`, { name: input.name, ...(typeof input.listed === 'boolean' ? { listed: input.listed } : {}) })),
+    invite: (groupId, contactId) => withSession((s) => s.intent('invite', `g:${groupId}`, `invite|${groupId}|${contactId}`, { groupId, contactId })),
+    vouch: (groupId, member) => withSession((s) => s.intent('vouch', `g:${groupId}|${member}`, `vouch|${groupId}|${member}`, { groupId, member })),
+    leaveGroup: (groupId) => withSession((s) => s.intent('leaveGroup', `g:${groupId}`, `leaveGroup|${groupId}`, { groupId })),
     prepareReport: later,
     report: unsupported,
     block: (target) => withSession((s) => (target.kind === 'contact' ? s.intent('block', `c:${target.contactId}`, `block|${target.contactId}`, { contactId: target.contactId }) : unsupported())),

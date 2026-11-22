@@ -181,6 +181,8 @@ export function ingest(input: IngestInput): IngestOutput {
   for (const p of input.prompts) {
     if (ledgerPrompts[p.id]) continue
     ledgerPrompts[p.id] = { contactId: p.contactId ?? null, kind: p.kind, openedAt: p.openedAt }
+    // an invitation into a group gets its card in the conversation with its screens: until the card
+    // can be answered there, it is in `decisions` only
     if (p.kind === 'encounter-confirm' && p.contactId !== undefined) {
       lines.push({ kind: 'decision', id: `dec:${p.id}`, key: `c:${p.contactId}`, at: p.openedAt, decision: p.id })
     }
