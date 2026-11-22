@@ -30,7 +30,8 @@ export interface GraphInput {
     readonly knownMembers: number
     /** the log names you: not yet, as a rule, while you are joining */
     readonly selfListed: boolean
-    /** the members this device holds as contacts (empty where the details did not arrive) */
+    /** the members this device holds as contacts: by the group's log, or by the contact's group star
+     *  (empty where neither arrived) */
     readonly contacts: readonly ContactId[]
   }[]
 }

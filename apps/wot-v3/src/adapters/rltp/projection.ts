@@ -437,7 +437,9 @@ export function project(raw: ProjectionInput): ReadModels {
       introducedBy: (c.via ?? null) as ContactId | null,
       metAt: met?.metAt ?? ceremony?.closedAt ?? null,
       lastMetAt: met?.lastMetAt ?? ceremony?.closedAt ?? null,
-      sharedGroups: null,
+      // the contact's group star tested against this holder's groups (lib sharedGroups): the contact says
+      // it is in them, which member of the group it is the star does not say; nothing of a blocked contact
+      sharedGroups: c.blocked || c.sharedGroups === undefined ? null : (c.sharedGroups as readonly string[] as readonly GroupId[]),
       // the contact's star tested against the anchors this holder holds (lib sharedContacts, entry ids)
       sharedContacts: c.sharedContacts === undefined ? null : c.sharedContacts.map((id) => ({ id: id as ContactId, name: names.get(id) ?? null })),
       actions,
