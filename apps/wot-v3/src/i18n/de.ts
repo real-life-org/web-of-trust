@@ -156,6 +156,8 @@ export const de: Translations = {
     members: '{n} Mitglieder',
     oneMember: 'Nur du',
     joining: 'Deine Mitgliedschaft wird bestätigt',
+    awaiting: 'Angenommen · wartet auf {name}',
+    awaitingSomeone: 'Angenommen · wartet auf Antwort',
     left: 'Du hast diese Gruppe verlassen',
     void: 'Der Beitritt ist nicht wirksam geworden',
     notFound: 'Diese Gruppe gibt es hier nicht.',

@@ -13,6 +13,8 @@ type Invite = Extract<Decision, { kind: 'group-invite' }>
 
 /** what a group's row says under its name: the own standing where it is not plain membership, else how many are in it */
 export function groupLine(g: GroupListItem, x: Translations['groups'], f: (s: string, v: Record<string, string | number>) => string): string {
+  // accepted, the inviter has not answered: say whom the join waits for
+  if (g.membership === 'joining' && g.awaiting) return g.awaiting.name ? f(x.awaiting, { name: g.awaiting.name.split(' ')[0] ?? g.awaiting.name }) : x.awaitingSomeone
   if (g.membership === 'joining') return x.joining
   if (g.membership === 'left') return x.left
   if (g.membership === 'void') return x.void

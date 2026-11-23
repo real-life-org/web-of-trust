@@ -156,6 +156,8 @@ export const en = {
     members: '{n} members',
     oneMember: 'Only you',
     joining: 'Your membership is being confirmed',
+    awaiting: 'Accepted · waiting for {name}',
+    awaitingSomeone: 'Accepted · waiting for an answer',
     left: 'You left this group',
     void: 'Joining did not take effect',
     notFound: 'This group is not here.',

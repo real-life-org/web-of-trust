@@ -4,7 +4,7 @@
 // per HolderHost.open and drives its shutdown phases.
 
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
-import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
+import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, PendingJoinView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
 import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
@@ -292,7 +292,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
-  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; groups: GroupView[]; provenance: Record<string, Record<string, string[]>> } | null = null
+  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; groups: GroupView[]; pendingJoins: PendingJoinView[]; provenance: Record<string, Record<string, string[]>> } | null = null
   /** events announced but not yet taken over, and the ids already taken (dedupe of act results) */
   let pending: HolderEvent[] = []
   const seen = new Set<string>()
@@ -338,6 +338,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       profile: lastViews.profile,
       connections: lastViews.connections,
       groups: lastViews.groups,
+      pendingJoins: lastViews.pendingJoins,
       provenance: lastViews.provenance,
       encounters,
       displayed: (snap.kv.get(KV.displayed) as DisplayedCards | undefined) ?? {},
@@ -360,8 +361,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         (l): l is MessageLine => l.kind === 'message' && l.dir === 'out' && l.digest !== null && !statusFinal(l.status),
       )
       const a = (await gate.run((h) => h.profile())).commitSeq
-      const [rawContacts, prompts, inbox, statusViews, connections, groups] = await gate.run((h) =>
-        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect(), h.groups()]),
+      const [rawContacts, prompts, inbox, statusViews, connections, groups, pendingJoins] = await gate.run((h) =>
+        Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect(), h.groups(), h.pendingJoins()]),
       )
       // who invited whom, per group this device holds the log of (Membership RLTP-MT-3400)
       const provenance: Record<string, Record<string, string[]>> = {}
@@ -395,7 +396,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
-      lastViews = { commitSeq: a, contacts, prompts, profile, connections, groups, provenance }
+      lastViews = { commitSeq: a, contacts, prompts, profile, connections, groups, pendingJoins, provenance }
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()

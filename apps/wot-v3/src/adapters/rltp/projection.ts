@@ -2,7 +2,7 @@
 // The library's views and the app-db part come from the same fence (session.ts); this function only
 // maps. Structural sharing happens in the port's stores (writableStore).
 
-import type { ContactView, GroupView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
+import type { ContactView, GroupView, PendingJoinView, ProfileView, PromptView, SharedConnectView } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE, sharedConnect as sc } from '@real-life/trust-protocol'
 import type {
   AnsweredCard,
@@ -54,6 +54,8 @@ export interface ProjectionInput {
   readonly connections?: readonly SharedConnectView[]
   /** the holder's groups, the personal community left out by the library */
   readonly groups?: readonly GroupView[]
+  /** the invitations accepted and not answered by their inviters yet (lib pendingJoins) */
+  readonly pendingJoins?: readonly PendingJoinView[]
   /** by group id: per member anchor, the anchors of the members that invited it (the library's
    *  `groupProvenance`); a group without an entry: the library holds no log of it */
   readonly provenance?: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>
@@ -181,6 +183,7 @@ function groupsOf(input: ProjectionInput, running: Set<string>, names: ReadonlyM
       knownMembers: g.members.length,
       myHandle: self ? memberHandle(self.anchor) : '',
       openAdmissions: g.pending.length,
+      awaiting: null,
       conversation: { key, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false },
     }
     list.push(item)
@@ -204,6 +207,44 @@ function groupsOf(input: ProjectionInput, running: Set<string>, names: ReadonlyM
         leave: !member ? NO('not-supported') : running.has(`leaveGroup|g:${g.id}`) ? NO('in-flight') : OK,
         report: NO('not-supported'),
       },
+    })
+  }
+  // accepted, and the inviter has not answered: the library holds no group yet, only the invitation.
+  // It stands as a group one is joining, with its name and whom the join waits for, and nothing else
+  // one row per group. Where several members invited and all their invitations are accepted, any of
+  // them can answer: the join waits for an answer, for nobody in particular
+  const waiting = new Map<string, { name: string; inviters: Set<string | null> }>()
+  for (const j of input.pendingJoins ?? []) {
+    const w = waiting.get(j.group) ?? { name: j.name, inviters: new Set<string | null>() }
+    w.inviters.add(j.contactId ?? null)
+    waiting.set(j.group, w)
+  }
+  for (const [group, w] of waiting) {
+    if (details.has(group)) continue
+    const [only] = w.inviters
+    const inviter = w.inviters.size === 1 && only != null ? only : null
+    const j = { group, name: w.name }
+    const item: GroupListItem = {
+      id: j.group as GroupId,
+      name: j.name,
+      membership: 'joining',
+      role: 'member',
+      knownMembers: 0,
+      myHandle: '',
+      openAdmissions: 0,
+      awaiting: { contactId: inviter as ContactId | null, name: inviter !== null ? (names.get(inviter) ?? null) : null },
+      conversation: { key: `g:${j.group}`, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false },
+    }
+    list.push(item)
+    details.set(j.group, {
+      ...item,
+      visibleMembers: [],
+      anonymousMembers: 0,
+      admissions: [],
+      invitesOut: [],
+      listed: false,
+      vouchThreshold: 1,
+      actions: { invite: NO('not-supported'), leave: NO('not-supported'), report: NO('not-supported') },
     })
   }
   list.sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1))
