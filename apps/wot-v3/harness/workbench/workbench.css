@@ -139,33 +139,53 @@
 .wb-edge {
   stroke: var(--wb-primary);
   stroke-opacity: 0.8;
-  stroke-width: 2.4;
+  stroke-width: 3.6;
+  stroke-linecap: round;
 }
-.wb-edge.one {
-  stroke: var(--wb-amber);
-  stroke-opacity: 0.85;
-  stroke-dasharray: 6 4;
+/* one-sided or unproven: a lighter line, finer and dashed, with an arrow from the one who verified */
+.wb-edge.one,
+.wb-edge.via,
+.wb-edge.link {
+  stroke-width: 2.2;
+  stroke-dasharray: 6 7;
 }
 .wb-edge.via {
   stroke: var(--wb-amber);
-  stroke-opacity: 0.85;
-  stroke-dasharray: 6 4;
 }
+.wb-edge.link {
+  stroke: var(--wb-red);
+}
+/* the trust: a narrower line on its ground, which shows as its rim */
+.wb-edge.trust2,
+.wb-edge.trust1 {
+  stroke: var(--wb-green);
+  stroke-opacity: 1;
+  stroke-width: 1.6;
+}
+.wb-edge.trust1 {
+  stroke-dasharray: 6 7;
+}
+.wb-arrow.verified path {
+  fill: var(--wb-primary);
+}
+.wb-arrow.trust path {
+  fill: var(--wb-green);
+}
+/* someone else's word: dotted violet */
 .wb-edge.star {
   stroke: #c4b5fd;
-  stroke-opacity: 0.9;
   stroke-width: 2;
   stroke-dasharray: 2 5;
   stroke-linecap: round;
 }
+/* a group's membership: grey, solid by the log, dashed while joining */
 .wb-edge.member {
   stroke: var(--wb-muted);
-  stroke-opacity: 0.7;
-  stroke-width: 1.6;
-  stroke-dasharray: 6 5;
+  stroke-opacity: 0.5;
+  stroke-width: 1.4;
 }
 .wb-edge.member.joining {
-  stroke-opacity: 0.35;
+  stroke-dasharray: 6 7;
 }
 .wb-hub circle.ring {
   fill: var(--wb-bg);
@@ -191,17 +211,6 @@
 .wb-hub text.count {
   font-size: 13px;
   stroke: none;
-}
-.wb-edge.trust2 {
-  stroke: var(--wb-green);
-  stroke-opacity: 0.9;
-  stroke-width: 2.2;
-}
-.wb-edge.trust1 {
-  stroke: var(--wb-amber);
-  stroke-opacity: 0.85;
-  stroke-width: 1.8;
-  stroke-dasharray: 6 4;
 }
 .wb-cams {
   position: absolute;
@@ -268,12 +277,24 @@
   color: var(--wb-muted);
   white-space: nowrap;
 }
-.wb-legend i {
-  width: 15px;
-  height: 2px;
-  border-radius: 2px;
-  display: block;
+.wb-legend svg {
   flex: none;
+  /* not the stage's own svg: its own small size */
+  width: 26px;
+  height: 8px;
+}
+.wb-legend svg line {
+  stroke-width: 3;
+}
+.wb-legend svg line.one,
+.wb-legend svg line.via {
+  stroke-width: 2;
+}
+.wb-legend svg line.trust1,
+.wb-legend svg line.trust2,
+.wb-legend svg line.star,
+.wb-legend svg line.member {
+  stroke-width: 1.6;
 }
 .wb-dock {
   /* bottom centre of the stage, between the flanks: no berth reaches it */

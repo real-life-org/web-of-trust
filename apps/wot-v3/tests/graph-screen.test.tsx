@@ -97,6 +97,31 @@ describe('the graph tab', () => {
     expect(nav.get().stack).toEqual([{ kind: 'group', id: first.id }])
   })
 
+  it('the lines in colour at rest (Anton 22.11.): the ground by the verification, the trust on it; a tap changes no colour', async () => {
+    const { comp } = show()
+    const v = comp.port.stores.contacts.get()
+    const contacts = v.status === 'ready' ? v.value : []
+    await waitFor(() => expect(document.querySelectorAll('[data-edge^="me:"]').length).toBe(contacts.length))
+    const strokes = () => [...document.querySelectorAll('[data-edge^="me:"], [data-edge^="trust:"]')].map((l) => `${l.getAttribute('data-edge')} ${l.getAttribute('stroke')} ${l.getAttribute('stroke-dasharray') ?? 'solid'}`)
+    for (const c of contacts) {
+      const ground = document.querySelector(`[data-edge="me:${c.id}"]`)!
+      const oneSided = c.verification !== 'mutual'
+      expect(ground.getAttribute('stroke')).toBe('var(--primary)')
+      expect(ground.hasAttribute('stroke-dasharray')).toBe(oneSided)
+      const trust = document.querySelector(`[data-edge="trust:${c.id}"]`)
+      expect(trust !== null).toBe(c.trust.given || c.trust.received)
+      if (trust) {
+        expect(trust.getAttribute('stroke')).toBe('var(--success)')
+        expect(trust.hasAttribute('stroke-dasharray')).toBe(!(c.trust.given && c.trust.received))
+      }
+    }
+    const before = strokes()
+    fireEvent.pointerDown(document.querySelector('[data-node="priya"]') as HTMLElement, { clientX: 10, clientY: 10 })
+    fireEvent.pointerUp(window)
+    await screen.findByRole('dialog')
+    expect(strokes()).toEqual(before)
+  })
+
   it('no contacts: you alone, and the way in is the encounter', async () => {
     const empty = SCENARIOS.empty
     if (!empty) throw new Error('scenario empty')

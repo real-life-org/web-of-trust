@@ -3,7 +3,7 @@
 // verification and trust; edges between two contacts where a contact's star names the other (Trust §5).
 // Nobody appears whom the device does not hold.
 import { describe, expect, it } from 'vitest'
-import { graphModel, type GraphInput } from '../src/hooks/graph-model'
+import { graphModel, lookOf, type GraphInput } from '../src/hooks/graph-model'
 import type { ContactId, GroupId, Verification } from '../src/port'
 
 const c = (id: string, verification: Verification, given = false, received = false, shared: string[] | null = null, blocked = false) => ({
@@ -111,5 +111,29 @@ describe('graphModel: groups are hubs', () => {
     // the same log once it names you: you and the founder, still one dot
     const confirmed = graphModel({ ...input, groups: [group('choir', 2, [])] }).hubs[0]
     expect(confirmed).toMatchObject({ joining: false, members: 2, unknown: 1 })
+  })
+})
+
+describe('lookOf: how a line between you and a contact is drawn (Anton 22.11.)', () => {
+  it('the ground by the verification: solid where it stands, dashed with an arrow from the one who verified', () => {
+    expect(lookOf({ verification: 'mutual', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: false, arrow: null })
+    // #546: met is an encounter nobody verified yet: not the solid line of a mutual verification
+    expect(lookOf({ verification: 'met', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: null })
+    expect(lookOf({ verification: 'outgoing', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: 'out' })
+    expect(lookOf({ verification: 'incoming', trust: 'none' }).ground).toEqual({ kind: 'verified', dashed: true, arrow: 'in' })
+  })
+
+  it('nothing proven is dashed in its badge\'s colour: an introduction, a contact over a link', () => {
+    expect(lookOf({ verification: 'introduced', trust: 'none' }).ground).toEqual({ kind: 'introduced', dashed: true, arrow: null })
+    expect(lookOf({ verification: 'link', trust: 'none' }).ground).toEqual({ kind: 'link', dashed: true, arrow: null })
+  })
+
+  it('the trust is a line of its own on the ground: solid both ways, dashed with an arrow from the one who gave it', () => {
+    expect(lookOf({ verification: 'mutual', trust: 'none' }).trust).toBeNull()
+    expect(lookOf({ verification: 'mutual', trust: 'both' }).trust).toEqual({ dashed: false, arrow: null })
+    expect(lookOf({ verification: 'mutual', trust: 'given' }).trust).toEqual({ dashed: true, arrow: 'out' })
+    expect(lookOf({ verification: 'mutual', trust: 'received' }).trust).toEqual({ dashed: true, arrow: 'in' })
+    // trust toward an introduced contact keeps its ground: green on yellow, not green on blue
+    expect(lookOf({ verification: 'introduced', trust: 'both' })).toEqual({ ground: { kind: 'introduced', dashed: true, arrow: null }, trust: { dashed: false, arrow: null } })
   })
 })

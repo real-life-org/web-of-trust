@@ -9,7 +9,7 @@ import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY
 import { capNote, closeDevice, collapseDevice, corridor, EMPTY, focusDevice, FULL_W, MAX_CAP, moveDevice, openDevice, screenH, setCap, type Layout, type Stage } from './berths'
 import { avatarsSeenBy, useAvatars, type WorkbenchAvatar } from './avatars'
 import { startFlight, type Flight } from './flight'
-import { sceneFor, type Edge, type Scene, type SceneGroup } from './graph'
+import { sceneFor, sceneLinks, type Edge, type Scene, type SceneGroup } from './graph'
 import type { WireEntry, WorkbenchPerson, WorkbenchWorld } from './world'
 
 /** the phone's own viewport: a small phone, so the app draws large on the stage and its code screen
@@ -28,44 +28,25 @@ interface Node extends SimulationNodeDatum {
 interface Link extends SimulationLinkDatum<Node> {
   key: string
   cls: string
-  arrow?: boolean
+  arrow?: 'verified' | 'trust'
   /** false: drawn, but no force (a star line) */
   layout?: boolean
   /** a membership: long and soft, so the hub rests outside the people it joins */
   member?: boolean
 }
 
+/** The lines, the same as in the app's graph (src/hooks/graph-model.ts, lookOf): the stroke says how
+ *  sure (solid stands, dashed is one-sided or open, dotted is someone else's word), the colour says what. */
 const EDGE_LEGEND = [
-  { cls: 'wb-edge', text: 'a real meeting happened', color: '#60a5fa' },
-  { cls: 'wb-edge trust2', text: 'identity disclosed, both ways', color: 'oklch(70% 0.15 145)' },
-  { cls: 'wb-edge trust1', text: 'one way, introduced, or waiting', color: '#fbbf24' },
-  { cls: 'wb-edge star', text: 'known through a contact’s star, or in a group by it', color: '#c4b5fd' },
-  { cls: 'wb-edge member', text: 'member of a group', color: '#94a3b8' },
+  { cls: 'wb-edge', text: 'verified, both ways' },
+  { cls: 'wb-edge one', text: 'verified one way (arrow), or met and not verified yet' },
+  { cls: 'wb-edge via', text: 'introduced, nothing proven' },
+  { cls: 'wb-edge trust2', text: 'trust, both ways (on its ground)' },
+  { cls: 'wb-edge trust1', text: 'trust, one way' },
+  { cls: 'wb-edge star', text: 'as a contact’s star says' },
+  { cls: 'wb-edge member', text: 'member of a group' },
+  { cls: 'wb-edge member joining', text: 'joining a group' },
 ]
-
-/** the links a scene draws: the meeting line, and the trust line on top of it */
-function linksOf(scene: Scene): Link[] {
-  const out: Link[] = []
-  for (const e of scene.edges) {
-    const oneSided = e.verification !== 'mutual' && e.verification !== 'met'
-    if (e.verification === 'introduced') {
-      out.push({ key: 'v:' + e.key, source: e.a, target: e.b, cls: 'wb-edge via' })
-      continue
-    }
-    out.push({ key: 'e:' + e.key, source: e.a, target: e.b, cls: oneSided ? 'wb-edge one' : 'wb-edge' })
-    if (e.trust.length === 2) out.push({ key: 't:' + e.key, source: e.a, target: e.b, cls: 'wb-edge trust2' })
-    else if (e.trust.length === 1) {
-      const from = e.trust[0] as string
-      out.push({ key: 't:' + e.key, source: from, target: from === e.a ? e.b : e.a, cls: 'wb-edge trust1', arrow: true })
-    }
-  }
-  // what the camera knows only through a contact's star: drawn, never pulling the layout
-  for (const e of scene.stars) out.push({ key: 's:' + e.key, source: e.a, target: e.b, cls: 'wb-edge star', layout: false })
-  for (const g of scene.groups) {
-    for (const m of g.members) out.push({ key: `m:${g.id}|${m.id}`, source: m.id, target: 'g:' + g.id, cls: m.by === 'said' ? 'wb-edge star said' : 'wb-edge member' + (m.by === 'joining' ? ' joining' : ''), member: true })
-  }
-  return out
-}
 
 /** node radii on the stage: large enough to read from the back of a room */
 const NODE_R = 17
@@ -150,7 +131,7 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
       nodes.push(node)
     }
     const byId = new Map(nodes.map((n) => [n.id, n]))
-    const links = linksOf(scene).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
+    const links = sceneLinks(scene).map((l): Link => ({ ...l })).filter((l) => l.layout !== false && byId.has(l.source as string) && byId.has(l.target as string))
     const sim = forceSimulation<Node>(nodes)
       .force('link', forceLink<Node, Link>(links).id((d) => d.id).distance((l) => (l.member ? 190 : 150)).strength((l) => (l.member ? 0.12 : 0.6)))
       .force('charge', forceManyBody().strength(-420))
@@ -173,19 +154,21 @@ function Graph({ scene, stage, centre, open, avatars, onOpen }: { scene: Scene; 
   const nodes = placed
   const byId = new Map(nodes.map((n) => [n.id, n]))
   const groupOf = new Map(scene.groups.map((g) => ['g:' + g.id, g]))
-  const links = linksOf(scene)
+  const links = sceneLinks(scene).map((l): Link => ({ ...l }))
   const at = (ref: string | number | Node) => (typeof ref === 'object' ? ref : byId.get(String(ref)))
   return (
     <svg role="group" aria-label="the trust graph">
       <defs>
-        <marker id="wb-arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24" />
-        </marker>
+        {(['verified', 'trust'] as const).map((k) => (
+          <marker key={k} id={`wb-arrow-${k}`} className={`wb-arrow ${k}`} viewBox="0 0 10 10" refX="34" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" />
+          </marker>
+        ))}
       </defs>
       {links.map((l) => {
         const a = at(l.source), b = at(l.target)
         if (!a || !b) return null
-        return <line key={l.key} className={l.cls} data-edge={l.key} x1={a.x} y1={a.y} x2={b.x} y2={b.y} {...(l.arrow ? { markerEnd: 'url(#wb-arrow)' } : {})} />
+        return <line key={l.key} className={l.cls} data-edge={l.key} x1={a.x} y1={a.y} x2={b.x} y2={b.y} {...(l.arrow ? { markerEnd: `url(#wb-arrow-${l.arrow})` } : {})} />
       })}
       {nodes.map((n) => {
         const g = groupOf.get(n.id)
@@ -471,7 +454,10 @@ export function WorkbenchPage({ world, query }: { world: WorkbenchWorld; query: 
         <div className="wb-legend" aria-hidden="true">
           {EDGE_LEGEND.map((l) => (
             <span key={l.cls}>
-              <i style={{ background: l.color }} />
+              <svg width="26" height="8" aria-hidden="true">
+                <line className={l.cls.includes('trust') ? 'wb-edge' : l.cls} x1="1" y1="4" x2="25" y2="4" />
+                {l.cls.includes('trust') ? <line className={l.cls} x1="1" y1="4" x2="25" y2="4" /> : null}
+              </svg>
               {l.text}
             </span>
           ))}
