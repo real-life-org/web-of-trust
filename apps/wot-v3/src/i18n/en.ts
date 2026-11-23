@@ -78,7 +78,7 @@ export const en = {
     outgoing: 'outgoing',
     incoming: 'incoming',
     introduced: 'introduced',
-    met: 'met',
+    met: 'unconfirmed',
     link: 'link only',
   },
   trust: {

@@ -16,7 +16,8 @@ export const VERIFICATION_GLYPH: Record<Verification, string> = {
   outgoing: '→',
   incoming: '←',
   introduced: '◇',
-  met: '⇄',
+  // an encounter neither side confirmed yet: an open circle, never the sign of a mutual verification
+  met: '○',
   link: '⚠',
 }
 
