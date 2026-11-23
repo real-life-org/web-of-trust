@@ -11,6 +11,10 @@ describe('the verification tag', () => {
   it('met: "unbestätigt" / "unconfirmed", with a sign of its own', () => {
     const { unmount } = render(<LanguageProvider lang="de"><VerificationBadge verification="met" /></LanguageProvider>)
     expect(screen.getByText('unbestätigt')).toBeInTheDocument()
+    // the tag itself draws the open circle, and not the sign of a mutual verification
+    const tag = screen.getByTitle('unbestätigt')
+    expect(tag.textContent).toContain('○')
+    expect(tag.textContent).not.toContain('⇄')
     unmount()
     render(<LanguageProvider lang="en"><VerificationBadge verification="met" /></LanguageProvider>)
     expect(screen.getByText('unconfirmed')).toBeInTheDocument()
