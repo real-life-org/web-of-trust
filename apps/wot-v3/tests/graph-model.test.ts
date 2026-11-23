@@ -33,6 +33,13 @@ describe('graphModel', () => {
     expect(size.noah).toBeLessThan(size.me!)
   })
 
+  it('met, and neither side verified yet, is as small as a one-sided verification, whatever the trust', () => {
+    const size = (verification: Verification, given = false, received = false) => graphModel({ me: input.me, contacts: [c('x', verification, given, received)] }).nodes[1]!.size
+    expect(size('met')).toBe(size('outgoing'))
+    expect(size('met', true, true)).toBe(size('outgoing'))
+    expect(size('met')).toBeLessThan(size('mutual'))
+  })
+
   it('an edge from you to each contact, typed by verification, with the trust both ways', () => {
     expect(g.mine.map((e) => [e.contact, e.verification, e.trust])).toEqual([
       ['noah', 'mutual', 'both'],
