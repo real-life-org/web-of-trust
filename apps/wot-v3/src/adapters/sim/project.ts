@@ -318,6 +318,7 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       knownMembers: g.knownMembers,
       myHandle: g.myHandle,
       openAdmissions: g.openAdmissions,
+      awaiting: null,
       conversation: summaries.get(key) ?? summaryOf(state, key, [], decisionById),
     }
   })

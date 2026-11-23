@@ -9,7 +9,7 @@ import { LanguageProvider } from '../src/i18n'
 import { en } from '../src/i18n/en'
 import { composeScenario } from '../harness/boot'
 import { iiw } from '../harness/scenarios'
-import { GroupListScreen } from '../src/screens/groups/GroupListScreen'
+import { GroupListScreen, groupLine } from '../src/screens/groups/GroupListScreen'
 import { GroupDetailView, provenanceLine } from '../src/screens/groups/GroupDetailScreen'
 import { GroupFoundScreen } from '../src/screens/groups/GroupFoundScreen'
 import { GroupInviteScreen } from '../src/screens/groups/GroupInviteScreen'
@@ -29,7 +29,7 @@ const inviterBea = { member: BEA.member, handle: BEA.handle, self: false, contac
 const CY = member({ member: 'did:key:cy-000003', invitedBy: [inviterBea, { member: 'did:key:gone-0004' as MemberRef, handle: 'e-0004', self: false, contactId: null, name: null }] })
 
 const group = (over: Partial<GroupDetail> = {}): GroupDetail => ({
-  id: 'g1' as GroupId, name: 'Garten', membership: 'member', role: 'founder', knownMembers: 3, myHandle: AL.handle, openAdmissions: 0,
+  id: 'g1' as GroupId, name: 'Garten', membership: 'member', role: 'founder', knownMembers: 3, myHandle: AL.handle, openAdmissions: 0, awaiting: null,
   conversation: { key: 'g:g1', preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false },
   visibleMembers: [AL, BEA, CY], anonymousMembers: 0, admissions: [], invitesOut: [], listed: true, vouchThreshold: 1,
   actions: { invite: { ok: true }, leave: { ok: true }, report: { ok: false, reason: 'not-supported' } },
@@ -50,6 +50,16 @@ function mountBoth(ui: ReactNode, over: { trust?: Partial<AppPort['trust']>; gro
 
 const mount = (...a: Parameters<typeof mountBoth>) => mountBoth(...a).nav
 const mountView = (...a: Parameters<typeof mountBoth>) => mountBoth(...a).view
+
+describe('a group one accepted into, before the inviter answered', () => {
+  it('says whom the join waits for, by first name; without a known inviter it waits for an answer', () => {
+    const waiting = group({ membership: 'joining', knownMembers: 0, visibleMembers: [], awaiting: { contactId: 'priya' as ContactId, name: 'Priya Raman' } })
+    expect(groupLine(waiting, en.groups, f)).toBe('Accepted · waiting for Priya')
+    expect(groupLine({ ...waiting, awaiting: { contactId: null, name: null } }, en.groups, f)).toBe('Accepted · waiting for an answer')
+    // welcomed, the log has not confirmed yet: the inviter answered, nothing is awaited
+    expect(groupLine({ ...waiting, awaiting: null }, en.groups, f)).toBe(en.groups.joining)
+  })
+})
 
 describe('navigation and frames', () => {
   it('a group\'s routes belong to the groups, every other route to the contacts', () => {

@@ -99,7 +99,7 @@ describe('groups over the real adapter (loopback)', () => {
 })
 
 describe('members who know each other apart from the invitation (Anton 22.11.)', () => {
-  it('B and C, both invited by A, meet: each learns from the other\'s group star that they share the group', async () => {
+  it('B and C, both invited by A, meet: each learns from the other\'s group star that they share the group', { timeout: 60_000 }, async () => {
     const carrier = memoryCarrier()
     const clock = virtualClock(T0, 'UTC')
     const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 61 })
@@ -159,11 +159,24 @@ describe('members who know each other apart from the invitation (Anton 22.11.)',
     const aAtB = value(B.port.stores.contacts).find((c) => c.name === 'Al')!
     expect(g.memberships.map((m) => [m.node, m.by]).sort()).toEqual([[aAtB.id, 'log'], [cAtB.id, 'said'], ['me', 'log']].sort())
     expect(g.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 1 }])
+
+    // C trusts B: C's sealed group star proves to B which member C is (lib 0.20.0). B's member list
+    // names C, the line is a membership by the log, and no dot is left. C learned nothing of B
+    expect((await C.port.trust.giveTrust(bAtC.id).done).ok).toBe(true)
+    clock.advance(60_000)
+    await settle()
+    const namedAtB = (value(B.port.stores.group(groupId)) as GroupDetail).visibleMembers.filter((m) => !m.self).map((m) => m.contactId).sort()
+    expect(namedAtB).toEqual([aAtB.id, cAtB.id].sort())
+    const proven = graphModel(graphInputOf(B.port)!)
+    expect(proven.memberships.map((m) => [m.node, m.by]).sort()).toEqual([[aAtB.id, 'log'], [cAtB.id, 'log'], ['me', 'log']].sort())
+    expect(proven.hubs).toMatchObject([{ group: groupId, members: 3, unknown: 0 }])
+    const namedAtC = (value(C.port.stores.group(groupId)) as GroupDetail).visibleMembers.filter((m) => !m.self && m.contactId !== null)
+    expect(namedAtC).toHaveLength(1)
   })
 })
 
 describe('the own line to a group and the admission (#543)', () => {
-  it('after accepting, while the inviter is away: the device holds no group yet and draws no line; once the log names B: a membership', async () => {
+  it('after accepting, while the inviter is away: the group stands as one B is joining, waiting for A, with a joining line; once the log names B: a membership', async () => {
     const w = await met()
     const founded = await w.A.port.trust.foundGroup({ name: 'Garten' }).done
     if (!founded.ok) throw new Error('found')
@@ -174,13 +187,18 @@ describe('the own line to a group and the admission (#543)', () => {
     // the card in the conversation says what B did, whatever became of it
     const card = () => value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.find((i): i is DecisionCardItem => i.kind === 'decision' && i.decision === inv.id)
 
-    // the inviter is away: B's consent leaves, nobody answers it. The library holds a group for B only
-    // from the inviter's welcome on, so there is nothing to draw: never a membership ahead of the log
+    // the inviter is away: B's consent leaves, nobody answers it. The library holds no group yet, only
+    // the accepted invitation (pendingJoins): the group stands by its name, as one B is joining and
+    // that waits for A; no member is known, and the line is never a membership ahead of the log
     w.carrier.setOnline('A', false)
     expect((await w.B.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
     await w.settle()
-    expect(value(w.B.port.stores.groups)).toEqual([])
-    expect(graphModel(graphInputOf(w.B.port)!)).toMatchObject({ hubs: [], memberships: [] })
+    expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, name: 'Garten', membership: 'joining', knownMembers: 0, awaiting: { contactId: w.bId, name: 'Al' } }])
+    const pending = value(w.B.port.stores.group(groupId)) as GroupDetail
+    expect(pending).toMatchObject({ visibleMembers: [], actions: { invite: { ok: false }, leave: { ok: false } } })
+    const before = graphModel(graphInputOf(w.B.port)!)
+    expect(before.hubs).toMatchObject([{ group: groupId, joining: true, members: 0, unknown: 0 }])
+    expect(before.memberships).toEqual([{ key: `g:${groupId}|me`, hub: `g:${groupId}`, node: 'me', by: 'joining' }])
     expect(card()?.resolution).toMatchObject({ choice: 'accept', basis: 'own-act' })
 
     // the inviter is back and admits B: the log names B, the line is a membership
@@ -189,7 +207,7 @@ describe('the own line to a group and the admission (#543)', () => {
       w.clock.advance(60_000)
       await w.settle()
     }
-    expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 2 }])
+    expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 2, awaiting: null }])
     const after = graphModel(graphInputOf(w.B.port)!)
     expect(after.memberships.filter((m) => m.node === 'me')).toMatchObject([{ hub: `g:${groupId}`, by: 'log' }])
     expect(after.hubs).toMatchObject([{ joining: false, members: 2 }])
