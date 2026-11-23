@@ -211,8 +211,19 @@ function groupsOf(input: ProjectionInput, running: Set<string>, names: ReadonlyM
   }
   // accepted, and the inviter has not answered: the library holds no group yet, only the invitation.
   // It stands as a group one is joining, with its name and whom the join waits for, and nothing else
+  // one row per group. Where several members invited and all their invitations are accepted, any of
+  // them can answer: the join waits for an answer, for nobody in particular
+  const waiting = new Map<string, { name: string; inviters: Set<string | null> }>()
   for (const j of input.pendingJoins ?? []) {
-    if (details.has(j.group)) continue
+    const w = waiting.get(j.group) ?? { name: j.name, inviters: new Set<string | null>() }
+    w.inviters.add(j.contactId ?? null)
+    waiting.set(j.group, w)
+  }
+  for (const [group, w] of waiting) {
+    if (details.has(group)) continue
+    const [only] = w.inviters
+    const inviter = w.inviters.size === 1 && only != null ? only : null
+    const j = { group, name: w.name }
     const item: GroupListItem = {
       id: j.group as GroupId,
       name: j.name,
@@ -221,7 +232,7 @@ function groupsOf(input: ProjectionInput, running: Set<string>, names: ReadonlyM
       knownMembers: 0,
       myHandle: '',
       openAdmissions: 0,
-      awaiting: { contactId: (j.contactId ?? null) as ContactId | null, name: j.contactId !== undefined ? (names.get(j.contactId) ?? null) : null },
+      awaiting: { contactId: inviter as ContactId | null, name: inviter !== null ? (names.get(inviter) ?? null) : null },
       conversation: { key: `g:${j.group}`, preview: null, unread: 0, openDecisions: 0, lastActivityAt: null, muted: false },
     }
     list.push(item)

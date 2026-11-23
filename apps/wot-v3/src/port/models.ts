@@ -330,7 +330,9 @@ export interface GroupListItem {
   readonly openAdmissions: number
   /** the join waits for its inviter's answer: you accepted the invitation and this contact has not
    *  admitted you yet (it may be away). The device holds nothing of the group but its name, so no
-   *  member is known. null in every other standing, and once the inviter answered */
+   *  member is known. `contactId` and `name` are null where the inviter is not known as a contact, or
+   *  where several members invited and any of them can answer. null in every other standing, and once
+   *  an inviter answered */
   readonly awaiting: { readonly contactId: ContactId | null; readonly name: string | null } | null
   readonly conversation: ConversationSummary
 }

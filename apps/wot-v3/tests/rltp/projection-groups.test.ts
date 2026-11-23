@@ -59,6 +59,29 @@ describe('rltp projection: groups', () => {
     expect(asBea.groups[0]?.role).toBe('member')
   })
 
+  it('an invitation accepted and not answered stands as a group one is joining, waiting for its inviter', () => {
+    const join = (contactId?: string) => ({ commitSeq: '9', group: 'g2', name: 'Chor', ...(contactId ? { contactId } : {}), validUntil: T + 1 }) as never
+    const m = project(input({ contacts: [contact('bea', 'Bea'), contact('noah', 'Noah')], pendingJoins: [join('bea')] }))
+    expect(m.groups.find((g) => g.id === 'g2')).toMatchObject({ name: 'Chor', membership: 'joining', knownMembers: 0, awaiting: { contactId: 'bea', name: 'Bea' } })
+    expect(m.groupDetails.get('g2')).toMatchObject({ visibleMembers: [], actions: { invite: { ok: false }, leave: { ok: false } } })
+    // an inviter that is no contact: waits for an answer, nobody is named
+    expect(project(input({ pendingJoins: [join()] })).groups.find((g) => g.id === 'g2')?.awaiting).toEqual({ contactId: null, name: null })
+  })
+
+  it('#550: two members invited into the same group and both invitations are accepted: one row, waiting for nobody in particular, whatever their order', () => {
+    const join = (contactId: string) => ({ commitSeq: '9', group: 'g2', name: 'Chor', contactId, validUntil: T + 1 }) as never
+    const contacts = [contact('bea', 'Bea'), contact('noah', 'Noah')]
+    for (const pendingJoins of [[join('bea'), join('noah')], [join('noah'), join('bea')]]) {
+      const rows = project(input({ contacts, pendingJoins })).groups.filter((g) => g.id === 'g2')
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.awaiting).toEqual({ contactId: null, name: null })
+    }
+    // the same inviter twice is still that inviter
+    expect(project(input({ contacts, pendingJoins: [join('bea'), join('bea')] })).groups.find((g) => g.id === 'g2')?.awaiting).toEqual({ contactId: 'bea', name: 'Bea' })
+    // once the welcome made the group, the group stands and nothing is awaited
+    expect(project(input({ contacts, groups: [group({ id: 'g2', phase: 'joining' })], pendingJoins: [join('bea')] })).groups.filter((g) => g.id === 'g2')).toMatchObject([{ membership: 'joining', awaiting: null }])
+  })
+
   it('a group left or still joining: listed with its standing, nothing to do in it, not counted', () => {
     for (const phase of ['joining', 'left', 'void'] as const) {
       const m = project(input({ groups: [group({ phase })] }))
