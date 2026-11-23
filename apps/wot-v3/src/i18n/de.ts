@@ -78,7 +78,7 @@ export const de: Translations = {
     outgoing: 'ausgehend',
     incoming: 'eingehend',
     introduced: 'vorgestellt',
-    met: 'begegnet',
+    met: 'unbestätigt',
     link: 'nur Link',
   },
   trust: {
