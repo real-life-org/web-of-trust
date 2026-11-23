@@ -130,7 +130,8 @@ const ME_SIZE = 28
 const HUB_SIZE = 19
 
 function sizeOf(verification: Verification, trust: TrustBetween): number {
-  if (verification !== 'mutual' && verification !== 'met') return 12
+  // small until both verified: met is an encounter neither side verified yet, as open as a one-sided one
+  if (verification !== 'mutual') return 12
   if (trust === 'both') return 24
   if (trust !== 'none') return 21
   return 17
