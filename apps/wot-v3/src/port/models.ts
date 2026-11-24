@@ -209,6 +209,8 @@ export interface DecisionCardItem {
   readonly decision: DecisionId
   /** what was asked, where the device still knows it: the result line words an answer by it */
   readonly of?: Decision['kind']
+  /** for a group invitation: the group it invited into, where the device still knows its name */
+  readonly groupName?: string
   readonly at: number
   /** open: current decision from `decisions`; resolved: result line */
   readonly resolution: DecisionResolution | null

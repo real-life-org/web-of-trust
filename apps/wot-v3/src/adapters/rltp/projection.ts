@@ -407,7 +407,7 @@ export function project(raw: ProjectionInput): ReadModels {
       } else if (l.kind === 'decision') {
         const open = decisionById.has(l.decision)
         if (open) openDecisions++
-        items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, ...(l.of ? { of: l.of } : {}), at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
+        items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, ...(l.of ? { of: l.of } : {}), ...(l.groupName ? { groupName: l.groupName } : {}), at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
       } else {
         items.push(messageItem(l, byMid, names))
         if (l.dir === 'in' && (!mark || compareOrder(orderKey(l), mark) > 0)) unread++
