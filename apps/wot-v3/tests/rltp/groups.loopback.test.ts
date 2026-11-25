@@ -74,8 +74,8 @@ describe('groups over the real adapter (loopback)', () => {
     // the card stays in the conversation as answered, by this device
     const after = value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.filter((i): i is DecisionCardItem => i.kind === 'decision')
     expect(after.find((c) => c.decision === open[0]!.id)?.resolution).toMatchObject({ choice: 'accept', by: 'this-device', basis: 'own-act' })
-    // and says what was answered: the line under it reads "You accepted", not "You confirmed"
-    expect(after.find((c) => c.decision === open[0]!.id)?.of).toBe('group-invite')
+    // and says what was answered, and into which group: kept on the line past the answer
+    expect(after.find((c) => c.decision === open[0]!.id)).toMatchObject({ of: 'group-invite', groupName: 'Garten' })
     expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, name: 'Garten', membership: 'member', knownMembers: 2 }])
     const atA = value(w.A.port.stores.group(groupId)) as GroupDetail
     const atB = value(w.B.port.stores.group(groupId)) as GroupDetail
@@ -95,6 +95,28 @@ describe('groups over the real adapter (loopback)', () => {
     expect(value(w.B.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'left' }])
     expect((value(w.B.port.stores.group(groupId)) as GroupDetail).actions).toMatchObject({ invite: { ok: false }, leave: { ok: false } })
     expect(value(w.A.port.stores.groups)).toMatchObject([{ id: groupId, membership: 'member', knownMembers: 1 }])
+  })
+})
+
+describe('the answered invitation and a block (#552)', () => {
+  it('blocking the inviter hides the group\'s name on the answered card, the inviter\'s text; unblocking shows it again', async () => {
+    const w = await met()
+    const founded = await w.A.port.trust.foundGroup({ name: 'Garten' }).done
+    if (!founded.ok) throw new Error('found')
+    expect((await w.A.port.trust.invite(founded.value.groupId, w.aId).done).ok).toBe(true)
+    await w.settle()
+    const inv = value(w.B.port.stores.decisions).find((d) => d.kind === 'group-invite')!
+    expect((await w.B.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
+    await w.settle()
+    const card = () => value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.find((i): i is DecisionCardItem => i.kind === 'decision' && i.decision === inv.id)
+    expect(card()).toMatchObject({ of: 'group-invite', groupName: 'Garten', resolution: { choice: 'accept' } })
+    expect((await w.B.port.trust.block({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
+    await w.settle()
+    expect(card()?.groupName).toBeUndefined()
+    expect(card()).toMatchObject({ of: 'group-invite', resolution: { choice: 'accept' } })
+    expect((await w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
+    await w.settle()
+    expect(card()?.groupName).toBe('Garten')
   })
 })
 

@@ -68,6 +68,8 @@ export type LogLine =
       readonly decision: string
       /** the prompt's kind, kept past its answer */
       readonly of?: 'encounter-confirm' | 'group-invite'
+      /** for a group invitation: the group's name as the invitation states it, kept past the answer */
+      readonly groupName?: string
       /** written with the own deciding intent (§3.4 step 4): survives the journal's clean-up */
       readonly resolution?: DecisionResolution
     }
