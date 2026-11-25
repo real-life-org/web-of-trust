@@ -98,6 +98,28 @@ describe('groups over the real adapter (loopback)', () => {
   })
 })
 
+describe('the answered invitation and a block (#552)', () => {
+  it('blocking the inviter hides the group\'s name on the answered card, the inviter\'s text; unblocking shows it again', async () => {
+    const w = await met()
+    const founded = await w.A.port.trust.foundGroup({ name: 'Garten' }).done
+    if (!founded.ok) throw new Error('found')
+    expect((await w.A.port.trust.invite(founded.value.groupId, w.aId).done).ok).toBe(true)
+    await w.settle()
+    const inv = value(w.B.port.stores.decisions).find((d) => d.kind === 'group-invite')!
+    expect((await w.B.port.trust.decide(inv.id, 'accept').done).ok).toBe(true)
+    await w.settle()
+    const card = () => value(w.B.port.stores.conversation(`c:${w.bId}`) as ReadStore<Loadable<Conversation>>).items.find((i): i is DecisionCardItem => i.kind === 'decision' && i.decision === inv.id)
+    expect(card()).toMatchObject({ of: 'group-invite', groupName: 'Garten', resolution: { choice: 'accept' } })
+    expect((await w.B.port.trust.block({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
+    await w.settle()
+    expect(card()?.groupName).toBeUndefined()
+    expect(card()).toMatchObject({ of: 'group-invite', resolution: { choice: 'accept' } })
+    expect((await w.B.port.trust.unblock({ kind: 'contact', contactId: w.bId }).done).ok).toBe(true)
+    await w.settle()
+    expect(card()?.groupName).toBe('Garten')
+  })
+})
+
 describe('members who know each other apart from the invitation (Anton 22.11.)', () => {
   it('B and C, both invited by A, meet: each learns from the other\'s group star that they share the group', { timeout: 60_000 }, async () => {
     const carrier = memoryCarrier()
