@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { useBackInFlow, useLogin, useProfile, type LoginEvent, type LoginState } from '../../hooks'
 import { useI18n } from '../../i18n'
-import { AlertIcon, Callout, CheckIcon, CheckRow, FlowPage, Hero, KeyIcon, PrimaryAction, QuietAction, Working } from '../../ui/components'
+import { AlertIcon, Callout, CheckIcon, CheckRow, FlowPage, Hero, KeyIcon, OutlineAction, PrimaryAction, QuietAction, Working } from '../../ui/components'
 
 export function LoginScreen({ raw, onExit }: { raw: string; onExit: () => void }) {
   const profile = useProfile()
@@ -68,7 +68,15 @@ export function LoginView({ state: s, send, ownName }: { state: LoginState; send
     case 'done': {
       const host = s.target.host
       const text = s.returned === 'opened' ? l.doneOpened : s.returned === 'failed' ? l.doneOpenFailed : l.doneOther
-      return page(<Hero icon={<CheckIcon />} tone="success" title={l.doneTitle} body={f(text, { host })} />, <PrimaryAction label={l.done} onClick={() => send({ type: 'done' })} />)
+      // same-device: the way back stays on the page as a tap of the person's own (a blocked tab, a
+      // browser that did not come to the front)
+      const footer = (
+        <>
+          {s.url ? <OutlineAction label={f(l.backTo, { host })} onClick={() => send({ type: 'reopen' })} /> : null}
+          <PrimaryAction label={l.done} onClick={() => send({ type: 'done' })} />
+        </>
+      )
+      return page(<Hero icon={<CheckIcon />} tone="success" title={l.doneTitle} body={f(text, { host })} />, footer)
     }
     case 'exit':
       return null

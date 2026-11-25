@@ -148,16 +148,19 @@ export const webMail: MailPort = {
   },
 }
 
-/** A new tab for an https or http address (a link click, so the browser's own rules apply; the native
- *  shell hands such a navigation to the system's browser). Anything else is not opened. */
+/** A new tab for an https or http address. `window.open` tells whether the browser opened it: a
+ *  blocked tab (a popup blocker, no user gesture) is 'unavailable', never reported as opened. The new
+ *  tab gets no handle back to this page. Anything else is not opened. */
 export const webBrowser: BrowserPort = {
   async open(url) {
-    if (typeof document === 'undefined' || !/^https?:\/\//.test(url)) return 'unavailable'
-    const a = document.createElement('a')
-    a.href = url
-    a.target = '_blank'
-    a.rel = 'noopener noreferrer'
-    a.click()
+    if (typeof window === 'undefined' || typeof window.open !== 'function' || !/^https?:\/\//.test(url)) return 'unavailable'
+    const w = window.open(url, '_blank')
+    if (!w) return 'unavailable'
+    try {
+      w.opener = null
+    } catch {
+      // a browser that does not let the opener be cleared: the tab is open all the same
+    }
     return 'opened'
   },
 }

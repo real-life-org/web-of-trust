@@ -18,9 +18,10 @@ export type LoginState =
   | { readonly name: 'review'; readonly run: number; readonly raw: string; readonly target: LoginTarget }
   | { readonly name: 'sending'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly withName: boolean }
   | { readonly name: 'failed'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly withName: boolean; readonly code: LoginFailure }
-  | { readonly name: 'returning'; readonly run: number; readonly target: LoginTarget }
-  /** `returned`: for a same-device request, whether the browser could be opened */
-  | { readonly name: 'done'; readonly run: number; readonly target: LoginTarget; readonly returned: 'none' | 'opened' | 'failed' }
+  /** `returned`: for a same-device request, whether the browser could be opened; `url`: the web app's
+   *  return address, offered again as a link the person taps (a blocked tab, a browser left behind) */
+  | { readonly name: 'returning'; readonly run: number; readonly target: LoginTarget; readonly url: string }
+  | { readonly name: 'done'; readonly run: number; readonly target: LoginTarget; readonly returned: 'none' | 'opened' | 'failed'; readonly url?: string }
   | { readonly name: 'exit'; readonly run: number }
 
 export type LoginEvent =
@@ -29,6 +30,8 @@ export type LoginEvent =
   | { readonly type: 'retry' }
   | { readonly type: 'back' }
   | { readonly type: 'done' }
+  /** same-device: open the web app's return address again, by the person's own tap */
+  | { readonly type: 'reopen' }
 
 export type LoginEffect =
   | ({ readonly id: 'login.answer'; readonly raw: string; readonly withName: boolean } & Effect)
@@ -56,7 +59,8 @@ export const LOGIN_TABLE: readonly Row[] = [
   row('sending.result.failed', 'result login.answer', 'failed{code}', 'free', ANSWERED),
   row('failed.retry', 'retry', 'sending', 'after-effect', ANSWERED, { effects: ['login.answer'] }),
   row('failed.back', 'back', 'exit', 'free', NOTHING),
-  row('returning.result', 'result login.open', 'done{returned: opened | failed}', 'free', ANSWERED),
+  row('returning.result', 'result login.open', 'done{returned: opened | failed, url}', 'free', ANSWERED),
+  row('done.reopen', 'reopen', 'returning', 'free', ANSWERED, { guard: 'same-device: a return address', effects: ['login.open'] }),
   row('done.done', 'done | back', 'exit', 'free', ANSWERED),
 ]
 
@@ -96,7 +100,7 @@ export function loginMachine(): Machine<S, LoginEvent, LoginEffect> {
           const outcome = e.result.value as LoginOutcome | undefined
           if (e.result.ok && outcome?.kind === 'return') {
             const run = s.run + 1
-            return { state: { name: 'returning', run, target: s.target }, effects: [{ id: 'login.open', run, url: outcome.url }], row: 'sending.result.return' }
+            return { state: { name: 'returning', run, target: s.target, url: outcome.url }, effects: [{ id: 'login.open', run, url: outcome.url }], row: 'sending.result.return' }
           }
           if (e.result.ok) return go({ name: 'done', run: s.run, target: s.target, returned: 'none' }, 'sending.result.done')
           const code = (FAILURES.includes(e.result.code ?? '') ? e.result.code : 'failed') as LoginFailure
@@ -108,9 +112,13 @@ export function loginMachine(): Machine<S, LoginEvent, LoginEffect> {
         if (e.type === 'back') return go({ name: 'exit', run: s.run }, 'failed.back')
         return stay(s)
       case 'returning':
-        if (isResult(e, s.run, 'login.open')) return go({ name: 'done', run: s.run, target: s.target, returned: e.result.ok ? 'opened' : 'failed' }, 'returning.result')
+        if (isResult(e, s.run, 'login.open')) return go({ name: 'done', run: s.run, target: s.target, returned: e.result.ok ? 'opened' : 'failed', url: s.url }, 'returning.result')
         return stay(s)
       case 'done':
+        if (e.type === 'reopen' && s.url) {
+          const run = s.run + 1
+          return { state: { name: 'returning', run, target: s.target, url: s.url }, effects: [{ id: 'login.open', run, url: s.url }], row: 'done.reopen' }
+        }
         if (e.type === 'done' || e.type === 'back') return go({ name: 'exit', run: s.run }, 'done.done')
         return stay(s)
       case 'exit':

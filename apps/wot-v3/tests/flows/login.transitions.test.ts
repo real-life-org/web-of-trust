@@ -85,7 +85,23 @@ describe('login flow', () => {
     g.browser.available = false
     g.runner.send({ type: 'confirm', withName: false })
     await g.until('done')
-    expect(g.runner.get()).toMatchObject({ returned: 'failed' })
+    expect(g.runner.get()).toMatchObject({ returned: 'failed', url: 'https://beispiel.org/fertig?response_code=d' })
+    // the person taps "back to beispiel.org": the same address again, now the browser opens it
+    g.browser.available = true
+    g.runner.send({ type: 'reopen' })
+    expect(g.runner.get().name).toBe('returning')
+    await g.until('done')
+    expect(g.runner.get()).toMatchObject({ returned: 'opened' })
+    expect(g.browser.opened).toEqual(['https://beispiel.org/fertig?response_code=d'])
+  })
+
+  it('without a return address there is nothing to reopen', async () => {
+    const f = setup([{ ok: true, value: { kind: 'done' } }])
+    f.runner.send({ type: 'confirm', withName: false })
+    await f.until('done')
+    f.runner.send({ type: 'reopen' })
+    expect(f.runner.get()).toMatchObject({ name: 'done', returned: 'none' })
+    expect(f.browser.opened).toEqual([])
   })
 
   it('a refusal shows its reason; retry answers again; back leaves', async () => {

@@ -49,6 +49,14 @@ describe('login request', () => {
     expect(loginTarget(readLoginRequest(request({ client_id: 'javascript:alert(1)' }))!)).toBeNull()
   })
 
+  it('takes https only; plain http only on this machine (review #553)', () => {
+    expect(loginTarget(readLoginRequest(request({ client_id: 'http://beispiel.org', response_uri: 'http://beispiel.org/antwort' }))!)).toBeNull()
+    expect(loginTarget(readLoginRequest(request({ client_id: 'http://10.185.49.152:8790', response_uri: 'http://10.185.49.152:8790/antwort' }))!)).toBeNull()
+    expect(loginTarget(readLoginRequest(request({ client_id: 'http://127.0.0.1:8790', response_uri: 'http://127.0.0.1:8790/antwort' }))!)).toEqual({ origin: 'http://127.0.0.1:8790', host: '127.0.0.1:8790' })
+    expect(loginTarget(readLoginRequest(request({ client_id: 'http://localhost:5173', response_uri: 'http://localhost:5173/antwort' }))!)).not.toBeNull()
+    expect(mayReturnTo(readLoginRequest(request())!, 'http://beispiel.org/fertig')).toBe(false)
+  })
+
   it('returns only to the web app’s own origin', () => {
     const r = readLoginRequest(request())!
     expect(mayReturnTo(r, 'https://beispiel.org/fertig?response_code=x')).toBe(true)

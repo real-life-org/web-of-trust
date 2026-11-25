@@ -34,11 +34,15 @@ export interface LoginTarget {
   readonly host: string
 }
 
-/** The origin of an https or http URL, or null. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/** The origin of an https URL, or null. Plain http only for this machine (localhost, 127.0.0.1, ::1),
+ *  for tests and development: the signed token never travels over plain http on a network. */
 export function originOf(url: string): string | null {
   try {
     const u = new URL(url)
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin : null
+    if (u.protocol === 'https:') return u.origin
+    return u.protocol === 'http:' && LOOPBACK.has(u.hostname) ? u.origin : null
   } catch {
     return null
   }
@@ -83,7 +87,7 @@ export function isLoginRequest(raw: string): boolean {
 
 /**
  * The web app the person is asked about, or null when the request cannot be answered safely: the
- * address must be an https or http origin, and the answer must go back to that same origin (client_id
+ * address must be an https origin (http only on this machine), and the answer must go back to that same origin (client_id
  * scheme redirect_uri). The host shown is the address's, never the self-asserted `client_name`.
  */
 export function loginTarget(r: LoginRequest): LoginTarget | null {
