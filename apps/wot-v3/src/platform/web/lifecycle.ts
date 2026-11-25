@@ -90,13 +90,15 @@ export function webLifecycle(): LifecyclePort {
   }
 }
 
-/** A link the app takes: `…/c#<card>` (§5.3). Everything else is not a deep link of the app. */
+/** A link the app takes: `…/c#<card>` (§5.3), `…/t#…`, and `…/a#<login request>` (experimental).
+ *  Everything else is not a deep link of the app. */
 export function isCardLink(url: string): boolean {
   try {
     const u = new URL(url)
-    // a card (/c) or the trigger link of a connection ceremony (/t) with a fragment; which hosts reach the
-    // app is the platform's filter (AndroidManifest, AASA), the link itself is checked by the holder
-    return /\/[ct]\/?$/.test(u.pathname) && u.hash.length > 1
+    // a card (/c), the trigger link of a connection ceremony (/t) or a login request of a web app (/a)
+    // with a fragment; which hosts reach the app is the platform's filter (AndroidManifest, AASA), the
+    // link itself is checked by the holder (a card) or by lib/login-request.ts (a login request)
+    return /\/[cta]\/?$/.test(u.pathname) && u.hash.length > 1
   } catch {
     return false
   }

@@ -7,7 +7,9 @@
           { "/": "/c", "comment": "card link https://web-of-trust.de/c#... (the fragment never reaches the server)" },
           { "/": "/c/", "comment": "card link with a trailing slash, https://web-of-trust.de/c/#..." },
           { "/": "/t", "comment": "trigger link of the connection ceremony https://web-of-trust.de/t#... (shared-connect 0.1)" },
-          { "/": "/t/", "comment": "trigger link with a trailing slash" }
+          { "/": "/t/", "comment": "trigger link with a trailing slash" },
+          { "/": "/a", "comment": "login request of a web app https://web-of-trust.de/a#... (experimental)" },
+          { "/": "/a/", "comment": "login request with a trailing slash" }
         ]
       }
     ]

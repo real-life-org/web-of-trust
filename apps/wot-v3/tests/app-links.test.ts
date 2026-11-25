@@ -73,8 +73,23 @@ describe('verified App Links (#489)', () => {
     // <team id>.<bundle id>: the team that signs the release (Tillmann's account, IOS_TEAM_ID)
     expect(detail!.appIDs).toEqual([`R8QCRG95T6.${bundleId}`])
     // exactly the paths isCardLink accepts and the Android filter names; /c/<anything> is no card link
-    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/', '/t', '/t/'])
+    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/', '/t', '/t/', '/a', '/a/'])
     expect(isCardLink('https://web-of-trust.de/c/other#1:ABC')).toBe(false)
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
+  })
+})
+
+describe('login requests of web apps (experimental)', () => {
+  it('the verified intent filter takes https://web-of-trust.de/a and /a/, and the landing has a page for them', () => {
+    const filter = manifest.slice(manifest.indexOf('android:autoVerify="true"'), manifest.indexOf('</intent-filter>', manifest.indexOf('android:autoVerify="true"')))
+    expect(filter).toContain('android:path="/a"')
+    expect(filter).toContain('android:path="/a/"')
+    expect(existsSync(here('../landing/public/a/index.html'))).toBe(true)
+  })
+  it('a login link is a deep link of the app; a path that only starts with /a is not', () => {
+    expect(isCardLink('https://web-of-trust.de/a#openid%3A%2F%2F%3Fx')).toBe(true)
+    expect(isCardLink('https://web-of-trust.de/a/#openid%3A%2F%2F%3Fx')).toBe(true)
+    expect(isCardLink('https://web-of-trust.de/a')).toBe(false)
+    expect(isCardLink('https://web-of-trust.de/about#x')).toBe(false)
   })
 })

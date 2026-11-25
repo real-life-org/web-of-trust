@@ -38,6 +38,11 @@ export type RefusalCode =
   | 'last-access'
   // Reporting
   | 'report-changed'
+  // Login into a web app (experimental): the request cannot be answered safely, the web app refused
+  // the answer, or it could not be reached (or answered with a redirect, which the app never follows)
+  | 'login-invalid'
+  | 'login-refused'
+  | 'login-unreachable'
   // general
   | 'superseded'
   | 'in-flight'

@@ -6,7 +6,7 @@
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, PendingJoinView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
+import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, LoginOutcome, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -23,6 +23,7 @@ import { project, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { createSharedConnectCarriage, type SharedConnectCarriage } from './shared-connect-carriage'
 import { keysFromRootIkm } from './keys'
+import { answerLogin, type LoginKeys } from './login'
 import { idbHolderStore, type HolderStore } from './store-idb'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
@@ -78,6 +79,8 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** EXPERIMENTAL: answer a login request of a web app (login.ts) with the identity toward it */
+  answerLogin(raw: string, opts: { name?: string | null }): Promise<Result<LoginOutcome>>
   /** read boundary of a conversation: the item `upTo` and everything before it count as read */
   markRead(key: string, upTo: string): void
   /** entries in the library's inbox not yet taken over (tests) */
@@ -1758,6 +1761,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    answerLogin: (raw, opts) => answerLogin(keys as LoginKeys, raw, { ...opts, now: when() }),
     markRead,
     async inboxSize() {
       return (await gate.run((h) => h.inbox())).length

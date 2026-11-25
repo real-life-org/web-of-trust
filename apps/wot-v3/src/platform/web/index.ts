@@ -1,6 +1,6 @@
 // Web implementations of the platform ports (architecture §5).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { BrowserPort, ClockPort, EntropyPort, Language, LanguagePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
 import { liveUpdateOff, webDeepLinks, webLifecycle } from './lifecycle'
 import { webScanner } from './scanner'
@@ -148,6 +148,20 @@ export const webMail: MailPort = {
   },
 }
 
+/** A new tab for an https or http address (a link click, so the browser's own rules apply; the native
+ *  shell hands such a navigation to the system's browser). Anything else is not opened. */
+export const webBrowser: BrowserPort = {
+  async open(url) {
+    if (typeof document === 'undefined' || !/^https?:\/\//.test(url)) return 'unavailable'
+    const a = document.createElement('a')
+    a.href = url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    a.click()
+    return 'opened'
+  },
+}
+
 /** Web Share API (text, and files where navigator.canShare allows them). */
 export const webShare: SharePort = {
   async share({ text, url }) {
@@ -188,5 +202,6 @@ export function createWebPlatform(): Platform {
     network: webNetwork(),
     deepLinks: webDeepLinks(),
     liveUpdate: liveUpdateOff,
+    browser: webBrowser,
   }
 }
