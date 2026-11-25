@@ -310,6 +310,8 @@ export const en = {
     declinedTitle: '{name} declined',
     declinedBody: 'No connection was created.',
     declinedBodyKept: 'The contact stays on this device; the connection was not confirmed.',
+    connectUnknownBody: 'Your request is stored on this device; how it stands is not known yet.',
+    readBackPending: 'Code read. The confirmation opens as soon as it is ready.',
     connectAcceptedBody: '{name} confirmed. The rest arrives over the connection.',
     counterPendingTitle: 'Your confirmation is out',
     counterPendingBody: 'Your confirmation is issued. {name}’s confirmation arrives over the network; the encounter becomes mutual then.',

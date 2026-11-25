@@ -49,10 +49,10 @@ export type BackShow =
   | { readonly kind: 'shown'; readonly qr: string; readonly validUntil: number }
   | { readonly kind: 'not-shown'; readonly why: 'closed' | 'accepted' | 'expired' | 'background' }
 
-/** What reading a back-code did (`readBackCode`), typed by what the core reports and holds:
+/** What reading a back-code did (`readBackCode`), from the write's own result:
  *  - `taken`: a new proposal for one of this device's open codes; its confirmation is open
- *  - `again`: the very proposal this ceremony holds, read again (absorbed; after the acceptance the core
- *    may open the contact from its card now)
+ *  - `again`: nothing new taken and nothing refused (the core absorbed the very proposal it holds, after the
+ *    acceptance maybe taking the card it carries, or the ceremony had ended): its state is the answer
  *  - `refused`: the core refused it for that ceremony (another proposer, a card that does not agree, the
  *    link expired, …), with the core's reason
  *  - `expired`: the code it answers ended (with the clock tolerance) before it was read

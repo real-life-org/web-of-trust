@@ -78,7 +78,8 @@ interface Base {
 /** Where the scanner's wait stands: `unknown` (its ceremony is not in a bundle yet: no answer either way),
  *  `wait` (read by the camera: the back-code after BACK_AFTER_MS without an acceptance), `link` (not read by
  *  the camera: no back-code), `accepted` (the acceptance arrived, the rest of the ceremony is under way).
- *  `kept`: the person chose "keep waiting" on the back-code */
+ *  `kept`: the person chose "keep waiting" on the back-code. `due`: the wait's deadline passed while the
+ *  ceremony was `unknown` (its first state then takes the back-code at once: the time already waited counts) */
 export type ScannerPhase = 'unknown' | 'wait' | 'link' | 'accepted'
 
 export type VerifyState =
@@ -109,7 +110,7 @@ export type VerifyState =
   | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly validUntil: number; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
   /** the ceremony runs: the scanner waits for the shower's answer, the shower for the last documents.
    *  What the scanner does next is decided by `scannerStep` from the ceremony's state in the last bundle */
-  | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean; readonly phase?: ScannerPhase; readonly kept?: boolean })
+  | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean; readonly phase?: ScannerPhase; readonly kept?: boolean; readonly due?: boolean })
   /** the scanner, no carrier in reach: its back-code is being made (shared-connect without a carrier) */
   | (Base & { readonly name: 'backing'; readonly connection: ConnectionId; readonly name2: string | null })
   /** the scanner shows its back-code for the shower's camera; its contact exists from here on */
@@ -292,7 +293,10 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('scanner.back', 'scannerStep', 'backing', 'free', '–', { guard: 'open, not accepted, read by the camera; and the back-code shown before, a link without a relay, no carrier in reach (entry) or the wait over (due)', effects: ['ver.back'] }),
   row('scanner.wait', 'scannerStep', 'connecting{scanner}', 'free', '–', { guard: 'open, not accepted, read by the camera, a carrier in reach, a relay in the link', effects: ['ver.wait BACK_AFTER_MS'] }),
   row('scanner.unknown', 'scannerStep', 'connecting{scanner, unknown}', 'free', 'no answer either way', { guard: 'the ceremony is in no bundle yet' }),
-  row('connecting.bundle.known', 'bundle', 'scannerStep(entry)', 'free', '–', { guard: 'the ceremony waited for appears in a bundle' }),
+  row('connecting.bundle.known', 'bundle', 'scannerStep(entry); a wait goes on with the deadline set at the scan', 'free', '–', { guard: 'the ceremony waited for appears in a bundle' }),
+  row('connecting.unknown.due', 'result ver.wait', 'connecting{unknown, due}', 'free', '–', { guard: 'the deadline passed before any bundle named the ceremony' }),
+  row('backing.leave', 'leave', 'exit(chat | back)', 'free', 'the ceremony goes on in the core', { guard: 'always: the way out while the code is made' }),
+  row('readingBack.back', 'back', 'ready', 'free', 'the confirmation stays in the list once it is there'),
   row('connecting.carrier.lost', 'bundle', 'backing', 'free', '–', { guard: 'waiting for the acceptance by the camera, no carrier in reach any more, "keep waiting" not chosen', effects: ['ver.back'] }),
   row('success.bundle.failed', 'bundle', 'scanError{connect-failed | connect-failed-kept}', 'free', 'the contact stays', { guard: 'the open ceremony of an early success failed' }),
   row('readingBack.result.unknown', 'result ver.readBack', 'readingBack{connection}', 'free', 'no answer either way', { guard: 'taken or read again, the ceremony in no bundle yet' }),
@@ -589,14 +593,21 @@ function step(s: S, e: E): Out {
         if (e.type === 'bundle' && c) {
           // the ceremony ended or the acceptance arrived
           if (c.status !== 'open' || (c.accepted && s.phase !== 'accepted')) return scannerStep(s, s.connection, 'bundle')
-          // the first state of the ceremony waited for: the step as on the first scan
-          if (s.phase === 'unknown') return scannerStep(s, s.connection, 'entry', 'connecting.bundle.known')
+          // the first state of the ceremony waited for: the step as on the first scan, with the deadline set at
+          // the scan (passed: the code at once; running: the same timer goes on)
+          if (s.phase === 'unknown') {
+            if (s.due) return scannerStep(s, s.connection, 'due', 'connecting.bundle.known')
+            const next = scannerStep(s, s.connection, 'entry', 'connecting.bundle.known')
+            if (next.state.name === 'connecting' && next.state.phase === 'wait') return goto(s, { ...pickConnecting(s), waitLong: false, phase: 'wait' }, 'connecting.bundle.known')
+            return next
+          }
           // the carrier went away while it waits by the camera: the back-code now (unless the person chose to wait)
           if (s.phase === 'wait' && !s.kept && s.inReach === false) return emit(s, { name: 'backing', connection: s.connection, name2: s.name2 }, 'connecting.carrier.lost', (r) => [{ id: 'ver.back', run: r, connection: s.connection }])
           return stay(s)
         }
         // the wait for the acceptance is over: the encounter goes on by camera, unless the last bundle says otherwise
         if (isResult(e, s.run, 'ver.wait') && s.phase === 'wait') return scannerStep(s, s.connection, 'due')
+        if (isResult(e, s.run, 'ver.wait') && s.phase === 'unknown') return goto(s, { ...pickConnecting(s), waitLong: false, due: true }, 'connecting.unknown.due')
         if (isResult(e, s.run, 'ver.wait') && s.phase !== 'link') return stay(s)
       } else {
         const ended = e.type === 'bundle' ? connectionEnd(s, s.connection, s.name2) : null
@@ -632,6 +643,10 @@ function step(s: S, e: E): Out {
         const said: ScanErrorCode = code === 'no-card' || code === 'code-too-long' || code === 'back-expired' ? code : code === 'code-used' || code === 'code-expired' ? 'code-expired' : 'failed'
         return goto(s, { name: 'scanError', code: said }, 'backing.result.failed')
       }
+      if (e.type === 'leave' || e.type === 'back') {
+        const contactId = c?.contactId ?? null
+        return exit(s, contactId ? 'chat' : 'back', contactId, 'backing.leave')
+      }
       return stay(s)
     }
     case 'backCode': {
@@ -655,11 +670,10 @@ function step(s: S, e: E): Out {
           const code: ScanErrorCode = v.kind === 'expired' || (v.kind === 'refused' && v.reason === 'expired-link') ? 'code-expired' : 'card-invalid'
           return goto(s, { name: 'scanError', code }, 'readingBack.result.refused')
         }
-        // the ceremony is in no bundle yet: keep its id, no answer either way
-        if (!s.connections?.[v.connection]) return goto(s, { name: 'readingBack', connection: v.connection }, 'readingBack.result.unknown')
         return readBack(s, v.connection)
       }
       if (e.type === 'bundle' && s.connection && s.connections?.[s.connection]) return readBack(s, s.connection)
+      if (e.type === 'back' || e.type === 'leave') return toReady(s, 'readingBack.back')
       return stay(s)
     case 'declined':
       if (e.type === 'done' || e.type === 'back' || e.type === 'retry') return toReady(s, 'declined.done')
@@ -681,12 +695,17 @@ function step(s: S, e: E): Out {
 }
 
 const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, validUntil: s.validUntil, name2: s.name2 })
-const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role, ...(s.phase ? { phase: s.phase } : {}), ...(s.kept ? { kept: s.kept } : {}) })
+const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role, ...(s.phase ? { phase: s.phase } : {}), ...(s.kept ? { kept: s.kept } : {}), ...(s.due ? { due: s.due } : {}) })
 
 /** the shower after reading a back-code: exactly this read's ceremony, as the newest bundle has it: its open
  *  confirmation, its contact, or nothing to ask (decided or ended meanwhile) */
 function readBack(s: S, connection: ConnectionId): Out {
   const c = s.connections?.[connection]
+  // an open ceremony with neither its confirmation, its acceptance nor a contact is a state from before the
+  // read (an older bundle): no answer yet, the read ceremony is kept
+  if (!c || (c.status === 'open' && !c.decision && !c.accepted && !c.contactId)) {
+    return s.name === 'readingBack' && s.connection === connection ? stay(s) : goto(s, { name: 'readingBack', connection }, 'readingBack.result.unknown')
+  }
   if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, validUntil: c.validUntil, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
   if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, { name: 'success', contactId: c.contactId, name2: c.name, isNew: true, ...(c.status === 'open' ? { connection } : {}) }, 'readingBack.result.contact')
   return toReady(s, 'readingBack.result.ok')
@@ -719,7 +738,8 @@ function scannerStep(s: S, connection: ConnectionId, cause: 'entry' | 'due' | 'b
   }
   if (cause === 'bundle') return stay(s)
   // no state of the ceremony yet: no answer either way, its id is kept until the first bundle names it
-  if (!c) return emit(s, { name: 'connecting', connection, name2, role: 'scanner', waitLong: false, phase: 'unknown' }, at('scanner.unknown'), () => [])
+  // the deadline starts at the scan: it runs while the state is unknown and holds when it arrives
+  if (!c) return emit(s, { name: 'connecting', connection, name2, role: 'scanner', waitLong: false, phase: 'unknown' }, at('scanner.unknown'), (r) => [{ id: 'ver.wait', run: r, ms: BACK_AFTER_MS }])
   if (!c.camera) return emit(s, { name: 'connecting', connection, name2, role: 'scanner', waitLong: false, phase: 'link' }, at('scanner.wait.link'), (r) => [{ id: 'ver.wait', run: r, ms: WAIT_LONG_MS }])
   if (cause === 'due' || c.backShown || c.relayed === false || s.inReach === false) return emit(s, { name: 'backing', connection, name2 }, at('scanner.back'), (r) => [{ id: 'ver.back', run: r, connection }])
   return emit(s, { name: 'connecting', connection, name2, role: 'scanner', waitLong: false, phase: 'wait' }, at('scanner.wait'), (r) => [{ id: 'ver.wait', run: r, ms: BACK_AFTER_MS }])

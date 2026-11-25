@@ -52,6 +52,8 @@ const S: Record<string, VerifyState> = {
   'scanError-back-expired': { ...base, name: 'scanError', code: 'back-expired' },
   'scanError-connect-failed-kept': { ...base, name: 'scanError', code: 'connect-failed-kept' },
   readingBack: { ...base, name: 'readingBack' },
+  'readingBack-pending': { ...base, name: 'readingBack', connection: 'e-noah' as ConnectionId },
+  'connecting-scanner-unknown': { ...base, name: 'connecting', connection: 'e-noah' as ConnectionId, name2: 'Noah Lindqvist', role: 'scanner', waitLong: false, phase: 'unknown' },
   'scanError-no-card': { ...base, name: 'scanError', code: 'no-card' },
   'scanError-code-too-long': { ...base, name: 'scanError', code: 'code-too-long' },
   declined: { ...base, name: 'declined', name2: 'Noah Lindqvist', kept: false },

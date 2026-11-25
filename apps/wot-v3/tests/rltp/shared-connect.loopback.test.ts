@@ -5,6 +5,8 @@
 // is carried by the mediator (lib 0.17.0: the carrier offer in the ceremony), a message each way
 // arrives; declining ends both sides without a contact.
 import { describe, expect, it } from 'vitest'
+import { ACTS } from '../../src/adapters/rltp/acts'
+import { fakeLifecycle } from '../../src/platform/fake'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
@@ -278,6 +280,28 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
       await w.settle()
       expect(value(w.A.port.stores.contacts)).toEqual([])
       expect(ceremony(w.A, p.value.connection)).toMatchObject({ backShown: false, contactId: null })
+    })
+
+    it('the back-code act that ran nothing carries the reason it found, even when the app is in front again before its result', async () => {
+      const w = await offline()
+      const life = fakeLifecycle()
+      const med = w.med
+      const D = await loopbackDevice({ carrier: { mediator: { did: med.did, net: phoneNet(med.net).net } }, id: 'D', name: 'Dee', words: LOOPBACK_PHRASES[3] ?? LOOPBACK_PHRASES[0], clock: w.clock, seed: 53, ceremony: 'shared-connect', lifecycle: life })
+      D.platform.network.set('offline')
+      const L = await show(w)
+      const p = await D.port.trust.confirmCard(L.qr, 'camera').done
+      if (!p.ok || p.value.kind !== 'proposed') throw new Error('propose')
+      life.emit('background')
+      // the app comes to the front right after the act's check, before its result is formed
+      const spec = ACTS.showBackCode!
+      ACTS.showBackCode = { ...spec, run: async (...a) => { const r = await spec.run(...a); life.emit('active'); return r } }
+      try {
+        expect(await D.port.trust.showBackCode(p.value.connection).done).toEqual({ ok: true, value: { kind: 'not-shown', why: 'background' } })
+      } finally {
+        ACTS.showBackCode = spec
+      }
+      // in front, the act runs
+      expect(await D.port.trust.showBackCode(p.value.connection).done).toMatchObject({ ok: true, value: { kind: 'shown' } })
     })
 
     it('B2 at the port: the same handle with other link data is not that link; the very link resumes the stored ceremony', async () => {

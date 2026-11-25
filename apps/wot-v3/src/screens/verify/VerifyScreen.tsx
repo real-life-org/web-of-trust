@@ -306,7 +306,8 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'backing':
       return page(<Working label={v.showing} />, undefined, undefined)
     case 'readingBack':
-      return page(<Working label={v.checking} />, undefined, undefined)
+      // read, its confirmation not published yet: said so, and back is a way out
+      return page(<Working label={s.connection ? v.readBackPending : v.checking} />, undefined, s.connection ? back : undefined)
     case 'confirmationRequired':
     case 'confirmIncoming':
       // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
@@ -337,7 +338,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         <>
           {/* the scanner whose acceptance arrived waits only for the rest */}
           {s.role === 'scanner' && s.phase !== 'accepted' ? (
-            <Hero icon={<CheckIcon />} title={f(v.connectWaitTitle, { name })} body={f(v.connectWaitBody, { name })} />
+            <Hero icon={<CheckIcon />} title={f(v.connectWaitTitle, { name })} body={f(s.phase === 'unknown' ? v.connectUnknownBody : v.connectWaitBody, { name })} />
           ) : (
             <Hero icon={<CheckIcon />} title={f(v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectAcceptedBody : v.connectFinishBody, { name })} />
           )}

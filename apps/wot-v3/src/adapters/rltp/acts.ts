@@ -54,7 +54,9 @@ export interface PartialRefusal {
   readonly code: ActError
   readonly partial: true
 }
-export type ActOutcome = ActResult | PartialRefusal
+/** an act that checked its preconditions and ran nothing at the holder, with the reason it found */
+export type Skipped = Extract<ActResult, { ok: true }> & { readonly skipped: string }
+export type ActOutcome = ActResult | PartialRefusal | Skipped
 
 export interface ActSpec {
   readonly policy: IntentPolicy
@@ -228,7 +230,9 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     policy: 'replay',
     run: async (h, i, o, ctx) => {
       const v = (await h.sharedConnect()).find((x) => x.id === str(i, 'connection'))
-      if (notShown(v, ctx.now(), ctx.foreground()) !== null) return { ok: true, outbound: [], events: [] }
+      // the reason found here travels unchanged into the act's result (never read again later)
+      const why = notShown(v, ctx.now(), ctx.foreground())
+      if (why !== null) return { ok: true, outbound: [], events: [], skipped: why }
       return h.sharedConnectBack({ id: str(i, 'connection'), origin: LINK_ORIGIN }, o)
     },
     outcome: (events) => {

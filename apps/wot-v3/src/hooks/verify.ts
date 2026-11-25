@@ -53,8 +53,9 @@ export function flowTimers(clock: Platform['clock']) {
 }
 type FlowTimers = ReturnType<typeof flowTimers>
 
-/** what a timer belongs to: the state's name and the scanner's phase */
-export const timerKey = (s: VerifyState): string => `${s.name}:${s.name === 'connecting' ? (s.phase ?? '') : ''}`
+/** what a timer belongs to: the state's name and the scanner's phase (`unknown` and `wait` share the wait's
+ *  deadline, set at the scan) */
+export const timerKey = (s: VerifyState): string => `${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
 
 /** resolves when the app is in front again */
 const front = (life: Platform['lifecycle']) =>

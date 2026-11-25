@@ -309,6 +309,8 @@ export const de: Translations = {
     declinedTitle: '{name} hat abgelehnt',
     declinedBody: 'Es wurde keine Verbindung angelegt.',
     declinedBodyKept: 'Der Kontakt bleibt auf diesem Gerät; die Verbindung wurde nicht bestätigt.',
+    connectUnknownBody: 'Deine Anfrage ist auf diesem Gerät gespeichert; wie sie steht, ist noch nicht bekannt.',
+    readBackPending: 'Code gelesen. Die Bestätigung öffnet sich, sobald sie bereitsteht.',
     connectAcceptedBody: '{name} hat bestätigt. Der Rest kommt über die Verbindung.',
     counterPendingTitle: 'Deine Bestätigung ist raus',
     counterPendingBody: 'Deine Bestätigung ist ausgestellt. Die Bestätigung von {name} kommt über das Netz; dann ist die Begegnung gegenseitig.',

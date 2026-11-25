@@ -101,6 +101,19 @@ export async function relayedVia(did: string): Promise<boolean | null> {
   return peer ? peer.relays.length > 0 : null
 }
 
+/** `relayedVia` with a memory: a known answer is kept per DID, an identity not resolved (null) is asked again
+ *  the next time */
+export function relayCache(resolve: (did: string) => Promise<boolean | null> = relayedVia): (did: string) => Promise<boolean | null> {
+  const known = new Map<string, boolean>()
+  return async (did) => {
+    const hit = known.get(did)
+    if (hit !== undefined) return hit
+    const read = await resolve(did)
+    if (read !== null) known.set(did, read)
+    return read
+  }
+}
+
 /** One ceremony as the port shows it: every fact from the core's view of it (shared-connect-holder.ts
  *  `sharedConnectView`), nothing from a screen */
 export function connectionOf(v: SharedConnectView, relayed: boolean | null): Connection {
