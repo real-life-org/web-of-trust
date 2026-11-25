@@ -23,11 +23,12 @@ async function world() {
   const med = mediatorDouble()
   const clock = virtualClock(Date.now(), 'UTC')
   // each phone on a network of its own below the wire, switched by `online`
-  const netA = phoneNet(med.net), netB = phoneNet(med.net)
+  const netA = phoneNet(med.net), netB = phoneNet(med.net), netC = phoneNet(med.net)
   const A = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netA.net } }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31, ceremony: 'shared-connect' })
   const B = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netB.net } }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37, ceremony: 'shared-connect' })
+  const C = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netC.net } }, id: 'C', name: 'Cem', words: LOOPBACK_PHRASES[2], clock, seed: 43, ceremony: 'shared-connect' })
   const online = (d: LoopbackDevice, on: boolean) => {
-    ;(d === A ? netA : netB).setOnline(on)
+    ;(d === A ? netA : d === B ? netB : netC).setOnline(on)
     d.platform.network.set(on ? 'online' : 'offline')
   }
   const settle = async () => {
@@ -37,6 +38,7 @@ async function world() {
       await med.settled()
       await A.port.session()?.idle()
       await B.port.session()?.idle()
+      await C.port.session()?.idle()
       await new Promise((r) => setTimeout(r, 0))
       const busy = (A.port.session()?.transportBusy() ?? 0) + (B.port.session()?.transportBusy() ?? 0)
       const now = JSON.stringify([A.port.session()?.models()?.revision, B.port.session()?.models()?.revision, A.port.stores.connectivity.get(), B.port.stores.connectivity.get()])
@@ -49,7 +51,7 @@ async function world() {
     clock.advance(CARRIER_TICK_MS)
     await settle()
   }
-  return { med, clock, A, B, settle, tick, online }
+  return { med, clock, A, B, C, settle, tick, online }
 }
 
 /** B shows its code, A reads it with its camera and proposes; B's decision is open */
@@ -75,8 +77,8 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
     expect(await w.B.port.trust.previewCard(shown.qr)).toMatchObject({ ok: true, value: { self: true } })
     expect(proposed).toMatchObject({ ok: true, value: { kind: 'proposed', contactId: null } })
     expect(value(w.A.port.stores.connections)).toMatchObject([{ role: 'responder', status: 'open', name: 'Bea', contactId: null }])
-    // the same code read again is spent
-    expect(await w.A.port.trust.previewCard(shown.qr)).toEqual({ ok: false, error: { kind: 'refused', code: 'code-used' } })
+    // the same code read again names the ceremony this camera answered (its back-code can be shown again)
+    expect(await w.A.port.trust.previewCard(shown.qr)).toEqual({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false, answered: { connection: shown.card, shown: false } } })
     const [d] = value(w.B.port.stores.decisions)
     expect(d).toMatchObject({ kind: 'connect-confirm', name: 'Al', state: 'open', answers: { card: shown.card } })
     expect((await w.B.port.trust.decide(d!.id, 'accept').done).ok).toBe(true)
@@ -141,7 +143,7 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
     expect(await w.A.port.trust.showBackCode(proposed.value.connection).done).toEqual(back)
     // B's camera reads it: the confirmation that answers B's code, with A's name
     expect(await w.B.port.trust.previewCard(back.value.qr)).toEqual({ ok: true, value: { role: 'back', name: 'Al', knownContact: null, self: false } })
-    expect(await w.B.port.trust.readBackCode(back.value.qr)).toEqual({ ok: true, value: { connection: shown.value.card } })
+    expect(await w.B.port.trust.readBackCode(back.value.qr)).toMatchObject({ ok: true, value: { connection: shown.value.card, name: 'Al', contactId: null } })
     await w.settle()
     expect(value(w.B.port.stores.contacts)).toEqual([])
     const [d] = value(w.B.port.stores.decisions)
@@ -196,5 +198,100 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
     // no trust toward it: the detail says so before the act, the core refuses the act
     expect(value(w.A.port.stores.contact(cA!.id))?.actions.giveTrust).toEqual({ ok: false, reason: 'not-verified' })
     expect(await w.A.port.trust.giveTrust(cA!.id).done).toEqual({ ok: false, error: { kind: 'refused', code: 'not-met' } })
+  })
+
+  describe('reading back-codes: the contract at the port', () => {
+    /** all three offline; `B` shows `n` codes */
+    const offline = async () => {
+      const w = await world()
+      for (const d of [w.A, w.B, w.C]) w.online(d, false)
+      await w.settle()
+      return w
+    }
+    const show = async (w: Awaited<ReturnType<typeof world>>) => {
+      const r = await w.B.port.trust.showCard().done
+      if (!r.ok) throw new Error('show')
+      return r.value
+    }
+    /** `d` reads `link` with its camera and shows its back-code */
+    const answer = async (w: Awaited<ReturnType<typeof world>>, d: LoopbackDevice, link: string) => {
+      const p = await d.port.trust.confirmCard(link, 'camera').done
+      if (!p.ok || p.value.kind !== 'proposed') throw new Error('propose')
+      const back = await d.port.trust.showBackCode(p.value.connection).done
+      if (!back.ok) throw new Error('back')
+      await w.settle()
+      return back.value.qr
+    }
+    const prompts = (d: LoopbackDevice) => value(d.port.stores.decisions).filter((x) => x.kind === 'connect-confirm')
+
+    it('a second responder to the same link is refused, the first one\'s confirmation is not handed out for it', async () => {
+      const w = await offline()
+      const L = await show(w)
+      const bea = await answer(w, w.A, L.qr)
+      const ali = await answer(w, w.C, L.qr)
+      const first = await w.B.port.trust.readBackCode(bea)
+      expect(first).toMatchObject({ ok: true, value: { connection: L.card, name: 'Al', contactId: null } })
+      await w.settle()
+      expect(await w.B.port.trust.readBackCode(ali)).toEqual({ ok: false, error: { kind: 'refused', code: 'card-invalid' } })
+      await w.settle()
+      expect(prompts(w.B).map((d) => d.id)).toEqual([first.ok ? first.value.decision : null])
+      expect(value(w.B.port.stores.contacts)).toEqual([])
+    })
+
+    it('with several open links: a back-code for another device\'s link and one without its card are refused; nothing opens', async () => {
+      const w = await offline()
+      const L1 = await show(w)
+      await show(w)
+      // a back-code for C's link, not for any of B's
+      const shownC = await w.C.port.trust.showCard().done
+      if (!shownC.ok) throw new Error('show C')
+      const foreign = await answer(w, w.A, shownC.value.qr)
+      expect(await w.B.port.trust.readBackCode(foreign)).toEqual({ ok: false, error: { kind: 'refused', code: 'card-invalid' } })
+      // a back-code for B's first link without its card
+      const own = await answer(w, w.C, L1.qr)
+      expect(await w.B.port.trust.readBackCode(own.replace(/&csig=[^&]*/, ''))).toEqual({ ok: false, error: { kind: 'refused', code: 'card-invalid' } })
+      await w.settle()
+      expect(prompts(w.B)).toEqual([])
+      expect(value(w.B.port.stores.contacts)).toEqual([])
+    })
+
+    it('read first after the link\'s end (and its clock tolerance): expired, nothing opens; read before and again after the end: expired too', async () => {
+      const w = await offline()
+      const L = await show(w)
+      const code = await answer(w, w.A, L.qr)
+      w.clock.advance(L.expiresAt - w.clock.now() + 61_000)
+      expect(await w.B.port.trust.readBackCode(code)).toEqual({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+      await w.settle()
+      expect(prompts(w.B)).toEqual([])
+      expect(value(w.B.port.stores.contacts)).toEqual([])
+      // a confirmation open from before the end: the code read again past it is expired, not that confirmation
+      const L2 = await show(w)
+      const code2 = await answer(w, w.C, L2.qr)
+      expect((await w.B.port.trust.readBackCode(code2)).ok).toBe(true)
+      w.clock.advance(L2.expiresAt - w.clock.now() + 61_000)
+      expect(await w.B.port.trust.readBackCode(code2)).toEqual({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+    })
+
+    it('the same code read twice before the acceptance: the same confirmation; after it: the contact, no second one', async () => {
+      const w = await offline()
+      const L = await show(w)
+      const code = await answer(w, w.A, L.qr)
+      const one = await w.B.port.trust.readBackCode(code)
+      await w.settle()
+      const two = await w.B.port.trust.readBackCode(code)
+      await w.settle()
+      expect(one.ok && two.ok).toBe(true)
+      if (!one.ok || !two.ok) return
+      expect(two.value).toEqual(one.value)
+      expect(prompts(w.B)).toHaveLength(1)
+      expect((await w.B.port.trust.decide(one.value.decision!, 'accept').done).ok).toBe(true)
+      await w.settle()
+      const [c] = value(w.B.port.stores.contacts)
+      const three = await w.B.port.trust.readBackCode(code)
+      await w.settle()
+      expect(three).toMatchObject({ ok: true, value: { connection: L.card, decision: null, contactId: c!.id } })
+      expect(prompts(w.B)).toEqual([])
+      expect(value(w.B.port.stores.contacts)).toHaveLength(1)
+    })
   })
 })

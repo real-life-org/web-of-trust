@@ -531,13 +531,24 @@ one in use (`Session.offer`), and stops with the opening. A build without a medi
 wires: an enactment opened there stays in the holder until a carrier is configured.
 
 **Without a carrier in reach** (lib 0.22.0). The shown code is always the trigger link, also while the
-device is offline: the link names the mediator from the build's configuration as the relay, and a link
-shown in person carries the inviter's card (its pair keys, no delivery hints). A responder that read the
-link with its camera and has no carrier in reach (the connectivity the app shows: network offline, carrier
-unreachable or not configured) shows its back-code (`sharedConnectBack`, the act `showBackCode`): its
-contact opens from the inviter's card. The inviter's camera reads the back-code (`sharedConnectReadBack`
-for the own open link whose card check it passes, not a human act); the proposal is asked like one the
-wire brought, and accepting opens the inviter's contact. Trust and an invitation into a group go at once
-(they wait in custody); a message is `not-ready` until the counterpart's first document. The acceptance,
-the credentials and the receipts go over the wires above once a carrier is in reach and complete the same
-enactment; the issue steps bring the delivery hints, and the relationship is carried from then on.
+device is offline: the link names the mediator from the build's configuration as the relay (none in a
+build without one), and a link shown in person carries the inviter's card (its pair keys, no delivery
+hints). A responder that read the link with its camera shows its back-code (`sharedConnectBack`, the act
+`showBackCode`) at once when the link names no relay or the connectivity the app shows has no carrier in
+reach (network offline, carrier unreachable or not configured); otherwise it waits for the acceptance over
+the carrier and shows the back-code on its own after `BACK_AFTER_MS` (12 s) without one, since it cannot
+tell which side lacks the connection. The wait measures "no acceptance yet", not "not delivered":
+shared-connect gives no signal before the acceptance, and a frame on the socket is no acceptance by the
+mediator. "Keep waiting" goes back to the wait; an acceptance over the carrier ends the wait and the code
+with the success, a decline or a failure with its message. The back-code opens the responder's contact from
+the inviter's card; it is shown until the link it answers ends, and the same link read again by the camera
+(after a restart) shows the same code again, opening nothing twice. The inviter's camera, and only its
+camera, reads the back-code (`sharedConnectReadBack` for the own open link whose card check it passes, not
+a human act): a refusal the core reports is a refusal, a new proposal opens its confirmation and the flow
+asks exactly that one, the same proposal read again is that confirmation or that contact, and a code past
+the end of its link is expired. Accepting opens the inviter's contact. Trust and an invitation into a group
+go at once (they wait in custody); a message is `not-ready` until the counterpart's first document. The
+acceptance, the credentials and the receipts go over the wires above once a carrier is in reach and
+complete the same enactment; the issue steps bring the delivery hints, and the relationship is carried from
+then on (also when they arrive while its instance is being built). A link without a relay reaches its
+inviter over no carrier: the two contacts stand, the rest of the ceremony does not arrive.

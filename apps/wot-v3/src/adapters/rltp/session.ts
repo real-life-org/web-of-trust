@@ -6,7 +6,7 @@
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, PendingJoinView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { ActId, AppError, AppEvent, CardPreview, ConnectionId, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
+import type { ActId, AppError, AppEvent, BackRead, CardPreview, ConnectionId, ContactId, DecisionId, RefusalCode, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -80,7 +80,7 @@ export interface Session {
   previewCard(raw: string): Promise<Result<CardPreview>>
   /** the inviter's camera read a back-code (shared-connect without a carrier, lib 0.22.0): the proposal of
    *  the own shown code it answers, as if a carrier had brought it; the confirmation opens */
-  readBackCode(raw: string): Promise<Result<{ connection: ConnectionId }>>
+  readBackCode(raw: string): Promise<Result<BackRead>>
   /** read boundary of a conversation: the item `upTo` and everything before it count as read */
   markRead(key: string, upTo: string): void
   /** entries in the library's inbox not yet taken over (tests) */
@@ -1134,6 +1134,16 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** A repeated optical capture reports no contact (N9); the cache of own captures maps the card back. */
   const enrich = async (rec: IntentRecord, value: unknown): Promise<unknown> => {
     const o = value as EncounterOutcome | null
+    // a back-code lives as long as the link it answers (the core shows none past it)
+    if (rec.command === 'showBackCode' && typeof (value as { qr?: unknown } | null)?.qr === 'string') {
+      const v = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === rec.input?.connection)
+      return { ...(value as { qr: string }), validUntil: (v?.link.exp ?? 0) * 1000 }
+    }
+    // a proposal: whether the link names a relay its documents can travel through
+    if (o?.kind === 'proposed' && typeof rec.input?.link === 'string') {
+      const read = await sc.readSharedConnectLink(rec.input.link, Math.floor(rec.when / 1000)).catch(() => null)
+      return { ...o, relayed: read?.ok === true && read.link.from.relays.length > 0 }
+    }
     if (rec.command !== 'confirmCard' || o?.kind !== 'already-captured' || o.contactId !== null) return value
     const anchor = (rec.input?.card as { anchor?: unknown } | undefined)?.anchor
     const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
@@ -1622,24 +1632,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     if (back) return { ok: true, value: { role: 'back', name: typeof back.propose.payload?.reason === 'string' ? back.propose.payload.reason : null, knownContact: null, self: false } }
     const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
     if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
-    let self = false
-    let used = false
+    let mine: SharedConnectView | undefined
     try {
-      const mine = (await gate.run((h) => h.sharedConnect())).find((v) => v.id === read.link.id)
-      self = mine?.role === 'inviter'
-      used = mine?.role === 'responder'
+      mine = (await gate.run((h) => h.sharedConnect())).find((v) => v.id === read.link.id)
     } catch (e) {
       return { ok: false, error: toAppError(e) }
     }
-    // a link this device answered before is spent (one code, one ceremony)
-    if (used) return { ok: false, error: { kind: 'refused', code: 'code-used' } }
-    return { ok: true, value: { role: 'displayed', name: read.link.label ?? null, knownContact: null, self } }
+    const value = { role: 'displayed' as const, name: read.link.label ?? null, knownContact: null, self: mine?.role === 'inviter' }
+    // a link this device's camera answered, still open and valid: its back-code can be shown again (after a
+    // restart the flow had no other way back to it); the core gives the same code and opens nothing twice
+    if (mine?.role === 'responder' && mine.status === 'open' && mine.channel === 'scan') return { ok: true, value: { ...value, answered: { connection: mine.id as ConnectionId, shown: mine.contactId !== null } } }
+    // any other link this device answered before is spent (one code, one ceremony)
+    if (mine?.role === 'responder') return { ok: false, error: { kind: 'refused', code: 'code-used' } }
+    return { ok: true, value }
   }
 
   /** A back-code (shared-connect without a carrier, lib 0.22.0) and the own open shown code it answers: the
    *  responder's card in it is made for that one code (`backCardChallenge`), so it names the enactment;
    *  null for anything else, also a back-code for no code of this device or one without a card */
-  const backCodeOf = async (raw: string): Promise<{ id: string; propose: { payload?: { reason?: unknown } } } | null> => {
+  const backCodeOf = async (raw: string): Promise<{ id: string; propose: { issuer?: unknown; payload?: { reason?: unknown } } } | null> => {
     const code = raw.trim()
     if (!code.includes(sc.BACK_PATH)) return null
     const open = (await gate.run((h) => h.sharedConnect())).filter((v) => v.role === 'inviter' && v.status === 'open')
@@ -1649,20 +1660,34 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     return null
   }
-  const readBackCode = async (raw: string): Promise<Result<{ connection: ConnectionId }>> => {
+  /** the inviter's camera read a back-code: judged by what the one write (`sharedConnectReadBack`) reports.
+   *  A refusal is refused; a new proposal is its confirmation; the same proposal read again (the core
+   *  absorbs it as a duplicate and reports nothing) is that confirmation or that contact, never another
+   *  one; a code past the end of the link it answers is expired, whatever is open */
+  const readBackCode = async (raw: string): Promise<Result<BackRead>> => {
+    const refused = (code: RefusalCode): Result<BackRead> => ({ ok: false, error: { kind: 'refused', code } })
     try {
       const back = await backCodeOf(raw)
-      if (!back) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
+      if (!back) return refused('card-invalid')
+      const before = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
+      if (!before) return refused('card-invalid')
+      const validUntil = (before.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
+      if (now() > validUntil) return refused('code-expired')
       const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
       if (!r.ok) return { ok: false, error: mapActError(r.code) }
       schedule(r.nextDueAt)
-      // the confirmation is open, or (the code read again after the acceptance) the contact; a code the
-      // inviter's machine refused opened nothing
+      const no = r.events.find((e) => e.type === 'sharedconnect.refused')
+      if (no) return refused(no.type === 'sharedconnect.refused' && no.reason === 'expired-link' ? 'code-expired' : 'card-invalid')
+      const pending = r.events.find((e) => e.type === 'sharedconnect.pending')
+      const added = r.events.find((e) => e.type === 'contact.added')
       const v = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
-      if (!v?.promptId && !v?.contactId) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
-      // published before the answer: the flow sees the proposal that answers its code at once
+      // nothing new reported: only the very proposal this enactment holds, read again, is answered
+      const again = !pending && !added && v !== undefined && v.status === 'open' && typeof back.propose.issuer === 'string' && v.theirDid !== null && sc.sameVid(v.theirDid, back.propose.issuer)
+      if (!pending && !added && !again) return refused('card-invalid')
+      // published before the answer: the flow asks exactly this proposal
       await sync()
-      return { ok: true, value: { connection: back.id as ConnectionId } }
+      const decision = pending?.type === 'sharedconnect.pending' ? pending.promptId : (v?.promptId ?? null)
+      return { ok: true, value: { connection: back.id as ConnectionId, decision: decision as DecisionId | null, name: v?.name ?? null, validUntil, contactId: (v?.contactId ?? null) as ContactId | null } }
     } catch (e) {
       return { ok: false, error: toAppError(e) }
     }

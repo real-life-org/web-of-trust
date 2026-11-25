@@ -40,6 +40,22 @@ export interface CardPreview {
   readonly knownContact: ContactId | null
   /** own code */
   readonly self: boolean
+  /** a link this device's camera answered before, whose ceremony is open and whose code is still valid:
+   *  the connection, so its back-code can be shown again (after a restart), and whether it was shown
+   *  before (the contact it opened exists); absent otherwise */
+  readonly answered?: { readonly connection: ConnectionId; readonly shown: boolean }
+}
+
+/** A back-code the camera read (`readBackCode`): the connection it answers and, while the person has not
+ *  decided, its confirmation; the contact once accepted (the code read again after the acceptance) */
+export interface BackRead {
+  readonly connection: ConnectionId
+  readonly decision: DecisionId | null
+  /** the name the proposal states, unverified */
+  readonly name: string | null
+  /** the end of the code it answers, with the ceremony's clock tolerance */
+  readonly validUntil: number
+  readonly contactId: ContactId | null
 }
 
 /** Outcome of an encounter act. No outcome means "mutual"; only ContactSummary.verification says that. */
@@ -51,7 +67,9 @@ export type EncounterOutcome =
   | { readonly kind: 'already-captured'; readonly contactId: ContactId | null }
   /** the code of a connection ceremony was read and the own proposal is under way: the contact exists
    *  once the ceremony is complete (`stores.connections`) */
-  | { readonly kind: 'proposed'; readonly connection: ConnectionId; readonly contactId: null }
+  /** `relayed`: the link names a relay its documents travel through; false for a link of a device without a
+   *  carrier, whose ceremony can only go on optically (the back-code) */
+  | { readonly kind: 'proposed'; readonly connection: ConnectionId; readonly contactId: null; readonly relayed?: boolean }
 
 export type SafetyTarget =
   | { readonly kind: 'contact'; readonly contactId: ContactId }
@@ -112,10 +130,11 @@ export interface TrustCommands {
    *  proposal with its card); the reader's contact exists from here on. Refused `no-card` for a code
    *  without the inviter's card (another app, an older version), `code-too-long` when it does not fit one
    *  QR code (a long name), `code-expired` once the code it answers expired or its ceremony ended */
-  showBackCode(connection: ConnectionId): IntentHandle<{ qr: string }>
+  /** `validUntil`: the end of the link it answers; the code is not shown past it */
+  showBackCode(connection: ConnectionId): IntentHandle<{ qr: string; validUntil: number }>
   /** the camera of the device that shows a code read the back-code: the proposal is asked like one that
    *  came over the carrier (a `connect-confirm` decision); accepting opens the contact. Not a human act */
-  readBackCode(raw: string): Promise<Result<{ connection: ConnectionId }>>
+  readBackCode(raw: string): Promise<Result<BackRead>>
   counterVerify(contactId: ContactId): IntentHandle<void>
 
   // Trust

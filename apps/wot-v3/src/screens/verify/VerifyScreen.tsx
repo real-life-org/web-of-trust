@@ -227,7 +227,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(<Working label={v.checking} />)
     case 'scanError':
       return page(
-        <Hero icon={<AlertIcon />} tone="danger" title={s.code === 'connect-failed' ? v.errorTitleConnectFailed : v.errorTitle} body={v[`error.${s.code}`]} />,
+        <Hero icon={<AlertIcon />} tone="danger" title={s.code === 'connect-failed' || s.code === 'connect-failed-kept' ? v.errorTitleConnectFailed : v.errorTitle} body={v[`error.${s.code}`]} />,
         <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />,
       )
     case 'confirm': {
@@ -295,7 +295,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
           <p className="m-0 text-sm text-pretty text-muted-foreground">{body}</p>
           <QrCode value={qr} label={label} tooLarge={v.codeTooLarge} />
         </div>,
-        <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />,
+        <>
+          {/* the back-code: back to waiting for the acceptance over the connection */}
+          {s.name === 'backCode' ? <QuietAction label={v.backKeepWaiting} onClick={() => send({ type: 'keepWaiting' })} /> : null}
+          <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />
+        </>,
         () => send({ type: 'leave' }),
       )
     }
@@ -336,13 +340,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
             <Callout tone="warning" role="status">
               <div className="flex flex-col gap-2.5">
                 <span>{v.connectWaitLong}</span>
-                <div className="flex flex-wrap gap-2">
-                  {/* the back-code: the way when the other side has no carrier in reach */}
-                  {s.canBack ? (
-                    <Button variant="outline" size="sm" onClick={() => send({ type: 'showCode' })}>
-                      {v.showCodeInstead}
-                    </Button>
-                  ) : null}
+                <div>
                   <Button variant="outline" size="sm" onClick={() => send({ type: 'keepWaiting' })}>
                     {v.keepWaiting}
                   </Button>
