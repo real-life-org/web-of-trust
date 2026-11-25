@@ -32,8 +32,9 @@ export interface WipeReport {
 }
 
 export interface CardPreview {
-  /** displayed card → scan; sent card → optical return path */
-  readonly role: 'displayed' | 'sent'
+  /** displayed card → scan; sent card → optical return path; back → the back-code of a connection
+   *  ceremony that answers one of this device's shown codes (no carrier in reach of the other side) */
+  readonly role: 'displayed' | 'sent' | 'back'
   readonly name: string | null
   /** recognized before confirming */
   readonly knownContact: ContactId | null
@@ -107,6 +108,14 @@ export interface TrustCommands {
   confirmCard(raw: string, origin?: 'camera' | 'url' | 'manual'): IntentHandle<EncounterOutcome>
   /** return path for the scanner: the own sent card as QR */
   sentCardFor(contactId: ContactId): Promise<Result<{ qr: string }>>
+  /** a connection ceremony without a carrier: the code the reader of a shown code shows back (its
+   *  proposal with its card); the reader's contact exists from here on. Refused `no-card` for a code
+   *  without the inviter's card (another app, an older version), `code-too-long` when it does not fit one
+   *  QR code (a long name), `code-expired` once the code it answers expired or its ceremony ended */
+  showBackCode(connection: ConnectionId): IntentHandle<{ qr: string }>
+  /** the camera of the device that shows a code read the back-code: the proposal is asked like one that
+   *  came over the carrier (a `connect-confirm` decision); accepting opens the contact. Not a human act */
+  readBackCode(raw: string): Promise<Result<{ connection: ConnectionId }>>
   counterVerify(contactId: ContactId): IntentHandle<void>
 
   // Trust

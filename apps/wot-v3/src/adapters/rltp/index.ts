@@ -57,10 +57,11 @@ export interface RltpDeps {
   readonly subtle?: SubtleCrypto
   /** tests and harness only */
   readonly faults?: RltpFaults
-  /** the ceremony a shown code starts: 'shared-connect' (the connection ceremony across apps; needs a
-   *  carrier with wires for it, the VTI mediator) or 'card' (encounter-scan's card, the default: the
-   *  form every carrier can show). The store builds name 'shared-connect' (app/compose.ts); codes of
-   *  both kinds are read either way */
+  /** the ceremony a shown code starts: 'shared-connect', the one ceremony of the app (the default; with
+   *  a carrier in reach or not: lib 0.22.0 opens both contacts from the link and the back-code). 'card'
+   *  only for tests and the harness: the card of encounter-scan as the app showed it before, so that the
+   *  paths that read such cards and keep the contacts and confirmations they made stay exercised. No
+   *  build passes it; codes of both kinds are read either way */
   readonly ceremony?: 'shared-connect' | 'card'
   /** foreground / background of the app (LifecyclePort.onState) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
@@ -235,6 +236,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return s.intent('confirmCard', 'encounter', `confirmCard|${raw.trim()}`, { card, role }, { role, name, knownContact: null, self: false })
       })
     },
+    showBackCode: (connection) => withSession((s) => s.intent('showBackCode', 'encounter', `showBackCode|${connection}`, { connection })),
+    readBackCode: async (raw) => (session ? session.readBackCode(raw) : (LOCKED as Result<never>)),
     async sentCardFor(contactId) {
       const qr = session ? await session.sentCard(contactId) : null
       return qr ? { ok: true, value: { qr } } : { ok: false, error: { kind: 'refused', code: 'nothing-to-counter' } }

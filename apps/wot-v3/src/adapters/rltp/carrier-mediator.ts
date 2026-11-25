@@ -377,6 +377,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         void track(buildCard(card))
       }
       for (const [relId, rel] of present) {
+        // a relationship whose counterpart's hints came after it opened (shared-connect without a carrier:
+        // the card in a code names none, the issue step brings them, lib 0.22.0) is carried from then on
+        if (uncarried.get(relId) === 'no-hint' && (rel.counterpartDeliveryHints ?? []).length > 0) uncarried.delete(relId)
         if (chained.has(relId) || instances.has(relId) || building.has(relId) || uncarried.has(relId)) continue
         // the instance of a displayed card with this N becomes the relationship's (it binds above, or
         // once its collection or its build ended)

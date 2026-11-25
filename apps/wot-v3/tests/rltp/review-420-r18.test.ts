@@ -68,7 +68,7 @@ it('R18 matrix: the pendingTransport fault exercises the observed holder A', asy
 
 it.each([false, true])('R18 failed build (close fails=%s): acquired holder closes before next opening', async failClose => {
   const released = vi.fn()
-  const host = rltpHolderHost({
+  const host = rltpHolderHost({ ceremony: 'card',
     idb: new IDBFactory(), clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(18420), writer: { acquire: async () => released },
     transport: { status: writableStore({ network: 'online', carrier: 'connected' }), start() {}, stop() {}, submit() {} },

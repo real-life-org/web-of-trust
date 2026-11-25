@@ -6,7 +6,7 @@
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, PendingJoinView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
+import type { ActId, AppError, AppEvent, CardPreview, ConnectionId, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -44,7 +44,7 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
-  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent */
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'shared-connect' when absent */
   readonly ceremony?: 'shared-connect' | 'card'
   /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
    *  in use */
@@ -78,6 +78,9 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** the inviter's camera read a back-code (shared-connect without a carrier, lib 0.22.0): the proposal of
+   *  the own shown code it answers, as if a carrier had brought it; the confirmation opens */
+  readBackCode(raw: string): Promise<Result<{ connection: ConnectionId }>>
   /** read boundary of a conversation: the item `upTo` and everything before it count as read */
   markRead(key: string, upTo: string): void
   /** entries in the library's inbox not yet taken over (tests) */
@@ -1328,10 +1331,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       : input
   const actContext: ActContext = {
     offer: (raw) => carrierOffer(deps.rootIkm, raw),
-    // a trigger link that was read is answered over the carrier's address, where the carrier has wires
-    // for it (the VTI mediator); the shown code is such a link only where the build names it
+    // the documents of a connection ceremony travel over the carrier's address, where the carrier has
+    // wires for them (the VTI mediator): configuration, known also while the device is offline
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
-    showsLink: deps.ceremony === 'shared-connect',
+    legacyCard: deps.ceremony === 'card',
   }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {
@@ -1613,6 +1616,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** The trigger link of a connection ceremony (shared-connect 0.1): read without the network; the name
    *  is the link's `_label`, unverified. An own link is this device's code. */
   const previewLink = async (raw: string): Promise<Result<CardPreview>> => {
+    // a back-code answers one of this device's own shown codes: the name its proposal states (unverified)
+    const back = await backCodeOf(raw).catch((e: unknown) => ({ error: toAppError(e) }))
+    if (back && 'error' in back) return { ok: false, error: back.error }
+    if (back) return { ok: true, value: { role: 'back', name: typeof back.propose.payload?.reason === 'string' ? back.propose.payload.reason : null, knownContact: null, self: false } }
     const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
     if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
     let self = false
@@ -1627,6 +1634,38 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // a link this device answered before is spent (one code, one ceremony)
     if (used) return { ok: false, error: { kind: 'refused', code: 'code-used' } }
     return { ok: true, value: { role: 'displayed', name: read.link.label ?? null, knownContact: null, self } }
+  }
+
+  /** A back-code (shared-connect without a carrier, lib 0.22.0) and the own open shown code it answers: the
+   *  responder's card in it is made for that one code (`backCardChallenge`), so it names the enactment;
+   *  null for anything else, also a back-code for no code of this device or one without a card */
+  const backCodeOf = async (raw: string): Promise<{ id: string; propose: { payload?: { reason?: unknown } } } | null> => {
+    const code = raw.trim()
+    if (!code.includes(sc.BACK_PATH)) return null
+    const open = (await gate.run((h) => h.sharedConnect())).filter((v) => v.role === 'inviter' && v.status === 'open')
+    for (const v of open) {
+      const read = await sc.readBackCode(code, { did: v.did, id: v.id }).catch(() => null)
+      if (read?.card) return { id: v.id, propose: read.propose }
+    }
+    return null
+  }
+  const readBackCode = async (raw: string): Promise<Result<{ connection: ConnectionId }>> => {
+    try {
+      const back = await backCodeOf(raw)
+      if (!back) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
+      const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
+      if (!r.ok) return { ok: false, error: mapActError(r.code) }
+      schedule(r.nextDueAt)
+      // the confirmation is open, or (the code read again after the acceptance) the contact; a code the
+      // inviter's machine refused opened nothing
+      const v = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
+      if (!v?.promptId && !v?.contactId) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
+      // published before the answer: the flow sees the proposal that answers its code at once
+      await sync()
+      return { ok: true, value: { connection: back.id as ConnectionId } }
+    } catch (e) {
+      return { ok: false, error: toAppError(e) }
+    }
   }
 
   const previewCard = async (raw: string): Promise<Result<CardPreview>> => {
@@ -1758,6 +1797,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    readBackCode,
     markRead,
     async inboxSize() {
       return (await gate.run((h) => h.inbox())).length

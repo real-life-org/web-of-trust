@@ -105,8 +105,13 @@ export function verifyExecutor(
         return { ok: true }
       case 'ver.preview':
         return fromResult(await port.trust.previewCard(e.raw))
-      case 'ver.confirm':
-        return fromResult(await port.trust.confirmCard(e.raw, e.origin).done)
+      case 'ver.confirm': {
+        const r = await port.trust.confirmCard(e.raw, e.origin).done
+        // a proposal: whether a carrier is in reach now (the connectivity the app shows); without one the
+        // flow shows the back-code at once
+        if (r.ok && r.value.kind === 'proposed') return { ok: true, value: { ...r.value, carried: carrierInReach(port) } }
+        return fromResult(r)
+      }
       case 'ver.capture': {
         const r = await port.trust.confirmCard(e.raw).done
         if (!r.ok) return fromResult(r)
@@ -123,8 +128,19 @@ export function verifyExecutor(
         // scanned a new code already, and nothing is issued for the old one
         if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
         return fromResult(await port.trust.decide(e.decision, e.choice).done)
+      case 'ver.back':
+        return fromResult(await port.trust.showBackCode(e.connection).done)
+      case 'ver.readBack':
+        return fromResult(await port.trust.readBackCode(e.raw))
     }
   }
+}
+
+/** A carrier in reach for the documents of a connection ceremony, as the app's connectivity says it: the
+ *  network not offline and the carrier neither unreachable nor missing from the build */
+export function carrierInReach(port: AppPort): boolean {
+  const c = port.stores.connectivity.get()
+  return c.network !== 'offline' && c.carrier !== 'unreachable' && c.carrier !== 'not-configured'
 }
 
 /** The bundle event: verification per contact and the open encounter-confirm decisions with the card

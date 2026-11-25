@@ -129,13 +129,13 @@ it('R17 host overlap: closing the draining old opening must not withdraw the res
     idb, clock, entropy: fakeEntropy(17420), writer: { acquire: async () => () => {} },
     publish() {}, emit() {}, onCurrent() {},
   }
-  const A = rltpHolderHost({ ...deps, transport: {
+  const A = rltpHolderHost({ ceremony: 'card', ...deps, transport: {
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start() {}, stop() {},
     submit(out) { for (const o of out) { held.add(o); pending.add(o.digest); deposits.push(o.digest) } },
     withdraw(ds) { for (const o of ds) { held.delete(o); if (![...held].some(x => x.digest === o.digest)) pending.delete(o.digest) } },
   } })
-  const B = rltpHolderHost({ ...deps, transport: {
+  const B = rltpHolderHost({ ceremony: 'card', ...deps, transport: {
     status: writableStore({ network: 'online', carrier: 'connected' }),
     start() {}, stop() {}, submit() {},
   } })

@@ -28,7 +28,7 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
   const keysB = { rootIkm: new Uint8Array(64).fill(51), dek: new Uint8Array(32).fill(52) }
   const life = new Set<(s: 'active' | 'background') => void>()
   let seed = 800
-  const make = (transport: Transport) => rltpHolderHost({
+  const make = (transport: Transport) => rltpHolderHost({ ceremony: 'card',
     idb, clock, entropy: fakeEntropy(seed++), transport,
     writer: { acquire: async () => () => {} },
     publish: () => {}, emit: () => {}, onCurrent: () => {},

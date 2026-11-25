@@ -17,7 +17,7 @@ it.each([true])('R8-3: delete verification checks the real adapter database; sha
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const idb = new IDBFactory(), device = fakeDevice()
   const identity = fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(900) })
-  const A = createRltpPort({
+  const A = createRltpPort({ ceremony: 'card',
     identity: sharedInventory ? { ...identity, databases: webDatabases(idb) } : identity,
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })

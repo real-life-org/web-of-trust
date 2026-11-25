@@ -212,8 +212,11 @@ contact's details name the reason: the card had no hint, it named none readable 
 state was refused, or the build has no mediator. An instance whose build failed for a transient reason
 (the store, a derivation) is planned again on the device clock, only while its generation runs; what
 the failed build made is closed. A contact met without a carrier offer (no N) shows the reason "no
-hint" while a mediator is configured. A contact's documents go through its first carried
-relationship only (in the view's order); every carried relationship of the contact still receives.
+hint" while a mediator is configured. A relationship marked "no hint" is carried as soon as the
+counterpart's hints arrive in the view (shared-connect without a carrier: the codes carry no hints, the
+issue step brings them, lib 0.22.0); until then its documents wait in custody. A contact's documents go
+through its first carried relationship only (in the view's order); every carried relationship of the
+contact still receives.
 
 **Delivery hints.** `show` and `scan` (the displayed card, the scanner's sent card) draw N, 32 bytes
 of the entropy port, at the gesture and journal it with the act input (`carrier-offer.ts`); the act
@@ -526,3 +529,15 @@ restart, the whole `outbox` of the view goes out again, and the counterpart's ma
 duplicate without acting twice. The carriage starts from the view whenever the opening becomes the
 one in use (`Session.offer`), and stops with the opening. A build without a mediator has no such
 wires: an enactment opened there stays in the holder until a carrier is configured.
+
+**Without a carrier in reach** (lib 0.22.0). The shown code is always the trigger link, also while the
+device is offline: the link names the mediator from the build's configuration as the relay, and a link
+shown in person carries the inviter's card (its pair keys, no delivery hints). A responder that read the
+link with its camera and has no carrier in reach (the connectivity the app shows: network offline, carrier
+unreachable or not configured) shows its back-code (`sharedConnectBack`, the act `showBackCode`): its
+contact opens from the inviter's card. The inviter's camera reads the back-code (`sharedConnectReadBack`
+for the own open link whose card check it passes, not a human act); the proposal is asked like one the
+wire brought, and accepting opens the inviter's contact. Trust and an invitation into a group go at once
+(they wait in custody); a message is `not-ready` until the counterpart's first document. The acceptance,
+the credentials and the receipts go over the wires above once a carrier is in reach and complete the same
+enactment; the issue steps bring the delivery hints, and the relationship is carried from then on.

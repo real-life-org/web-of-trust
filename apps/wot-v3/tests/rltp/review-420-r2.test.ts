@@ -19,7 +19,7 @@ it('R1-3: a failed createHolder closes its connection before the writer is relea
  const idb=new IDBFactory(),release=vi.fn(),close=vi.spyOn(IDBDatabase.prototype,'close');let opened:IDBDatabase|undefined
  const orig=IDBDatabase.prototype.transaction
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){if(this.name==='wot-v3-holder-early'&&args[1]==='readonly'){opened=this;throw Error('read unavailable')}return orig.apply(this,args as any)})
- const host=rltpHolderHost({idb,clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(81),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const host=rltpHolderHost({ ceremony: 'card',idb,clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(81),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  try{await expect(host.open('early',keys())).rejects.toThrow();expect(opened).toBeDefined();expect(release).toHaveBeenCalledOnce();await new Promise((r)=>setTimeout(r,0))
  const result=await new Promise<string>((r)=>{const q=idb.deleteDatabase('wot-v3-holder-early');q.onblocked=()=>r('blocked');q.onsuccess=()=>r('deleted')});expect(result).toBe('deleted')
  }finally{tx.mockRestore();opened?.close();close.mockRestore()}
@@ -27,7 +27,7 @@ it('R1-3: a failed createHolder closes its connection before the writer is relea
 it('R1-4: an opening still being built keeps the writer when the last registered one closes',async()=>{
  const entered=pause(),barrier=pause();let slow=false,held=false;const release=vi.fn(()=>{held=false})
  const subtle=new Proxy(crypto.subtle,{get(t,k){if(k==='digest')return async(...a:any[])=>{if(slow){entered.resolve();await barrier.promise}return (t.digest as any).apply(t,a)};const v=(t as any)[k];return typeof v==='function'?v.bind(t):v}})
- const host=rltpHolderHost({idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(82),transport:unconfiguredTransport(),writer:{acquire:async()=>{held=true;return release}},subtle,publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const host=rltpHolderHost({ ceremony: 'card',idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(82),transport:unconfiguredTransport(),writer:{acquire:async()=>{held=true;return release}},subtle,publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  const old=await host.open('old',keys());if(old.kind!=='ok')throw Error('open');slow=true
  const pending=host.open('staged',keys());await entered.promise
  await host.quiesce(old.holder);await host.seal(old.holder);await host.close(old.holder)
@@ -112,6 +112,6 @@ it('R1-2: a sealed and closed app-db cannot recreate a wiped database either',as
  const rejection=expect(pending).rejects.toThrow('sealed');barrier.resolve();await rejection;expect(await idb.databases()).toEqual([])
 })
 it('R1-4: a delete keeps the writer through close and forget until the wipe is verified',async()=>{
- const release=vi.fn(),host=rltpHolderHost({idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(183),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const release=vi.fn(),host=rltpHolderHost({ ceremony: 'card',idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(183),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  const a=await host.open('delete',keys());if(a.kind!=='ok')throw Error('open');await host.quiesce(a.holder);await host.deregister(a.holder,'skip');await host.seal(a.holder);await host.close(a.holder);host.forget('delete');expect(release).not.toHaveBeenCalled();host.wiped?.('delete');expect(release).toHaveBeenCalledOnce()
 })

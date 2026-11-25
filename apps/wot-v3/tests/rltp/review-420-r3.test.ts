@@ -16,7 +16,7 @@ const keys=()=>({rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(
 it('parallel opens retain and release their one host lock',async()=>{
  let held=false,released=0,requests=0
  const locks={request:async(_n:any,_o:any,cb:any)=>{requests++;await Promise.resolve();if(held)return cb(null);held=true;try{return await cb({name:'wot-v3-holder'})}finally{held=false;released++}}} as LockManager
- const host=rltpHolderHost({idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(301),transport:unconfiguredTransport(),writer:webLockWriter(locks),publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const host=rltpHolderHost({ ceremony: 'card',idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(301),transport:unconfiguredTransport(),writer:webLockWriter(locks),publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  const results=await Promise.all([host.open('first',keys()),host.open('second',keys())])
  for(const r of results)if(r.kind==='ok')await host.close(r.holder)
  await new Promise(r=>setTimeout(r,0))
@@ -66,7 +66,7 @@ it('a transport that throws does not fail an act the library committed',async()=
  const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:304})
  const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
  const tr=unconfiguredTransport();tr.submit=()=>{throw Error('transport unavailable')}
- const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),...keys(),clock,entropy:fakeEntropy(305),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
+ const s=await openSession({ceremony:'card',ns:'sender',generation:1,idb:new IDBFactory(),...keys(),clock,entropy:fakeEntropy(305),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
  try{
   const h=s.intent('confirmCard','encounter','capture',{card:decodeCardLink(card.value.qr),role:'displayed'})
   const result=await h.done.then(value=>({value}),error=>({rejected:error.message}))

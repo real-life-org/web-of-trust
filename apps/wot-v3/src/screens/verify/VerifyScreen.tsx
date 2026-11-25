@@ -282,18 +282,27 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     }
     case 'loadingFallback':
       return page(<Working label={v.showing} />, undefined, undefined)
-    case 'fallback': {
+    case 'fallback':
+    case 'backCode': {
+      // the scanner's second code: the sent card of encounter-scan, or the back-code of a connection
+      // ceremony without a carrier; one screen
       const name = nameOf(s.name2)
+      const first = name.split(' ')[0] ?? name
+      const [title, body, label, qr] = s.name === 'fallback' ? [v.fallbackTitle, f(v.fallbackBody, { name: first }), v.fallbackLabel, s.sentQr] : [f(v.backTitle, { name: first }), f(v.backBody, { name: first }), v.backLabel, s.qr]
       return page(
         <div className="flex flex-col items-center gap-4 text-center">
-          <h2 className="m-0 text-lg font-semibold">{v.fallbackTitle}</h2>
-          <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.fallbackBody, { name: name.split(' ')[0] ?? name })}</p>
-          <QrCode value={s.sentQr} label={v.fallbackLabel} tooLarge={v.codeTooLarge} />
+          <h2 className="m-0 text-lg font-semibold">{title}</h2>
+          <p className="m-0 text-sm text-pretty text-muted-foreground">{body}</p>
+          <QrCode value={qr} label={label} tooLarge={v.codeTooLarge} />
         </div>,
         <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />,
         () => send({ type: 'leave' }),
       )
     }
+    case 'backing':
+      return page(<Working label={v.showing} />, undefined, undefined)
+    case 'readingBack':
+      return page(<Working label={v.checking} />, undefined, undefined)
     case 'confirmationRequired':
     case 'confirmIncoming':
       // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
@@ -327,7 +336,13 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
             <Callout tone="warning" role="status">
               <div className="flex flex-col gap-2.5">
                 <span>{v.connectWaitLong}</span>
-                <div>
+                <div className="flex flex-wrap gap-2">
+                  {/* the back-code: the way when the other side has no carrier in reach */}
+                  {s.canBack ? (
+                    <Button variant="outline" size="sm" onClick={() => send({ type: 'showCode' })}>
+                      {v.showCodeInstead}
+                    </Button>
+                  ) : null}
                   <Button variant="outline" size="sm" onClick={() => send({ type: 'keepWaiting' })}>
                     {v.keepWaiting}
                   </Button>

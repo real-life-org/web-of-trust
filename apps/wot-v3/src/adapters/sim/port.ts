@@ -202,6 +202,9 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     previewCard: later,
     confirmCard: intent,
     sentCardFor: later,
+    // the simulation runs no connection ceremony
+    showBackCode: intent,
+    readBackCode: later,
     counterVerify: intent,
     giveTrust: intent,
     withdrawTrust: intent,
