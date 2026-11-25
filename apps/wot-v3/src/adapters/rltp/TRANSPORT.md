@@ -540,7 +540,11 @@ the carrier and shows the back-code on its own after `BACK_AFTER_MS` (12 s) with
 tell which side lacks the connection. The wait measures "no acceptance yet", not "not delivered":
 shared-connect gives no signal before the acceptance, and a frame on the socket is no acceptance by the
 mediator. "Keep waiting" goes back to the wait; an acceptance over the carrier ends the wait and the code
-with the success, a decline or a failure with its message. The back-code opens the responder's contact from
+with the success, a decline or a failure with its message. Every one of these decisions is taken against the
+ceremony as the port projects it from the core's view on every bundle (`Connection`: camera, accepted,
+backShown, relayed, theirDid, expiresAt, decision, contactId), the same on the first scan and on a
+resumption, never from what the screen did before. The back-code act runs only while the app is in front;
+back from the background the newest state decides again. The back-code opens the responder's contact from
 the inviter's card; it is shown until the link it answers ends, and the same link read again by the camera
 (after a restart) shows the same code again, opening nothing twice. The inviter's camera, and only its
 camera, reads the back-code (`sharedConnectReadBack` for the own open link whose card check it passes, not

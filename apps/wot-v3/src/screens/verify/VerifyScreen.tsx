@@ -335,7 +335,12 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       const name = firstName(nameOf(s.name2))
       return page(
         <>
-          <Hero icon={<CheckIcon />} title={f(s.role === 'scanner' ? v.connectWaitTitle : v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectWaitBody : v.connectFinishBody, { name })} />
+          {/* the scanner whose acceptance arrived waits only for the rest */}
+          {s.role === 'scanner' && !s.connections?.[s.connection]?.accepted ? (
+            <Hero icon={<CheckIcon />} title={f(v.connectWaitTitle, { name })} body={f(v.connectWaitBody, { name })} />
+          ) : (
+            <Hero icon={<CheckIcon />} title={f(v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectAcceptedBody : v.connectFinishBody, { name })} />
+          )}
           {s.waitLong ? (
             <Callout tone="warning" role="status">
               <div className="flex flex-col gap-2.5">
@@ -355,7 +360,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     }
     case 'declined':
       return page(
-        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={v.declinedBody} />,
+        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={s.kept ? v.declinedBodyKept : v.declinedBody} />,
         <PrimaryAction label={t.common.close} onClick={() => send({ type: 'done' })} />,
         () => send({ type: 'done' }),
       )

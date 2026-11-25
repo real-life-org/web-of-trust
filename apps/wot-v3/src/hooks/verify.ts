@@ -15,7 +15,43 @@ export type { VerifyState, VerifyEvent, ScanErrorCode, ShownCard } from '../flow
 const fromResult = (r: Result<unknown>): EffectResult =>
   r.ok ? { ok: true, value: r.value } : { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
 
-const timer = (clock: Platform['clock'], at: number) => new Promise<void>((resolve) => clock.setTimer(at, resolve))
+/** The timers of the flow's effects, each bound to the run that asked for it: a timer whose run is no longer
+ *  the machine's (the state changed) or whose flow ended is cancelled, its result `cancelled` (the machine
+ *  drops it as a result of an older run anyway) */
+export function flowTimers(clock: Platform['clock']) {
+  const live = new Map<number, { cancel: () => void; settle: () => void }>()
+  return {
+    wait(run: number, at: number): Promise<EffectResult> {
+      return new Promise((resolve) => {
+        const settle = () => {
+          live.delete(run)
+          resolve({ ok: false, code: 'cancelled' })
+        }
+        const cancel = clock.setTimer(at, () => {
+          live.delete(run)
+          resolve({ ok: true })
+        })
+        live.get(run)?.settle()
+        live.set(run, { cancel, settle })
+      })
+    },
+    /** every timer of another run than `run` ends now */
+    keep(run: number) {
+      for (const [r, t] of [...live]) {
+        if (r === run) continue
+        t.cancel()
+        t.settle()
+      }
+    },
+    clear() {
+      for (const t of [...live.values()]) {
+        t.cancel()
+        t.settle()
+      }
+    },
+  }
+}
+type FlowTimers = ReturnType<typeof flowTimers>
 
 /** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
 function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
@@ -72,21 +108,20 @@ export function scanTargetSlot(): ScanTargetSlot {
 
 export function verifyExecutor(
   port: AppPort,
-  platform: Pick<Platform, 'scanner' | 'clock'>,
+  platform: Pick<Platform, 'scanner' | 'clock'> & { readonly lifecycle?: Platform['lifecycle'] },
   scans: { current: AbortController | null },
   /** web scanners render into it; without a slot the scan gets no target (native, tests) */
   target: ScanTargetSlot | null = null,
+  timers: FlowTimers = flowTimers(platform.clock),
 ) {
   return async (e: VerifyEffect): Promise<EffectResult> => {
     switch (e.id) {
       case 'ver.show':
         return fromResult(await port.trust.showCard().done)
       case 'ver.expire':
-        await timer(platform.clock, e.at)
-        return { ok: true }
+        return timers.wait(e.run, e.at)
       case 'ver.wait':
-        await timer(platform.clock, platform.clock.now() + e.ms)
-        return { ok: true }
+        return timers.wait(e.run, platform.clock.now() + e.ms)
       case 'cam.check': {
         const availability = await platform.scanner.availability()
         const permission = availability === 'available' ? await platform.scanner.permission() : 'denied'
@@ -105,13 +140,8 @@ export function verifyExecutor(
         return { ok: true }
       case 'ver.preview':
         return fromResult(await port.trust.previewCard(e.raw))
-      case 'ver.confirm': {
-        const r = await port.trust.confirmCard(e.raw, e.origin).done
-        // a proposal: whether a carrier is in reach now (the connectivity the app shows); without one the
-        // flow shows the back-code at once
-        if (r.ok && r.value.kind === 'proposed') return { ok: true, value: { ...r.value, carried: carrierInReach(port) } }
-        return fromResult(r)
-      }
+      case 'ver.confirm':
+        return fromResult(await port.trust.confirmCard(e.raw, e.origin).done)
       case 'ver.capture': {
         const r = await port.trust.confirmCard(e.raw).done
         if (!r.ok) return fromResult(r)
@@ -128,8 +158,25 @@ export function verifyExecutor(
         // scanned a new code already, and nothing is issued for the old one
         if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
         return fromResult(await port.trust.decide(e.decision, e.choice).done)
-      case 'ver.back':
-        return fromResult(await port.trust.showBackCode(e.connection).done)
+      case 'ver.back': {
+        // the act opens a contact: it runs only while the screen is in front; back from the background, the
+        // newest state of the ceremony decides again (`resumed`), nothing ran meanwhile
+        const life = platform.lifecycle
+        if (life && life.current() === 'background') {
+          await new Promise<void>((resolve) => {
+            const off = life.onState((st) => {
+              if (st !== 'active') return
+              off()
+              resolve()
+            })
+          })
+          return { ok: false, code: 'resumed' }
+        }
+        const r = await port.trust.showBackCode(e.connection).done
+        // the end of the code it answers is checked before the code is shown
+        if (r.ok && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
+        return fromResult(r)
+      }
       case 'ver.readBack':
         return fromResult(await port.trust.readBackCode(e.raw))
     }
@@ -162,8 +209,14 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   )
   const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
   const all = port.stores.connections.get()
-  const connections = Object.fromEntries((all.status === 'ready' ? all.value : []).map((c) => [c.id, { status: c.status, contactId: c.contactId }]))
-  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections }
+  // every ceremony as the core holds it: the flow decides against exactly these facts
+  const connections = Object.fromEntries(
+    (all.status === 'ready' ? all.value : []).map((c) => [
+      c.id,
+      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, validUntil: c.validUntil, decision: c.decision },
+    ]),
+  )
+  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections, inReach: carrierInReach(port) }
 }
 
 export interface VerifyFlow {
@@ -191,7 +244,8 @@ export function useVerify(
   useEffect(() => {
     if (override) return
     const scans = { current: null as AbortController | null }
-    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot), platform)
+    const timers = flowTimers(platform.clock)
+    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot, timers), platform)
     const push = () => {
       const e = bundleEvent(port)
       if (e) r.send(e)
@@ -199,10 +253,14 @@ export function useVerify(
     const offContacts = port.stores.contacts.subscribe(push)
     const offDecisions = port.stores.decisions.subscribe(push)
     const offConnections = port.stores.connections.subscribe(push)
+    // whether a carrier is in reach is part of the bundle
+    const offConnectivity = port.stores.connectivity.subscribe(push)
     // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
     // again (a bundle that answered the card while the camera was open takes over now)
     let last = r.get().name
     const offScan = r.subscribe(() => {
+      // a timer belongs to its state: one of an earlier run ends with it
+      timers.keep(r.get().run)
       const name = r.get().name
       if (name !== 'scanning') scans.current?.abort()
       if (name === 'ready' && last !== 'ready') push()
@@ -214,7 +272,9 @@ export function useVerify(
       offContacts()
       offDecisions()
       offConnections()
+      offConnectivity()
       offScan()
+      timers.clear()
       scans.current?.abort()
       r.dispose()
     }

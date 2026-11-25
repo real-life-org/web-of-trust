@@ -254,6 +254,25 @@ export interface Connection {
   readonly failure: { readonly code: string; readonly message: string | null } | null
   /** when the ceremony closed (complete, declined, failed); null while open */
   readonly closedAt: number | null
+  // What the core holds of the ceremony, read from its view on every bundle, never from a screen's history
+  /** this side's code was read by a camera in one place: the scanner's `scan`, the shower's `displayed` */
+  readonly camera: boolean
+  /** the acceptance is made: the inviter accepted, or the responder received the inviter's acceptance (each
+   *  side issues its credential exactly then: `myCredential` of the core's view) */
+  readonly accepted: boolean
+  /** the responder showed its back-code: the contact it opened stands while the ceremony is open (a contact
+   *  of the carried path opens only at the end) */
+  readonly backShown: boolean
+  /** the link names a relay its documents travel through; false for a link of a device without a carrier */
+  readonly relayed: boolean
+  /** the other side's messaging identity, as the stored ceremony holds it; null before it is known */
+  readonly theirDid: string | null
+  /** the end of the code (`_exp` of the link); a back-code is shown no longer */
+  readonly expiresAt: number
+  /** until when the inviter takes a proposal for it (the end plus the ceremony's clock tolerance) */
+  readonly validUntil: number
+  /** the open confirmation of a proposal (inviter); null when none is open */
+  readonly decision: DecisionId | null
 }
 
 // ── Decisions ───────────────────────────────────────────────────────────────

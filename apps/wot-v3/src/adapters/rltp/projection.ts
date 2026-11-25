@@ -90,6 +90,38 @@ export interface ReadModels {
 /** the contact id of a connection ceremony's counterpart that gave no card: the ceremony's, prefixed */
 export const foreignContactId = (connection: string): ContactId => `connect:${connection}` as ContactId
 
+/** the messaging identity a link or a proposal names travels through a relay (did:peer:2 with a service
+ *  block); a form this reader cannot open counts as relayed (the carried path, the wait) */
+const relayedVia = (did: string): boolean => {
+  const peer = sc.parsePeer2(did)
+  return peer ? peer.relays.length > 0 : true
+}
+
+/** One ceremony as the port shows it: every fact from the core's view of it (shared-connect-holder.ts
+ *  `sharedConnectView`), nothing from a screen */
+export function connectionOf(v: SharedConnectView): Connection {
+  return {
+    id: v.id as ConnectionId,
+    role: v.role,
+    status: v.status,
+    name: v.name,
+    contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    met: v.met,
+    failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null,
+    closedAt: v.closedAt,
+    camera: v.role === 'responder' ? v.channel === 'scan' : v.channel === 'displayed',
+    // each side's credential is issued at the acceptance and only there (Inviter.accept, Responder on the accept)
+    accepted: v.myCredential !== null,
+    // a responder's contact opens from the back-code or at the end: while open, only the back-code opened it
+    backShown: v.role === 'responder' && v.status === 'open' && v.contactId !== null,
+    relayed: relayedVia(v.role === 'responder' ? v.link.from : v.did),
+    theirDid: v.theirDid,
+    expiresAt: v.link.exp * 1000,
+    validUntil: (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000,
+    decision: (v.promptId ?? null) as DecisionId | null,
+  }
+}
+
 const NO = (reason: Exclude<Availability, { ok: true }>['reason']): Availability => ({ ok: false, reason })
 const OK: Availability = { ok: true }
 
@@ -544,7 +576,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: connections.map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null, met: v.met, failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null, closedAt: v.closedAt })),
+    connections: connections.map(connectionOf),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

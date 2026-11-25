@@ -308,6 +308,8 @@ export const de: Translations = {
     connectFinishBody: '{name} hat deinen Code gescannt.',
     declinedTitle: '{name} hat abgelehnt',
     declinedBody: 'Es wurde keine Verbindung angelegt.',
+    declinedBodyKept: 'Der Kontakt bleibt auf diesem Gerät; die Verbindung wurde nicht bestätigt.',
+    connectAcceptedBody: '{name} hat bestätigt. Der Rest kommt über die Verbindung.',
     counterPendingTitle: 'Deine Bestätigung ist raus',
     counterPendingBody: 'Deine Bestätigung ist ausgestellt. Die Bestätigung von {name} kommt über das Netz; dann ist die Begegnung gegenseitig.',
     successBody: 'Du und {name} seid jetzt verbunden.',

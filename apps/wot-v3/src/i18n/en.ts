@@ -309,6 +309,8 @@ export const en = {
     connectFinishBody: '{name} scanned your code.',
     declinedTitle: '{name} declined',
     declinedBody: 'No connection was created.',
+    declinedBodyKept: 'The contact stays on this device; the connection was not confirmed.',
+    connectAcceptedBody: '{name} confirmed. The rest arrives over the connection.',
     counterPendingTitle: 'Your confirmation is out',
     counterPendingBody: 'Your confirmation is issued. {name}’s confirmation arrives over the network; the encounter becomes mutual then.',
     successBody: 'You and {name} are now connected.',

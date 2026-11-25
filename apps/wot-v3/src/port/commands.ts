@@ -40,23 +40,25 @@ export interface CardPreview {
   readonly knownContact: ContactId | null
   /** own code */
   readonly self: boolean
-  /** a link this device's camera answered before, whose ceremony is open and whose code is still valid:
-   *  the connection, so its back-code can be shown again (after a restart), and whether it was shown
-   *  before (the contact it opened exists); absent otherwise */
-  readonly answered?: { readonly connection: ConnectionId; readonly shown: boolean }
+  /** the very link this device's camera answered before, its ceremony open: the connection, resumed from
+   *  what the stored ceremony holds (`stores.connections`); absent otherwise */
+  readonly answered?: ConnectionId
 }
 
-/** A back-code the camera read (`readBackCode`): the connection it answers and, while the person has not
- *  decided, its confirmation; the contact once accepted (the code read again after the acceptance) */
-export interface BackRead {
-  readonly connection: ConnectionId
-  readonly decision: DecisionId | null
-  /** the name the proposal states, unverified */
-  readonly name: string | null
-  /** the end of the code it answers, with the ceremony's clock tolerance */
-  readonly validUntil: number
-  readonly contactId: ContactId | null
-}
+/** What reading a back-code did (`readBackCode`), typed by what the core reports and holds:
+ *  - `taken`: a new proposal for one of this device's open codes; its confirmation is open
+ *  - `again`: the very proposal this ceremony holds, read again (absorbed; after the acceptance the core
+ *    may open the contact from its card now)
+ *  - `refused`: the core refused it for that ceremony (another proposer, a card that does not agree, the
+ *    link expired, …), with the core's reason
+ *  - `expired`: the code it answers ended (with the clock tolerance) before it was read
+ *  - `no-match`: no open code of this device takes it (another device's, without its card, no back-code)
+ *  What the ceremony stands at afterwards is in `stores.connections`. */
+export type BackRead =
+  | { readonly kind: 'taken' | 'again'; readonly connection: ConnectionId }
+  | { readonly kind: 'refused'; readonly connection: ConnectionId; readonly reason: string }
+  | { readonly kind: 'expired'; readonly connection: ConnectionId }
+  | { readonly kind: 'no-match' }
 
 /** Outcome of an encounter act. No outcome means "mutual"; only ContactSummary.verification says that. */
 export type EncounterOutcome =
@@ -67,9 +69,7 @@ export type EncounterOutcome =
   | { readonly kind: 'already-captured'; readonly contactId: ContactId | null }
   /** the code of a connection ceremony was read and the own proposal is under way: the contact exists
    *  once the ceremony is complete (`stores.connections`) */
-  /** `relayed`: the link names a relay its documents travel through; false for a link of a device without a
-   *  carrier, whose ceremony can only go on optically (the back-code) */
-  | { readonly kind: 'proposed'; readonly connection: ConnectionId; readonly contactId: null; readonly relayed?: boolean }
+  | { readonly kind: 'proposed'; readonly connection: ConnectionId; readonly contactId: null }
 
 export type SafetyTarget =
   | { readonly kind: 'contact'; readonly contactId: ContactId }
