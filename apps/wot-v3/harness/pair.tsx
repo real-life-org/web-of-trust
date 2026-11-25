@@ -176,7 +176,7 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
       },
       showBackCode: (connection: Parameters<typeof showBackCode>[0]) => {
         const h = showBackCode(connection)
-        void h.done.then((r) => (r.ok ? optics.set(p.id, r.value.qr) : undefined))
+        void h.done.then((r) => (r.ok && r.value.kind === 'shown' ? optics.set(p.id, r.value.qr) : undefined))
         return h
       },
       sentCardFor: async (contactId: Parameters<typeof sentCardFor>[0]) => {

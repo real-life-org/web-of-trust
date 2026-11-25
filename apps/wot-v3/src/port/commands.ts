@@ -45,6 +45,10 @@ export interface CardPreview {
   readonly answered?: ConnectionId
 }
 
+export type BackShow =
+  | { readonly kind: 'shown'; readonly qr: string; readonly validUntil: number }
+  | { readonly kind: 'not-shown'; readonly why: 'closed' | 'accepted' | 'expired' | 'background' }
+
 /** What reading a back-code did (`readBackCode`), typed by what the core reports and holds:
  *  - `taken`: a new proposal for one of this device's open codes; its confirmation is open
  *  - `again`: the very proposal this ceremony holds, read again (absorbed; after the acceptance the core
@@ -130,8 +134,11 @@ export interface TrustCommands {
    *  proposal with its card); the reader's contact exists from here on. Refused `no-card` for a code
    *  without the inviter's card (another app, an older version), `code-too-long` when it does not fit one
    *  QR code (a long name), `code-expired` once the code it answers expired or its ceremony ended */
-  /** `validUntil`: the end of the link it answers; the code is not shown past it */
-  showBackCode(connection: ConnectionId): IntentHandle<{ qr: string; validUntil: number }>
+  /** `shown`: the code, until `validUntil` (the end of the link it answers). `not-shown`: the act checked its
+   *  preconditions right before the holder and ran nothing: the ceremony is no open one of a responder
+   *  (`closed`), the acceptance arrived (`accepted`), its link ended (`expired`), the app is not in front
+   *  (`background`) */
+  showBackCode(connection: ConnectionId): IntentHandle<BackShow>
   /** the camera of the device that shows a code read the back-code: the proposal is asked like one that
    *  came over the carrier (a `connect-confirm` decision); accepting opens the contact. Not a human act */
   readBackCode(raw: string): Promise<Result<BackRead>>

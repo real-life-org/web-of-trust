@@ -64,7 +64,7 @@ export interface RltpDeps {
    *  build passes it; codes of both kinds are read either way */
   readonly ceremony?: 'shared-connect' | 'card'
   /** foreground / background of the app (LifecyclePort.onState) */
-  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   /** the interop probe of the developer area (interop-probe.ts): only a build that enables it passes one */
   readonly interop?: InteropProbe
 }

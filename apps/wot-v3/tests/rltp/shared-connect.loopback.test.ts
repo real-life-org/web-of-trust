@@ -132,7 +132,7 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
     expect(value(w.A.port.stores.contacts)).toEqual([])
     // A shows its back-code: A's contact opens from B's card in the link
     const back = await w.A.port.trust.showBackCode(proposed.value.connection).done
-    if (!back.ok) throw new Error('back ' + JSON.stringify(back))
+    if (!back.ok || back.value.kind !== 'shown') throw new Error('back ' + JSON.stringify(back))
     await w.settle()
     expect(back.value.qr.startsWith('https://web-of-trust.de/t#')).toBe(true)
     expect(decodeURIComponent(back.value.qr)).toContain('/vti/flow/shared-connect/0.1/back')
@@ -218,7 +218,7 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
       const p = await d.port.trust.confirmCard(link, 'camera').done
       if (!p.ok || p.value.kind !== 'proposed') throw new Error('propose')
       const back = await d.port.trust.showBackCode(p.value.connection).done
-      if (!back.ok) throw new Error('back')
+      if (!back.ok || back.value.kind !== 'shown') throw new Error('back')
       await w.settle()
       return back.value.qr
     }
@@ -237,7 +237,7 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
       expect(atA).toMatchObject({ role: 'responder', status: 'open', name: 'Bea', camera: true, accepted: false, backShown: false, relayed: true, contactId: null, expiresAt: L.expiresAt })
       expect(atA?.theirDid?.startsWith('did:peer:2.')).toBe(true)
       const back = await w.A.port.trust.showBackCode(p.value.connection).done
-      if (!back.ok) throw new Error('back')
+      if (!back.ok || back.value.kind !== 'shown') throw new Error('back')
       await w.settle()
       const [cA] = value(w.A.port.stores.contacts)
       expect(ceremony(w.A, p.value.connection)).toMatchObject({ backShown: true, accepted: false, contactId: cA!.id })
@@ -272,6 +272,12 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
       w.online(w.A, true)
       for (let i = 0; i < 4 && !ceremony(w.A, p.value.connection)?.accepted; i++) await w.tick()
       expect(ceremony(w.A, p.value.connection)).toMatchObject({ status: 'open', accepted: true, backShown: false })
+      // the back-code act asked for after the acceptance (a timer due, a recovery) checks right before the
+      // holder: nothing runs, no contact opens from the code
+      expect(await w.A.port.trust.showBackCode(p.value.connection).done).toEqual({ ok: true, value: { kind: 'not-shown', why: 'accepted' } })
+      await w.settle()
+      expect(value(w.A.port.stores.contacts)).toEqual([])
+      expect(ceremony(w.A, p.value.connection)).toMatchObject({ backShown: false, contactId: null })
     })
 
     it('B2 at the port: the same handle with other link data is not that link; the very link resumes the stored ceremony', async () => {

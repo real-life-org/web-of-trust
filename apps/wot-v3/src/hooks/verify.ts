@@ -53,6 +53,19 @@ export function flowTimers(clock: Platform['clock']) {
 }
 type FlowTimers = ReturnType<typeof flowTimers>
 
+/** what a timer belongs to: the state's name and the scanner's phase */
+export const timerKey = (s: VerifyState): string => `${s.name}:${s.name === 'connecting' ? (s.phase ?? '') : ''}`
+
+/** resolves when the app is in front again */
+const front = (life: Platform['lifecycle']) =>
+  new Promise<void>((resolve) => {
+    const off = life.onState((st) => {
+      if (st !== 'active') return
+      off()
+      resolve()
+    })
+  })
+
 /** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
 function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
   if (contactId === null) return { follow: 'none', decision: null }
@@ -163,18 +176,17 @@ export function verifyExecutor(
         // newest state of the ceremony decides again (`resumed`), nothing ran meanwhile
         const life = platform.lifecycle
         if (life && life.current() === 'background') {
-          await new Promise<void>((resolve) => {
-            const off = life.onState((st) => {
-              if (st !== 'active') return
-              off()
-              resolve()
-            })
-          })
+          await front(life)
           return { ok: false, code: 'resumed' }
         }
         const r = await port.trust.showBackCode(e.connection).done
         // the end of the code it answers is checked before the code is shown
-        if (r.ok && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
+        if (r.ok && r.value.kind === 'shown' && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
+        // the act found the app behind (a race with the check above): back in front, the newest state decides
+        if (r.ok && r.value.kind === 'not-shown' && r.value.why === 'background' && life) {
+          if (life.current() === 'background') await front(life)
+          return { ok: false, code: 'resumed' }
+        }
         return fromResult(r)
       }
       case 'ver.readBack':
@@ -258,8 +270,13 @@ export function useVerify(
     // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
     // again (a bundle that answered the card while the camera was open takes over now)
     let last = r.get().name
+    let lastKey = timerKey(r.get())
     const offScan = r.subscribe(() => {
-      // a timer belongs to its state: one of an earlier run ends with it
+      // a timer belongs to its state: it ends with a change of the state (its name, the scanner's phase) and
+      // with a new run
+      const key = timerKey(r.get())
+      if (key !== lastKey) timers.clear()
+      lastKey = key
       timers.keep(r.get().run)
       const name = r.get().name
       if (name !== 'scanning') scans.current?.abort()

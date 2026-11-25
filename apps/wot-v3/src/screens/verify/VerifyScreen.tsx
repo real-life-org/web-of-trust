@@ -336,7 +336,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(
         <>
           {/* the scanner whose acceptance arrived waits only for the rest */}
-          {s.role === 'scanner' && !s.connections?.[s.connection]?.accepted ? (
+          {s.role === 'scanner' && s.phase !== 'accepted' ? (
             <Hero icon={<CheckIcon />} title={f(v.connectWaitTitle, { name })} body={f(v.connectWaitBody, { name })} />
           ) : (
             <Hero icon={<CheckIcon />} title={f(v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectAcceptedBody : v.connectFinishBody, { name })} />

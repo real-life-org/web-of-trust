@@ -263,8 +263,9 @@ export interface Connection {
   /** the responder showed its back-code: the contact it opened stands while the ceremony is open (a contact
    *  of the carried path opens only at the end) */
   readonly backShown: boolean
-  /** the link names a relay its documents travel through; false for a link of a device without a carrier */
-  readonly relayed: boolean
+  /** the link names a relay its documents travel through; false for a link of a device without a carrier;
+   *  null while it is not resolved (unknown, never taken as an answer) */
+  readonly relayed: boolean | null
   /** the other side's messaging identity, as the stored ceremony holds it; null before it is known */
   readonly theirDid: string | null
   /** the end of the code (`_exp` of the link); a back-code is shown no longer */
