@@ -54,26 +54,19 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
             {f(l.experimentalNote, { host })}
           </Callout>
           {hasProfile ? (
-            <div className="rounded-lg border border-border">
-              <CheckRow
-                label={shareLabel}
-                checked={shares}
-                onChange={s.name === 'review' ? setWithProfile : () => undefined}
-                hint={
-                  shares ? (
-                    <span className="mt-1 flex items-center gap-2">
-                      <PersonAvatar name={shown.name ?? '?'} image={shown.picture} size={32} />
-                      <span>
-                        {shown.name ? <span className="block font-medium text-foreground">{shown.name}</span> : null}
-                        {f(l.withProfileHint, { host })}
-                      </span>
-                    </span>
-                  ) : (
-                    f(l.withoutProfileHint, { host })
-                  )
-                }
-              />
-            </div>
+            <>
+              {/* the preview: what the web app sees, apart from the switch that decides it */}
+              <section className="space-y-1.5" aria-label={f(l.withProfileHint, { host })}>
+                <p className="px-1 text-xs text-muted-foreground">{f(l.withProfileHint, { host })}</p>
+                <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+                  <PersonAvatar name={shares ? (shown.name ?? '?') : '?'} image={shares ? shown.picture : null} size={44} />
+                  <span className="min-w-0 flex-1 text-sm">
+                    {shares ? <span className="font-medium">{shown.name ?? l.pictureOnly}</span> : <span className="text-muted-foreground">{l.withoutProfileHint}</span>}
+                  </span>
+                </div>
+              </section>
+              <CheckRow label={shareLabel} checked={shares} onChange={s.name === 'review' ? setWithProfile : () => undefined} />
+            </>
           ) : null}
           {s.name === 'failed' ? (
             <Callout tone="danger" role="alert">

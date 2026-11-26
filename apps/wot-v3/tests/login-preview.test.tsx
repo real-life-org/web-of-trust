@@ -48,8 +48,8 @@ function view(state: LoginState, send = vi.fn()) {
 describe('login preview', () => {
   it('switch on (default): preview shows the profile, and confirm sends exactly that', async () => {
     const send = view({ name: 'review', run: 0, raw, target })
-    expect(screen.getByText('So sieht beispiel.org dich.')).toBeInTheDocument()
-    expect(screen.getByText('Es sieht eine Kennung für dich, die nur dort gilt, und was du unten mitteilst.')).toBeInTheDocument()
+    expect(screen.getByText('So sieht beispiel.org dich:')).toBeInTheDocument()
+    expect(screen.getByText('Es sieht eine Kennung, die nur dort gilt, und was du teilst.')).toBeInTheDocument()
     expect(screen.getByText('Meinen Namen und mein Bild mitteilen')).toBeInTheDocument()
     expect(screen.getByText('Anton')).toBeInTheDocument()                     // the name in the preview
     await vi.waitFor(() => expect(picture()).not.toBeNull())
@@ -60,17 +60,17 @@ describe('login preview', () => {
   it('switch off: no picture, the hint says only an identifier, and confirm sends nothing', () => {
     const send = view({ name: 'review', run: 0, raw, target })
     fireEvent.click(screen.getByRole('checkbox'))
-    expect(screen.queryByText('So sieht beispiel.org dich.')).toBeNull()
-    expect(screen.getByText('beispiel.org sieht nur eine Kennung, die nur dort gilt.')).toBeInTheDocument()
+    expect(screen.queryByText('Anton')).toBeNull()
+    expect(screen.getByText('Nur eine Kennung')).toBeInTheDocument()
     expect(picture()).toBeNull()
-    expect(screen.getByText('Es sieht nur eine Kennung für dich, die nur dort gilt.')).toBeInTheDocument()
+    expect(screen.getByText('Es sieht nur eine Kennung, die nur dort gilt.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Anmelden' }))
     expect(send).toHaveBeenCalledWith({ type: 'confirm', shared: { name: null, picture: null } })
   })
 
   it('after a failure the preview shows what was confirmed, not the profile of now', () => {
     view({ name: 'failed', run: 1, raw, target, shared: { name: 'Anton', picture: null }, code: 'login-unreachable' })
-    expect(screen.getByText('So sieht beispiel.org dich.')).toBeInTheDocument()
+    expect(screen.getByText('So sieht beispiel.org dich:')).toBeInTheDocument()
     expect(picture()).toBeNull()
     expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
     expect(screen.getByText('Meinen Namen mitteilen')).toBeInTheDocument()       // not 'name and picture'
