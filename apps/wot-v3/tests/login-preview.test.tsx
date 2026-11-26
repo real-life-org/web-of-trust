@@ -33,12 +33,12 @@ beforeEach(() => vi.stubGlobal('Image', LoadingImage))
 afterEach(() => vi.unstubAllGlobals())
 const picture = () => document.querySelector(`img[src="${PIC}"]`)
 
-function view(state: LoginState, send = vi.fn()) {
+function view(state: LoginState, send = vi.fn(), profile: { name: string | null; picture: string | null } = own) {
   const comp = composeScenario(iiw)
   render(
     <LanguageProvider lang="de">
       <AppContextProvider value={{ port: comp.port, platform: comp.platform, nav: createNavStore() }}>
-        <LoginView state={state} send={send} own={own} />
+        <LoginView state={state} send={send} own={profile} />
       </AppContextProvider>
     </LanguageProvider>,
   )
@@ -75,5 +75,11 @@ describe('login preview', () => {
     expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
     expect(screen.getByText('Meinen Namen mitteilen')).toBeInTheDocument()       // not 'name and picture'
     expect(screen.queryByText('Meinen Namen und mein Bild mitteilen')).toBeNull()
+  })
+
+  it('after a failure the preview stays even if the profile is empty by now (review #557)', () => {
+    view({ name: 'failed', run: 1, raw, target, shared: { name: 'Anton', picture: null }, code: 'login-unreachable' }, vi.fn(), { name: null, picture: null })
+    expect(screen.getByText('So sieht beispiel.org dich:')).toBeInTheDocument()
+    expect(screen.getByText('Anton')).toBeInTheDocument()
   })
 })

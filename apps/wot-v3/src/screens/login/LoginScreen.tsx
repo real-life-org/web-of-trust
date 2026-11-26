@@ -53,7 +53,8 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
             <strong className="font-semibold">{l.experimental}. </strong>
             {f(l.experimentalNote, { host })}
           </Callout>
-          {hasProfile ? (
+          {/* after the confirmation the stored values decide, also whether there is a preview at all */}
+          {(s.name === 'review' ? hasProfile : hasProfile || shares) ? (
             <>
               {/* the preview: what the web app sees, apart from the switch that decides it */}
               <section className="space-y-1.5" aria-label={f(l.withProfileHint, { host })}>
