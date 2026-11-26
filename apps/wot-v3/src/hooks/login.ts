@@ -16,12 +16,20 @@ const fromResult = (r: Result<unknown>): EffectResult =>
     ? { ok: true, value: r.value }
     : { ok: false, code: r.error.kind === 'refused' ? r.error.code : r.error.kind === 'unavailable' && r.error.reason === 'not-supported' ? 'not-supported' : 'failed' }
 
-export function loginExecutor(port: AppPort, platform: Pick<Platform, 'browser'>, ownName: () => string | null) {
+/** what the app may share with a web app: the own profile's name and picture (null: none set) */
+export interface OwnProfile {
+  readonly name: string | null
+  readonly picture: string | null
+}
+const NONE: OwnProfile = { name: null, picture: null }
+
+export function loginExecutor(port: AppPort, platform: Pick<Platform, 'browser'>, ownProfile: () => OwnProfile) {
   return async (e: LoginEffect): Promise<EffectResult> => {
     switch (e.id) {
       case 'login.answer':
         try {
-          return fromResult(await port.trust.answerLogin(e.raw, { name: e.withName ? ownName() : null }))
+          const p = e.withProfile ? ownProfile() : NONE
+          return fromResult(await port.trust.answerLogin(e.raw, { name: p.name, picture: p.picture }))
         } catch {
           return { ok: false, code: 'failed' }
         }
@@ -36,20 +44,20 @@ export interface LoginFlow {
   readonly send: (e: LoginEvent) => void
 }
 
-/** `ownName`: the profile's name, read when the answer is built (null: none set). */
-export function useLogin(raw: string, ownName: string | null, onExit: () => void, override?: LoginState | null): LoginFlow {
+/** `ownProfile`: name and picture, read when the answer is built. */
+export function useLogin(raw: string, ownProfile: OwnProfile, onExit: () => void, override?: LoginState | null): LoginFlow {
   const port = usePort()
   const platform = usePlatform()
   const machine = useMemo(() => loginMachine(), [])
   const [first] = useState(() => loginStart(raw))
-  const nameRef = useRef(ownName)
+  const profileRef = useRef(ownProfile)
   useEffect(() => {
-    nameRef.current = ownName
+    profileRef.current = ownProfile
   })
   const [runner, setRunner] = useState<FlowRunner<LoginState, LoginEvent> | null>(null)
   useEffect(() => {
     if (override) return
-    const r = createFlowRunner(machine, first, loginExecutor(port, platform, () => nameRef.current), platform)
+    const r = createFlowRunner(machine, first, loginExecutor(port, platform, () => profileRef.current), platform)
     setRunner(r)
     return () => r.dispose()
     // the runner lives as long as the page that started the flow

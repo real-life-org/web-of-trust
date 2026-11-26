@@ -80,7 +80,7 @@ export interface Session {
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
   /** EXPERIMENTAL: answer a login request of a web app (login.ts) with the identity toward it */
-  answerLogin(raw: string, opts: { name?: string | null }): Promise<Result<LoginOutcome>>
+  answerLogin(raw: string, opts: { name?: string | null; picture?: string | null }): Promise<Result<LoginOutcome>>
   /** read boundary of a conversation: the item `upTo` and everything before it count as read */
   markRead(key: string, upTo: string): void
   /** entries in the library's inbox not yet taken over (tests) */

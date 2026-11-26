@@ -20,12 +20,13 @@ export const TOKEN_LIFETIME_S = 300
 const te = new TextEncoder()
 const b64uJson = (o: unknown): string => b64uOf(te.encode(JSON.stringify(o)))
 const refused = (code: 'login-invalid' | 'login-refused' | 'login-unreachable'): Result<never> => ({ ok: false, error: { kind: 'refused', code } })
+const PICTURE = /^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+/]+=*$/
 const NOT_SUPPORTED = { ok: false, error: { kind: 'unavailable', reason: 'not-supported' } } as const
 
 export async function answerLogin(
   keys: LoginKeys,
   raw: string,
-  opts: { name?: string | null; now: number; fetch?: typeof fetch },
+  opts: { name?: string | null; picture?: string | null; now: number; fetch?: typeof fetch },
 ): Promise<Result<LoginOutcome>> {
   const request = readLoginRequest(raw)
   const target = request ? loginTarget(request) : null
@@ -34,7 +35,9 @@ export async function answerLogin(
   const id = await keys.loginIdentity(target.origin)
   const iat = Math.floor(opts.now / 1000)
   const name = typeof opts.name === 'string' && opts.name.trim() !== '' ? opts.name.trim() : null
-  const claims = { iss: id.did, sub: id.did, aud: request.client_id, nonce: request.nonce, iat, exp: iat + TOKEN_LIFETIME_S, ...(name ? { name } : {}) }
+  // the profile picture only as the inline image the app keeps (lib/avatar), never a URL
+  const picture = typeof opts.picture === 'string' && PICTURE.test(opts.picture) ? opts.picture : null
+  const claims = { iss: id.did, sub: id.did, aud: request.client_id, nonce: request.nonce, iat, exp: iat + TOKEN_LIFETIME_S, ...(name ? { name } : {}), ...(picture ? { picture } : {}) }
   const input = `${b64uJson({ alg: 'EdDSA', typ: 'JWT', kid: `${id.did}#${id.did.slice('did:key:'.length)}` })}.${b64uJson(claims)}`
   const token = `${input}.${b64uOf(await id.sign(te.encode(input)))}`
   let res: Response
