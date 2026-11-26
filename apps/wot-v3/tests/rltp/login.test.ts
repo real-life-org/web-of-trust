@@ -118,6 +118,18 @@ describe('answerLogin', () => {
     expect((await tokenOf(String(app.got[1]!.init.body))).claims.name).toBeUndefined()
   })
 
+  it('sends the profile picture only as an inline image, and only when it is given', async () => {
+    const k = await keys()
+    const app = webApp(() => json(200, {}))
+    const pic = 'data:image/webp;base64,UklGRg=='
+    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton', picture: pic })
+    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton', picture: null })
+    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton', picture: 'https://tracker.example/p.png' })
+    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton', picture: 'data:text/html;base64,PHA+' })
+    expect((await tokenOf(String(app.got[0]!.init.body))).claims.picture).toBe(pic)
+    for (const i of [1, 2, 3]) expect((await tokenOf(String(app.got[i]!.init.body))).claims.picture).toBeUndefined()
+  })
+
   it('same-device: a return address on the web app’s origin is handed back; one elsewhere is refused', async () => {
     const k = await keys()
     const ok = await answerLogin(k, request(), { now: T0, fetch: webApp(() => json(200, { redirect_uri: 'https://beispiel.org/fertig?response_code=c' })).fetch })
@@ -154,8 +166,8 @@ describe('answerLogin', () => {
   it('the token never carries more than the claims above (no keys, no anchors)', async () => {
     const k = await keys()
     const app = webApp(() => json(200, {}))
-    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton' })
+    await answerLogin(k, request(), { now: T0, fetch: app.fetch, name: 'Anton', picture: 'data:image/png;base64,iVBORw==' })
     const t = await tokenOf(String(app.got[0]!.init.body))
-    expect(Object.keys(t.claims).sort()).toEqual(['aud', 'exp', 'iat', 'iss', 'name', 'nonce', 'sub'])
+    expect(Object.keys(t.claims).sort()).toEqual(['aud', 'exp', 'iat', 'iss', 'name', 'nonce', 'picture', 'sub'])
   })
 })

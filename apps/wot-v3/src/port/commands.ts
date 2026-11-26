@@ -159,7 +159,7 @@ export interface TrustCommands {
   // Login into a web app (EXPERIMENTAL, library deviation D6): sign the answer to a SIOPv2-shaped
   // request with the identity toward this web app and post it to the web app; `name`: the own name
   // goes along. Not an intent: nothing is stored, a lost answer is answered again by the person.
-  answerLogin(raw: string, opts: { name?: string | null }): Promise<Result<LoginOutcome>>
+  answerLogin(raw: string, opts: { name?: string | null; picture?: string | null }): Promise<Result<LoginOutcome>>
 }
 
 /** What the web app answered: logged in on the device that showed the code (`done`), or, for a

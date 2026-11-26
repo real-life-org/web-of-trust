@@ -13,11 +13,18 @@ import { isResult, stay, type CancelPolicy, type Effect, type Machine, type Resu
  *  not be reached, or this app version cannot do it */
 export type LoginFailure = 'login-invalid' | 'login-refused' | 'login-unreachable' | 'not-supported' | 'failed'
 
+/** what the person agreed to share with the web app, fixed at the confirmation (review #557: a retry
+ *  sends exactly this, not what the profile holds by then); both null: nothing */
+export interface SharedProfile {
+  readonly name: string | null
+  readonly picture: string | null
+}
+
 export type LoginState =
   | { readonly name: 'invalid'; readonly run: number }
   | { readonly name: 'review'; readonly run: number; readonly raw: string; readonly target: LoginTarget }
-  | { readonly name: 'sending'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly withName: boolean }
-  | { readonly name: 'failed'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly withName: boolean; readonly code: LoginFailure }
+  | { readonly name: 'sending'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly shared: SharedProfile }
+  | { readonly name: 'failed'; readonly run: number; readonly raw: string; readonly target: LoginTarget; readonly shared: SharedProfile; readonly code: LoginFailure }
   /** `returned`: for a same-device request, whether the browser could be opened; `url`: the web app's
    *  return address, offered again as a link the person taps (a blocked tab, a browser left behind) */
   | { readonly name: 'returning'; readonly run: number; readonly target: LoginTarget; readonly url: string }
@@ -25,8 +32,8 @@ export type LoginState =
   | { readonly name: 'exit'; readonly run: number }
 
 export type LoginEvent =
-  /** `withName`: the own name goes along */
-  | { readonly type: 'confirm'; readonly withName: boolean }
+  /** `shared`: the name and picture the person agreed to share (both null: none) */
+  | { readonly type: 'confirm'; readonly shared: SharedProfile }
   | { readonly type: 'retry' }
   | { readonly type: 'back' }
   | { readonly type: 'done' }
@@ -34,7 +41,7 @@ export type LoginEvent =
   | { readonly type: 'reopen' }
 
 export type LoginEffect =
-  | ({ readonly id: 'login.answer'; readonly raw: string; readonly withName: boolean } & Effect)
+  | ({ readonly id: 'login.answer'; readonly raw: string; readonly shared: SharedProfile } & Effect)
   | ({ readonly id: 'login.open'; readonly url: string } & Effect)
 
 const row = (id: string, event: string, to: string, cancel: CancelPolicy, resume: string, extra: { guard?: string; effects?: readonly string[] } = {}): Row => ({
@@ -82,9 +89,9 @@ export function loginStart(raw: string): S {
 const FAILURES: readonly string[] = ['login-invalid', 'login-refused', 'login-unreachable', 'not-supported']
 
 export function loginMachine(): Machine<S, LoginEvent, LoginEffect> {
-  const answer = (s: S, raw: string, target: LoginTarget, withName: boolean, rowId: string): Out => {
+  const answer = (s: S, raw: string, target: LoginTarget, shared: SharedProfile, rowId: string): Out => {
     const run = s.run + 1
-    return { state: { name: 'sending', run, raw, target, withName }, effects: [{ id: 'login.answer', run, raw, withName }], row: rowId }
+    return { state: { name: 'sending', run, raw, target, shared }, effects: [{ id: 'login.answer', run, raw, shared }], row: rowId }
   }
   const transition = (s: S, e: E): Out => {
     switch (s.name) {
@@ -92,7 +99,7 @@ export function loginMachine(): Machine<S, LoginEvent, LoginEffect> {
         if (e.type === 'back') return go({ name: 'exit', run: s.run }, 'invalid.back')
         return stay(s)
       case 'review':
-        if (e.type === 'confirm') return answer(s, s.raw, s.target, e.withName, 'review.confirm')
+        if (e.type === 'confirm') return answer(s, s.raw, s.target, e.shared, 'review.confirm')
         if (e.type === 'back') return go({ name: 'exit', run: s.run }, 'review.back')
         return stay(s)
       case 'sending':
@@ -104,11 +111,11 @@ export function loginMachine(): Machine<S, LoginEvent, LoginEffect> {
           }
           if (e.result.ok) return go({ name: 'done', run: s.run, target: s.target, returned: 'none' }, 'sending.result.done')
           const code = (FAILURES.includes(e.result.code ?? '') ? e.result.code : 'failed') as LoginFailure
-          return go({ name: 'failed', run: s.run, raw: s.raw, target: s.target, withName: s.withName, code }, 'sending.result.failed')
+          return go({ name: 'failed', run: s.run, raw: s.raw, target: s.target, shared: s.shared, code }, 'sending.result.failed')
         }
         return stay(s)
       case 'failed':
-        if (e.type === 'retry') return answer(s, s.raw, s.target, s.withName, 'failed.retry')
+        if (e.type === 'retry') return answer(s, s.raw, s.target, s.shared, 'failed.retry')
         if (e.type === 'back') return go({ name: 'exit', run: s.run }, 'failed.back')
         return stay(s)
       case 'returning':
