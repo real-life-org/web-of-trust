@@ -18,7 +18,10 @@ const request = (over: Record<string, string> = {}) =>
     `openid://?${new URLSearchParams({ response_type: 'id_token', response_mode: 'direct_post', scope: 'openid', id_token_type: 'subject_signed', client_id: 'https://beispiel.org', response_uri: 'https://beispiel.org/antwort', nonce: 'n', state: 's', ...over }).toString()}`,
   )
 
-function setup(answers: Result<LoginOutcome>[], raw = request(), own: { name: string | null; picture: string | null } = { name: 'Anton', picture: 'data:image/webp;base64,AAAA' }) {
+const SHARED = { name: 'Anton', picture: 'data:image/webp;base64,AAAA' }
+const NOTHING = { name: null, picture: null }
+
+function setup(answers: Result<LoginOutcome>[], raw = request()) {
   const asked: { raw: string; name: string | null | undefined; picture: string | null | undefined }[] = []
   const port = {
     trust: {
@@ -29,7 +32,7 @@ function setup(answers: Result<LoginOutcome>[], raw = request(), own: { name: st
     },
   } as unknown as AppPort
   const platform = createFakePlatform({ clock: virtualClock(T0, 'Europe/Berlin') })
-  const runner: FlowRunner<LoginState, LoginEvent> = cover.track(createFlowRunner(loginMachine(), loginStart(raw), loginExecutor(port, platform, () => own), platform))
+  const runner: FlowRunner<LoginState, LoginEvent> = cover.track(createFlowRunner(loginMachine(), loginStart(raw), loginExecutor(port, platform), platform))
   const until = async (name: LoginState['name']) => {
     for (let i = 0; i < 200; i++) {
       if (runner.get().name === name) return runner.get()
@@ -59,7 +62,7 @@ describe('login flow', () => {
 
   it('confirm with the name: answered, done on the other device; done leaves', async () => {
     const f = setup([{ ok: true, value: { kind: 'done' } }])
-    f.runner.send({ type: 'confirm', withProfile: true })
+    f.runner.send({ type: 'confirm', shared: SHARED })
     expect(f.runner.get().name).toBe('sending')
     await f.until('done')
     expect(f.runner.get()).toMatchObject({ returned: 'none' })
@@ -70,20 +73,30 @@ describe('login flow', () => {
 
   it('without the name the answer carries none', async () => {
     const f = setup([{ ok: true, value: { kind: 'done' } }])
-    f.runner.send({ type: 'confirm', withProfile: false })
+    f.runner.send({ type: 'confirm', shared: NOTHING })
     await f.until('done')
     expect(f.asked).toEqual([{ raw: request(), name: null, picture: null }])
   })
 
+  it('a retry sends exactly what was agreed at the confirmation, not what the profile holds by then (review #557)', async () => {
+    const f = setup([{ ok: false, error: { kind: 'refused', code: 'login-unreachable' } }, { ok: true, value: { kind: 'done' } }])
+    f.runner.send({ type: 'confirm', shared: { name: 'Anton', picture: null } })   // only the name was shared
+    await f.until('failed')
+    // a picture is added to the profile meanwhile; the retry carries the confirmed values only
+    f.runner.send({ type: 'retry' })
+    await f.until('done')
+    expect(f.asked.map((a) => [a.name, a.picture])).toEqual([['Anton', null], ['Anton', null]])
+  })
+
   it('same device: the return address opens in the browser; if it cannot, done says so', async () => {
     const f = setup([{ ok: true, value: { kind: 'return', url: 'https://beispiel.org/fertig?response_code=c' } }])
-    f.runner.send({ type: 'confirm', withProfile: false })
+    f.runner.send({ type: 'confirm', shared: NOTHING })
     await f.until('done')
     expect(f.runner.get()).toMatchObject({ returned: 'opened' })
     expect(f.browser.opened).toEqual(['https://beispiel.org/fertig?response_code=c'])
     const g = setup([{ ok: true, value: { kind: 'return', url: 'https://beispiel.org/fertig?response_code=d' } }])
     g.browser.available = false
-    g.runner.send({ type: 'confirm', withProfile: false })
+    g.runner.send({ type: 'confirm', shared: NOTHING })
     await g.until('done')
     expect(g.runner.get()).toMatchObject({ returned: 'failed', url: 'https://beispiel.org/fertig?response_code=d' })
     // the person taps "back to beispiel.org": the same address again, now the browser opens it
@@ -97,7 +110,7 @@ describe('login flow', () => {
 
   it('without a return address there is nothing to reopen', async () => {
     const f = setup([{ ok: true, value: { kind: 'done' } }])
-    f.runner.send({ type: 'confirm', withProfile: false })
+    f.runner.send({ type: 'confirm', shared: NOTHING })
     await f.until('done')
     f.runner.send({ type: 'reopen' })
     expect(f.runner.get()).toMatchObject({ name: 'done', returned: 'none' })
@@ -109,9 +122,9 @@ describe('login flow', () => {
       { ok: false, error: { kind: 'refused', code: 'login-unreachable' } },
       { ok: false, error: { kind: 'unavailable', reason: 'not-supported' } },
     ])
-    f.runner.send({ type: 'confirm', withProfile: true })
+    f.runner.send({ type: 'confirm', shared: SHARED })
     await f.until('failed')
-    expect(f.runner.get()).toMatchObject({ code: 'login-unreachable', withProfile: true })
+    expect(f.runner.get()).toMatchObject({ code: 'login-unreachable', shared: SHARED })
     f.runner.send({ type: 'retry' })
     await new Promise((r) => setTimeout(r, 5))
     await f.until('failed')

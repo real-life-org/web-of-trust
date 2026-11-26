@@ -3,21 +3,21 @@
 // by default, Anton 26.11.2026: the person confirms this very web app anyway), and the answer.
 // A page in the content column, like the encounter (Anton 29.10.).
 import { useState } from 'react'
-import { useBackInFlow, useLogin, useProfile, type LoginEvent, type LoginState, type OwnProfile } from '../../hooks'
+import { useBackInFlow, useLogin, useProfile, type LoginEvent, type LoginState, type SharedProfile } from '../../hooks'
 import { useI18n } from '../../i18n'
 import { AlertIcon, Callout, CheckIcon, CheckRow, FlowPage, Hero, KeyIcon, OutlineAction, PersonAvatar, PrimaryAction, QuietAction, Working } from '../../ui/components'
 
 export function LoginScreen({ raw, onExit }: { raw: string; onExit: () => void }) {
   const profile = useProfile()
-  const own: OwnProfile = profile.status === 'ready' ? { name: profile.value?.name ?? null, picture: profile.value?.image ?? null } : { name: null, picture: null }
-  const { state, send } = useLogin(raw, own, onExit)
+  const own: SharedProfile = profile.status === 'ready' ? { name: profile.value?.name ?? null, picture: profile.value?.image ?? null } : { name: null, picture: null }
+  const { state, send } = useLogin(raw, onExit)
   // system back is the flow's back (§4.1)
   useBackInFlow(() => send({ type: 'back' }))
   return <LoginView state={state} send={send} own={own} />
 }
 
 /** The view of one machine state (also used by the screen catalog). */
-export function LoginView({ state: s, send, own }: { state: LoginState; send: (e: LoginEvent) => void; own: OwnProfile }) {
+export function LoginView({ state: s, send, own }: { state: LoginState; send: (e: LoginEvent) => void; own: SharedProfile }) {
   const { t, f } = useI18n()
   const l = t.login
   const [withProfile, setWithProfile] = useState(true)
@@ -48,7 +48,7 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
             <div className="rounded-lg border border-border">
               <CheckRow
                 label={shareLabel}
-                checked={s.name === 'review' ? withProfile : s.withProfile}
+                checked={s.name === 'review' ? withProfile : s.shared.name !== null || s.shared.picture !== null}
                 onChange={s.name === 'review' ? setWithProfile : () => undefined}
                 hint={
                   <span className="mt-1 flex items-center gap-2">
@@ -70,7 +70,7 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
           {s.name === 'failed' ? (
             <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />
           ) : (
-            <PrimaryAction label={l.confirm} busy={busy} disabled={busy} onClick={() => send({ type: 'confirm', withProfile: hasProfile && withProfile })} />
+            <PrimaryAction label={l.confirm} busy={busy} disabled={busy} onClick={() => send({ type: 'confirm', shared: hasProfile && withProfile ? own : { name: null, picture: null } })} />
           )}
           <QuietAction label={t.common.cancel} disabled={busy} onClick={back} />
         </>,
