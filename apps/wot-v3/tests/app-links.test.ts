@@ -38,12 +38,9 @@ describe('verified App Links (#489)', () => {
     expect(isCardLink('https://link.trustoverip.org/t#_from=did:peer:2.x&_id=y')).toBe(true)
   })
 
-  it('the VTI link host is registered unverified: trigger links another app shows reach the app once the person allows its links', () => {
-    const at = manifest.indexOf('android:host="link.trustoverip.org"')
-    expect(at).toBeGreaterThan(0)
-    const filter = manifest.slice(manifest.lastIndexOf('<intent-filter', at), manifest.indexOf('</intent-filter>', at))
-    expect(filter).not.toContain('autoVerify')
-    expect(filter).toContain('android:path="/t"')
+  it('no filter names a host we cannot verify: on Android 11 and lower one failing host leaves every link unverified', () => {
+    for (const m of manifest.matchAll(/android:host="([^"]+)"/g)) expect(m[1]).toBe('web-of-trust.de')
+    // trigger links on the VTI link host still open the connection when scanned (isCardLink above)
     // the landing serves the page a browser lands on for our own links
     expect(existsSync(here('../landing/public/t/index.html'))).toBe(true)
   })
