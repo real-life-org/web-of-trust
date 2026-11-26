@@ -405,6 +405,7 @@ export const de: Translations = {
     withProfile: 'Meinen Namen und mein Bild mitteilen',
     withName: 'Meinen Namen mitteilen',
     withPicture: 'Mein Bild mitteilen',
+    withoutProfileHint: '{host} sieht nur eine Kennung, die nur dort gilt.',
     withProfileHint: 'So sieht {host} dich.',
     confirm: 'Anmelden',
     sending: 'Wird angemeldet…',

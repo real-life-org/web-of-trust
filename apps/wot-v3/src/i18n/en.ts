@@ -407,6 +407,7 @@ export const en = {
     withProfile: 'Share my name and picture',
     withName: 'Share my name',
     withPicture: 'Share my picture',
+    withoutProfileHint: '{host} only sees an identifier that is valid there alone.',
     withProfileHint: 'This is how {host} sees you.',
     confirm: 'Log in',
     sending: 'Logging in…',

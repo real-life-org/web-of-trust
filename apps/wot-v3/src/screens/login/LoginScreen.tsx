@@ -16,6 +16,8 @@ export function LoginScreen({ raw, onExit }: { raw: string; onExit: () => void }
   return <LoginView state={state} send={send} own={own} />
 }
 
+const NOTHING: SharedProfile = { name: null, picture: null }
+
 /** The view of one machine state (also used by the screen catalog). */
 export function LoginView({ state: s, send, own }: { state: LoginState; send: (e: LoginEvent) => void; own: SharedProfile }) {
   const { t, f } = useI18n()
@@ -23,6 +25,11 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
   const [withProfile, setWithProfile] = useState(true)
   const hasProfile = Boolean(own.name || own.picture)
   const shareLabel = own.name && own.picture ? l.withProfile : own.name ? l.withName : l.withPicture
+  // one source for preview and answer (review #557): before the confirmation what the switch selects,
+  // after it what was confirmed and is sent, also on a retry
+  const shown: SharedProfile =
+    s.name === 'review' ? (withProfile ? own : NOTHING) : s.name === 'sending' || s.name === 'failed' ? s.shared : NOTHING
+  const shares = shown.name !== null || shown.picture !== null
   const back = () => send({ type: 'back' })
   const page = (children: React.ReactNode, footer?: React.ReactNode, backKind: 'back' | 'close' = 'close') => (
     <FlowPage title={l.title} onBack={back} backKind={backKind} footer={footer}>
@@ -48,13 +55,17 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
             <div className="rounded-lg border border-border">
               <CheckRow
                 label={shareLabel}
-                checked={s.name === 'review' ? withProfile : s.shared.name !== null || s.shared.picture !== null}
+                checked={shares}
                 onChange={s.name === 'review' ? setWithProfile : () => undefined}
                 hint={
-                  <span className="mt-1 flex items-center gap-2">
-                    <PersonAvatar name={own.name ?? '?'} image={own.picture} size={32} />
-                    <span>{f(l.withProfileHint, { host })}</span>
-                  </span>
+                  shares ? (
+                    <span className="mt-1 flex items-center gap-2">
+                      <PersonAvatar name={shown.name ?? '?'} image={shown.picture} size={32} />
+                      <span>{f(l.withProfileHint, { host })}</span>
+                    </span>
+                  ) : (
+                    f(l.withoutProfileHint, { host })
+                  )
                 }
               />
             </div>
@@ -70,7 +81,7 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
           {s.name === 'failed' ? (
             <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />
           ) : (
-            <PrimaryAction label={l.confirm} busy={busy} disabled={busy} onClick={() => send({ type: 'confirm', shared: hasProfile && withProfile ? own : { name: null, picture: null } })} />
+            <PrimaryAction label={l.confirm} busy={busy} disabled={busy} onClick={() => send({ type: 'confirm', shared: shown })} />
           )}
           <QuietAction label={t.common.cancel} disabled={busy} onClick={back} />
         </>,
