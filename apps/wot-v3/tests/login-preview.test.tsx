@@ -49,8 +49,9 @@ describe('login preview', () => {
   it('switch on (default): preview shows the profile, and confirm sends exactly that', async () => {
     const send = view({ name: 'review', run: 0, raw, target })
     expect(screen.getByText('So sieht beispiel.org dich.')).toBeInTheDocument()
-    expect(screen.getByText('Es sieht einen Namen für dich, der nur dort gilt, und was du unten mitteilst.')).toBeInTheDocument()
+    expect(screen.getByText('Es sieht eine Kennung für dich, die nur dort gilt, und was du unten mitteilst.')).toBeInTheDocument()
     expect(screen.getByText('Meinen Namen und mein Bild mitteilen')).toBeInTheDocument()
+    expect(screen.getByText('Anton')).toBeInTheDocument()                     // the name in the preview
     await vi.waitFor(() => expect(picture()).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: 'Anmelden' }))
     expect(send).toHaveBeenCalledWith({ type: 'confirm', shared: own })
@@ -62,7 +63,7 @@ describe('login preview', () => {
     expect(screen.queryByText('So sieht beispiel.org dich.')).toBeNull()
     expect(screen.getByText('beispiel.org sieht nur eine Kennung, die nur dort gilt.')).toBeInTheDocument()
     expect(picture()).toBeNull()
-    expect(screen.getByText('Es sieht nur einen Namen für dich, der nur dort gilt.')).toBeInTheDocument()
+    expect(screen.getByText('Es sieht nur eine Kennung für dich, die nur dort gilt.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Anmelden' }))
     expect(send).toHaveBeenCalledWith({ type: 'confirm', shared: { name: null, picture: null } })
   })

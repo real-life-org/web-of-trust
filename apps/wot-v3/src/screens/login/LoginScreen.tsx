@@ -63,7 +63,10 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
                   shares ? (
                     <span className="mt-1 flex items-center gap-2">
                       <PersonAvatar name={shown.name ?? '?'} image={shown.picture} size={32} />
-                      <span>{f(l.withProfileHint, { host })}</span>
+                      <span>
+                        {shown.name ? <span className="block font-medium text-foreground">{shown.name}</span> : null}
+                        {f(l.withProfileHint, { host })}
+                      </span>
                     </span>
                   ) : (
                     f(l.withoutProfileHint, { host })
