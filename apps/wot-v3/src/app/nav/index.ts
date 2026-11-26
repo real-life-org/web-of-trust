@@ -27,6 +27,8 @@ export type Route =
   | { readonly kind: 'interop' }
   /** the diagnostic entries of this unlock (app/error-report.tsx) */
   | { readonly kind: 'diagnostics' }
+  /** a login request of a web app, from an app link or the verify page's scanner (experimental) */
+  | { readonly kind: 'login'; readonly raw: string }
 export type Sheet = never
 
 export interface NavState {

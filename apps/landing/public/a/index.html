@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Web of Trust · Anmelden</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; padding: 24px 16px; font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin-inline: auto; }
+      h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
+      p { margin: .5rem 0; }
+      a.button { display: block; margin: 1rem 0 .5rem; padding: .8rem 1rem; border-radius: .6rem; background: #2563eb; color: #fff; text-align: center; text-decoration: none; font-weight: 600; }
+      a.quiet { display: block; text-align: center; color: inherit; }
+      small { color: #666; }
+    </style>
+  </head>
+  <body>
+    <h1>Mit Web of Trust anmelden</h1>
+    <p>Eine Web-App möchte dich mit deiner Web-of-Trust-Identität anmelden. Das geht mit der Web-of-Trust-App: Wenn sie installiert ist, öffnet sie sich mit diesem Link oder wenn du den Code mit der App-Kamera scannst. Die Anmeldung ist experimentell.</p>
+    <a class="button" id="open" href="#">In der App öffnen</a>
+    <a class="button" href="https://play.google.com/store/apps/details?id=org.reallife.weboftrust">App für Android installieren</a>
+    <a class="quiet" href="/">Was ist Web of Trust?</a>
+    <p><small lang="en">A web app wants to log you in with your Web of Trust identity. The Web of Trust app does that: with the app installed, this link or scanning the code with the app's camera opens it. The login is experimental.</small></p>
+    <script>
+      // the fragment holds the request; the app reads it when it is opened with this very link
+      document.getElementById('open').href = location.href
+    </script>
+  </body>
+</html>

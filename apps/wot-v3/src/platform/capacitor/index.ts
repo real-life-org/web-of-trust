@@ -9,7 +9,7 @@
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Clipboard } from '@capacitor/clipboard'
-import type { ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenCoverText, ScreenProtectionPort } from '../ports'
+import type { BrowserPort, ClipboardPort, ClockPort, IdentityPlatform, LiveUpdatePort, Platform, ScreenCoverText, ScreenProtectionPort } from '../ports'
 import { createWebIdentityPlatform, liveUpdateOff, webClipboard, webClock, webEntropy, webNetwork, webPrefs, webScreenProtection } from '../web'
 import { capacitorBiometric } from './biometric'
 import { capacitorLanguage } from './language'
@@ -110,7 +110,22 @@ export function createCapacitorPlatform(opts: { liveUpdate?: LiveUpdatePort; sca
     network: webNetwork(),
     deepLinks: capacitorDeepLinks(),
     liveUpdate: opts.liveUpdate ?? liveUpdateOff,
+    browser: capacitorBrowser,
   }
+}
+
+/** The system's browser: a navigation of the web view to an address outside the app is handed by
+ *  Capacitor to the operating system (Android ACTION_VIEW, iOS UIApplication.open); the app stays
+ *  where it is. Only https and http addresses. Checked on the device, not in tests. */
+const capacitorBrowser: BrowserPort = {
+  async open(url) {
+    if (typeof document === 'undefined' || !/^https?:\/\//.test(url)) return 'unavailable'
+    const a = document.createElement('a')
+    a.href = url
+    a.rel = 'noopener noreferrer'
+    a.click()
+    return 'opened'
+  },
 }
 
 export function createCapacitorIdentityPlatform(platform: Platform): IdentityPlatform {

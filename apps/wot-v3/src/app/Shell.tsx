@@ -28,6 +28,8 @@ import type { Route, Tab } from './nav'
 import { shellPanes, WIDE_QUERY } from './layout'
 import { useIdentityPage } from './identity-page'
 import { createLinkJobs } from './link-job'
+import { isLoginRequest } from '../lib/login-request'
+import { LoginScreen } from '../screens/login/LoginScreen'
 import type { ContactId, GroupId } from '../port'
 
 function useTabBadges(): Record<Tab, number> {
@@ -101,7 +103,8 @@ export function Shell({ links }: { links: LinkInbox }) {
   const onVerifyExit = (s: Extract<VerifyState, { name: 'exit' }>) => {
     if (s.deferred) queue.send({ type: 'defer', id: s.deferred })
     if (s.recognized) toast.show(t.verify.recognized)
-    if (s.to === 'chat' && s.contactId) openContact(s.contactId)
+    if (s.to === 'login') send({ type: 'open', route: { kind: 'login', raw: s.raw } })
+    else if (s.to === 'chat' && s.contactId) openContact(s.contactId)
     else send({ type: 'back' })
   }
   /** the conversation of a contact, or the details of one that has no conversation (another app's) */
@@ -156,8 +159,10 @@ export function Shell({ links }: { links: LinkInbox }) {
   useEffect(() => {
     if (queued.length === 0) return
     const url = links.take()
-    if (url !== null) jobs.offer(url)
-  }, [queued, links, jobs])
+    // a login request of a web app (experimental) has a page of its own; every other link is a card's
+    if (url !== null && isLoginRequest(url)) nav.send({ type: 'open', route: { kind: 'login', raw: url } })
+    else if (url !== null) jobs.offer(url)
+  }, [queued, links, jobs, nav])
   const onVerifyState = (s: VerifyState | null) => {
     jobs.verifyState(s)
     setVerify(s)
@@ -293,5 +298,7 @@ function RouteScreen({
       return <GroupFoundScreen onBack={onBack} onFounded={onFounded} />
     case 'group-invite':
       return <GroupInviteScreen key={route.id} groupId={route.id} onBack={onBack} />
+    case 'login':
+      return <LoginScreen key={route.raw} raw={route.raw} onExit={onBack} />
   }
 }

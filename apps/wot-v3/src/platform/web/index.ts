@@ -1,6 +1,6 @@
 // Web implementations of the platform ports (architecture §5).
 
-import type { ClockPort, EntropyPort, Language, LanguagePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { BrowserPort, ClockPort, EntropyPort, Language, LanguagePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { webClipboard, webScreenProtection } from './identity'
 import { liveUpdateOff, webDeepLinks, webLifecycle } from './lifecycle'
 import { webScanner } from './scanner'
@@ -148,6 +148,23 @@ export const webMail: MailPort = {
   },
 }
 
+/** A new tab for an https or http address. `window.open` tells whether the browser opened it: a
+ *  blocked tab (a popup blocker, no user gesture) is 'unavailable', never reported as opened. The new
+ *  tab gets no handle back to this page. Anything else is not opened. */
+export const webBrowser: BrowserPort = {
+  async open(url) {
+    if (typeof window === 'undefined' || typeof window.open !== 'function' || !/^https?:\/\//.test(url)) return 'unavailable'
+    const w = window.open(url, '_blank')
+    if (!w) return 'unavailable'
+    try {
+      w.opener = null
+    } catch {
+      // a browser that does not let the opener be cleared: the tab is open all the same
+    }
+    return 'opened'
+  },
+}
+
 /** Web Share API (text, and files where navigator.canShare allows them). */
 export const webShare: SharePort = {
   async share({ text, url }) {
@@ -188,5 +205,6 @@ export function createWebPlatform(): Platform {
     network: webNetwork(),
     deepLinks: webDeepLinks(),
     liveUpdate: liveUpdateOff,
+    browser: webBrowser,
   }
 }

@@ -39,6 +39,9 @@
                 <data android:path="/c/" />
                 <data android:path="/t" />
                 <data android:path="/t/" />
+                <!-- login request of a web app (experimental, src/lib/login-request.ts) -->
+                <data android:path="/a" />
+                <data android:path="/a/" />
             </intent-filter>
             <!-- Trigger links of the connection ceremony that another app shows (shared-connect 0.1; VTI
                  trigger links on the ToIP link host). Not verifiable by us: the host would have to name this

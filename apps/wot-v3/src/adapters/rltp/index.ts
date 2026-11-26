@@ -290,6 +290,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         }),
       ),
     introduce: unsupported,
+    answerLogin: async (raw, opts) => (session ? session.answerLogin(raw, opts) : (LOCKED as Result<never>)),
   }
 
   return {

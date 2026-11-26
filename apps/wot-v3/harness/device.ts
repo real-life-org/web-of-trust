@@ -23,6 +23,8 @@ declare global {
       exits(): number
       /** a message of `from` (a person id of the scenario) arrives in the conversation `key` (sim only) */
       receive(key: `c:${string}`, from: string, text: string): void
+      /** the app is opened with a link (a card, a trigger link, a login request) */
+      openLink(url: string): void
     }
   }
 }
@@ -41,6 +43,7 @@ export function exposeDevice(fake: FakePlatform, clock: VirtualClock, world?: Si
       if (!world) throw new Error('receive: no simulated world (backend sim only)')
       world.apply({ type: 'receive', key, from, text })
     },
+    openLink: (url) => fake.deepLinks.open(url),
   }
 }
 

@@ -28,6 +28,7 @@ import { LOADING, ready, writableStore } from '../../port'
 import type { IdentityRuntime } from '../identity/runtime'
 import type { Bundle } from './project'
 import type { SimWorld } from './world'
+import { isLoginRequest } from '../../lib/login-request'
 
 const CAPABILITIES: Capabilities = {
   messaging: false,
@@ -224,6 +225,8 @@ export function createSimPort(world: SimWorld, opts: { identity?: IdentityRuntim
     mute: later,
     setProfile: intent,
     introduce: intent,
+    // the simulation reaches no web app: a readable request is answered as if the web app took it
+    answerLogin: async (raw) => (isLoginRequest(raw) ? { ok: true, value: { kind: 'done' } } : { ok: false, error: { kind: 'refused', code: 'login-invalid' } }),
   }
 
   const intents: IntentCommands = { retryIntent: intent, confirmIntent: intent, discardIntent: later }
