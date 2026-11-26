@@ -400,6 +400,7 @@ export const de: Translations = {
     title: 'Anmelden',
     experimental: 'Experimentell',
     ask: '{host} möchte dich anmelden.',
+    seesShared: 'Es sieht einen Namen für dich, der nur dort gilt, und was du unten mitteilst.',
     sees: 'Es sieht nur einen Namen für dich, der nur dort gilt.',
     experimentalNote: 'Diese Anmeldung ist eine Vorschau. Der Name, den {host} von dir sieht, bleibt nicht dauerhaft gültig: Mit einer späteren Version der App bekommst du dort einen neuen.',
     withProfile: 'Meinen Namen und mein Bild mitteilen',

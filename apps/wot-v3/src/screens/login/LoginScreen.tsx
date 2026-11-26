@@ -24,12 +24,14 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
   const l = t.login
   const [withProfile, setWithProfile] = useState(true)
   const hasProfile = Boolean(own.name || own.picture)
-  const shareLabel = own.name && own.picture ? l.withProfile : own.name ? l.withName : l.withPicture
   // one source for preview and answer (review #557): before the confirmation what the switch selects,
   // after it what was confirmed and is sent, also on a retry
   const shown: SharedProfile =
     s.name === 'review' ? (withProfile ? own : NOTHING) : s.name === 'sending' || s.name === 'failed' ? s.shared : NOTHING
   const shares = shown.name !== null || shown.picture !== null
+  // the label names what is shared: the confirmed values once confirmed, otherwise what the profile offers
+  const of = shares ? shown : own
+  const shareLabel = of.name && of.picture ? l.withProfile : of.name ? l.withName : l.withPicture
   const back = () => send({ type: 'back' })
   const page = (children: React.ReactNode, footer?: React.ReactNode, backKind: 'back' | 'close' = 'close') => (
     <FlowPage title={l.title} onBack={back} backKind={backKind} footer={footer}>
@@ -46,7 +48,7 @@ export function LoginView({ state: s, send, own }: { state: LoginState; send: (e
       const busy = s.name === 'sending'
       return page(
         <>
-          <Hero icon={<KeyIcon />} title={f(l.ask, { host })} body={l.sees} />
+          <Hero icon={<KeyIcon />} title={f(l.ask, { host })} body={shares ? l.seesShared : l.sees} />
           <Callout tone="warning">
             <strong className="font-semibold">{l.experimental}. </strong>
             {f(l.experimentalNote, { host })}

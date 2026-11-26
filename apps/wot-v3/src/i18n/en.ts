@@ -402,6 +402,7 @@ export const en = {
     title: 'Log in',
     experimental: 'Experimental',
     ask: '{host} wants to log you in.',
+    seesShared: 'It sees a name for you that holds just there, and what you share below.',
     sees: 'It only sees a name for you that holds just there.',
     experimentalNote: 'This login is a preview. The name {host} sees for you does not stay valid: a later version of the app gives you a new one there.',
     withProfile: 'Share my name and picture',
