@@ -141,7 +141,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
       deliverOptions(sender, recipient, { type: 'https://web-of-trust.de/protocols/log-entry/1.0' }),
     )
     const result = await receiveInboxMessage(receiveOptions(recipient, envelope))
-    expect(result).toEqual({ decision: 'reject', reason: 'unexpected-type' })
+    expect(result).toEqual({ decision: 'reject', reason: 'unexpected-type', final: false })
   })
 
   it('MINOR-4: expectedTypes-Override erlaubt eine engere Teilmenge', async () => {
@@ -152,7 +152,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
     const rejected = await receiveInboxMessage(
       receiveOptions(recipient, envelope, { expectedTypes: [SPACE_INVITE_MESSAGE_TYPE] }),
     )
-    expect(rejected).toEqual({ decision: 'reject', reason: 'unexpected-type' })
+    expect(rejected).toEqual({ decision: 'reject', reason: 'unexpected-type', final: false })
     const accepted = await receiveInboxMessage(
       receiveOptions(recipient, envelope, { expectedTypes: [INBOX_MESSAGE_TYPE] }),
     )
@@ -168,7 +168,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
       { id: 'not-a-uuid', typ: 'application/didcomm-plain+json' },
     ]) {
       const result = await receiveInboxMessage(receiveOptions(recipient, malformed))
-      expect(result).toEqual({ decision: 'reject', reason: 'malformed-envelope' })
+      expect(result).toEqual({ decision: 'reject', reason: 'malformed-envelope', final: true })
     }
   })
 
@@ -178,7 +178,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
     const envelope = await deliverInboxMessage(deliverOptions(sender, recipient, {}))
     const result = await receiveInboxMessage(receiveOptions(wrongRecipient, envelope))
     // Decrypt mit fremdem Key scheitert am GCM-Tag — nie am Inner-JWS vorbei.
-    expect(result).toEqual({ decision: 'reject', reason: 'decrypt-failed' })
+    expect(result).toEqual({ decision: 'reject', reason: 'decrypt-failed', final: false })
   })
 
   it('rejects an invalid inner JWS (Misdirection: to ≠ ownDid nach Re-Encrypt)', async () => {
@@ -196,6 +196,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
       decision: 'reject',
       reason: 'invalid-inner-jws',
       detail: 'Inner JWS to does not match own DID',
+      final: true,
     })
   })
 
@@ -209,6 +210,8 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
       decision: 'reject',
       reason: 'invalid-inner-jws',
       detail: 'Inner JWS created_time too old',
+      // Monoton: die Nachricht wird nur älter — Redelivery kann nie heilen.
+      final: true,
     })
   })
 
@@ -224,6 +227,8 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
       decision: 'reject',
       reason: 'invalid-inner-jws',
       detail: 'Inner JWS created_time too far in the future',
+      // Transient: mit fortschreitender Empfänger-Uhr wird sie gültig.
+      final: false,
     })
   })
 
@@ -238,7 +243,7 @@ describe('deliverInboxMessage / receiveInboxMessage', () => {
     // Pufferung) macht die id zu "verarbeitet" — der Aufrufer recorded sie dort.
     await first.recordProcessed()
     const second = await receiveInboxMessage(receiveOptions(recipient, envelope, { messageIdHistory: history }))
-    expect(second).toEqual({ decision: 'reject', reason: 'replay' })
+    expect(second).toEqual({ decision: 'reject', reason: 'replay', final: true })
   })
 
   it('PFLICHT (M1): ohne recordProcessed wird die Redelivery erneut akzeptiert (Recovery)', async () => {
