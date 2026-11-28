@@ -288,7 +288,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       // ceremony without a carrier; one screen
       const name = nameOf(s.name2)
       const first = name.split(' ')[0] ?? name
-      const [title, body, label, qr] = s.name === 'fallback' ? [v.fallbackTitle, f(v.fallbackBody, { name: first }), v.fallbackLabel, s.sentQr] : [f(v.backTitle, { name: first }), f(v.backBody, { name: first }), v.backLabel, s.qr]
+      const [title, body, label, qr] = s.name === 'fallback' ? [v.fallbackTitle, f(v.fallbackBody, { name: first }), v.fallbackLabel, s.sentQr] : [f(v.backTitle, { name: first }), f(s.connections?.[s.connection]?.contactId ? v.backBody : v.backBodyNoContact, { name: first }), v.backLabel, s.qr]
       return page(
         <div className="flex flex-col items-center gap-4 text-center">
           <h2 className="m-0 text-lg font-semibold">{title}</h2>

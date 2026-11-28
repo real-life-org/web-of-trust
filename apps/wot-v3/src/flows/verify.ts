@@ -310,13 +310,14 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('backCode.keepWaiting', 'keepWaiting', 'connecting{scanner}', 'free', 'the contact stays; the acceptance over the carrier ends the wait', { effects: ['ver.wait BACK_AFTER_MS'] }),
   row('backing.result.ok', 'result ver.back', 'backCode{qr, expiresAt}', 'free', 'intent replay: the same code again; the contact opened once', { guard: 'the ceremony neither ended nor accepted in the last bundle', effects: ['ver.expire'] }),
   row('backing.result.failed', 'result ver.back', 'scanError{no-card | code-too-long | code-expired | back-expired | failed}', 'free', 'the proposal stays in the core and goes out with a carrier'),
-  row('backCode.expire', 'result ver.expire', 'scanError{back-expired}', 'free', 'the contact stays', { guard: 'the code it answers ended' }),
+  row('backCode.expire', 'result ver.expire', 'scanError{back-expired | code-expired}', 'free', 'the contact stays when there is one', { guard: 'the code it answers ended; "the contact stays" only with this ceremony\'s contact' }),
   row('backCode.leave', 'leave', 'exit(chat)', 'free', 'the contact exists; the rest goes out with a carrier', { guard: 'the contact is in the last bundle, else exit(back)' }),
   row('previewing.result.back', 'result ver.preview', 'readingBack', 'free', 'not a human act; the confirmation is the decision', { guard: 'a back-code that answers an own shown code, read by the camera', effects: ['ver.readBack'] }),
   row('previewing.result.back.notCamera', 'result ver.preview', 'scanError{back-not-camera}', 'free', '–', { guard: 'a back-code typed in or opened as a link' }),
   row('readingBack.result.proposed', 'result ver.readBack', 'connectIncoming{card: null}', 'free', 'the decision stays open in the list', { guard: 'taken or read again, its ceremony\'s confirmation open in the last bundle' }),
   row('readingBack.result.contact', 'result ver.readBack', 'success', 'free', '–', { guard: 'taken or read again, the ceremony holds the contact' }),
   row('readingBack.result.ok', 'result ver.readBack', 'ready', 'free', '–', { guard: 'taken or read again, nothing open to ask (decided or ended meanwhile)' }),
+  row('readingBack.result.failed', 'result ver.readBack', 'scanError{connect-failed-kept}', 'free', 'the contact stays', { guard: 'the ceremony ended with an error after the acceptance opened the contact' }),
   row('readingBack.result.refused', 'result ver.readBack', 'scanError{card-invalid | code-expired}', 'free', '–', { guard: 'refused, expired, no match' }),
   row('connectIncoming.accept', 'accept', 'connectIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.decide'] }),
   row('connectIncoming.decline', 'decline', 'connectIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.decide'] }),
@@ -325,7 +326,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'accepted past the code’s end: nothing is issued, a fresh code', effects: ['ver.show'] }),
   row('connectIncoming.result.failed', 'result ver.decide', 'connectIncoming{failed}', 'free', 'the decision stays open'),
   row('connectIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list'),
-  row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open and the ceremony not complete', effects: ['ver.show'] }),
+  row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open, the ceremony neither complete nor holding a contact (that is the success, connecting.bundle.complete)', effects: ['ver.show'] }),
   row('connecting.bundle.complete', 'bundle', 'success', 'free', '–', { guard: 'the ceremony is complete with a contact, or open with the contact the back-code opened' }),
   row('connecting.bundle.foreign', 'bundle', 'exit(back)', 'free', '–', { guard: 'complete without a contact (a counterpart whose app gives no channel)' }),
   row('connecting.bundle.declined', 'bundle', 'declined', 'free', '–', { guard: 'the other side declined' }),
@@ -590,8 +591,11 @@ function step(s: S, e: E): Out {
       }
       if (e.type === 'notNow' || e.type === 'back' || e.type === 'leave') return exit(s, 'back', null, 'connectIncoming.notNow', s.decision)
       if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) {
-        // decided elsewhere: accepted and complete is the success, anything else leaves a spent code behind
-        return s.connections?.[s.connection]?.status === 'complete' ? (connectionEnd(s, s.connection, s.name2) ?? stay(s)) : show(s, 'connectIncoming.bundle.gone')
+        // decided elsewhere: a contact of this ceremony (accepted, open or complete) is the success; anything
+        // else leaves a spent code behind
+        const c = s.connections?.[s.connection]
+        if (c && (c.status === 'complete' || (c.status === 'open' && c.contactId))) return connectionEnd(s, s.connection, s.name2) ?? stay(s)
+        return show(s, 'connectIncoming.bundle.gone')
       }
       return stay(s)
     }
@@ -638,7 +642,7 @@ function step(s: S, e: E): Out {
         if (e.result.ok) {
           const v = e.result.value as BackShow
           if (v.kind === 'not-shown') {
-            if (v.why === 'expired') return goto(s, { name: 'scanError', code: 'back-expired' }, 'backing.result.failed')
+            if (v.why === 'expired') return goto(s, { name: 'scanError', code: expiredCode(c) }, 'backing.result.failed')
             // closed or accepted: the act ran nothing; the bundle that says so decides (it waits for it)
             const next = scannerStep(s, s.connection, 'bundle')
             return next.state === s ? { ...next, row: 'backing.result.notShown' } : next
@@ -648,7 +652,7 @@ function step(s: S, e: E): Out {
         // without a back-code the proposal stays and goes out with a carrier; an ended code is one to scan
         // anew; anything else is a failure of this device, said as such
         const code = e.result.code
-        const said: ScanErrorCode = code === 'no-card' || code === 'code-too-long' || code === 'back-expired' ? code : code === 'code-used' || code === 'code-expired' ? 'code-expired' : 'failed'
+        const said: ScanErrorCode = code === 'no-card' || code === 'code-too-long' ? code : code === 'back-expired' ? expiredCode(c) : code === 'code-used' || code === 'code-expired' ? 'code-expired' : 'failed'
         return goto(s, { name: 'scanError', code: said }, 'backing.result.failed')
       }
       if (e.type === 'leave' || e.type === 'back') {
@@ -661,7 +665,7 @@ function step(s: S, e: E): Out {
       // the code stays until the person leaves, the ceremony ends, or the acceptance arrives over the carrier
       const c = s.connections?.[s.connection]
       if (e.type === 'bundle' && c && (c.status !== 'open' || c.accepted)) return scannerStep(s, s.connection, 'bundle')
-      if (isResult(e, s.run, 'ver.expire')) return goto(s, { name: 'scanError', code: 'back-expired' }, 'backCode.expire')
+      if (isResult(e, s.run, 'ver.expire')) return goto(s, { name: 'scanError', code: expiredCode(c) }, 'backCode.expire')
       // back to waiting for the acceptance over the carrier, by the person's choice; the wait starts anew
       if (e.type === 'keepWaiting') return emit(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'scanner', waitLong: false, phase: 'wait', kept: true }, 'backCode.keepWaiting', (r) => [{ id: 'ver.wait', run: r, ms: BACK_AFTER_MS }])
       if (e.type === 'leave' || e.type === 'back' || e.type === 'done') {
@@ -705,6 +709,9 @@ function step(s: S, e: E): Out {
 const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, validUntil: s.validUntil, name2: s.name2 })
 const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role, ...(s.phase ? { phase: s.phase } : {}), ...(s.kept ? { kept: s.kept } : {}), ...(s.due ? { due: s.due } : {}) })
 
+/** the end of a back-code's link: "the contact stays" only when this ceremony's contact is there */
+const expiredCode = (c: ConnectionState | undefined): ScanErrorCode => (c?.contactId ? 'back-expired' : 'code-expired')
+
 /** the shower after reading a back-code: exactly this read's ceremony, as the newest bundle has it: its open
  *  confirmation, its contact, or nothing to ask (decided or ended meanwhile) */
 function readBack(s: S, connection: ConnectionId): Out {
@@ -716,6 +723,8 @@ function readBack(s: S, connection: ConnectionId): Out {
   }
   if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, validUntil: c.validUntil, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
   if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, { name: 'success', contactId: c.contactId, name2: c.name, isNew: true, ...(c.status === 'open' ? { connection } : {}) }, 'readingBack.result.contact')
+  // ended with an error after the acceptance opened the contact here: said so, the contact stays
+  if (c?.status === 'failed' && c.contactId) return goto(s, { name: 'scanError', code: 'connect-failed-kept' }, 'readingBack.result.failed')
   return toReady(s, 'readingBack.result.ok')
 }
 

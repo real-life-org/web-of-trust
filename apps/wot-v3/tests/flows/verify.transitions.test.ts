@@ -1233,10 +1233,13 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     left.fa.send({ type: 'leave' })
     expect(await left.fa.until('exit')).toMatchObject({ to: 'chat', contactId: 'c-bea' })
     // the code past the end of the link it answers: not shown (checked before), and gone at its end
+    // (the end without a contact in the projection says only the end; with the contact, that it stays)
     const ended = await run({}, { offline: true, back: async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: clockA.now() - 1 } }) })
-    expect(await ended.fa.until('scanError')).toMatchObject({ code: 'back-expired' })
+    expect(await ended.fa.until('scanError')).toMatchObject({ code: 'code-expired' })
     const expiring = await run({}, { offline: true, back: async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: clockA.now() + 1000 } }) })
     await expiring.fa.until('backCode')
+    expiring.set({ status: 'open', backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    await tick()
     clockA.advance(2000)
     expect(await expiring.fa.until('scanError')).toMatchObject({ code: 'back-expired' })
     expect(expiring.fa.rows()).toContain('backCode.expire')
@@ -1471,6 +1474,48 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     expect(fb.rows()).toContain('readingBack.result.unknown')
   })
 
+  it('maintainer review: a confirmation accepted elsewhere whose ceremony holds the contact is the success, no new code; "the contact stays" only with a contact', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 151, ceremony: 'shared-connect' })
+    // the shower: its confirmation disappears (accepted in the list), the ceremony open with the contact
+    {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const decisions = writableStore(A.port.stores.decisions.get())
+      const port: AppPort = { ...A.port, stores: { ...A.port.stores, decisions, connections } }
+      const fb = flow(A, port)
+      const shownCard = (await fb.until('ready')).card?.card ?? null
+      connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 2, 1)))
+      decisions.set(ready([{ id: 'd1' as DecisionId, kind: 'connect-confirm', connection: 'e1' as ConnectionId, name: 'Bea', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(99, 99, 99)))
+      await fb.until('connectIncoming')
+      const runBefore = fb.state().run
+      connections.set(ready([conn({ status: 'open', role: 'inviter', accepted: true, contactId: 'c-bea' as ContactId })], revision(1, 3, 1)))
+      decisions.set(ready([] as never, revision(99, 100, 99)))
+      expect(await fb.until('success')).toMatchObject({ contactId: 'c-bea', connection: 'e1' })
+      expect(fb.rows()).not.toContain('connectIncoming.bundle.gone')
+      expect(fb.state().run).toBe(runBefore)
+    }
+    // the scanner: the link ended before any back-code was shown (no contact): only the end, no promise
+    for (const [contactId, code] of [[null, 'code-expired'], ['c-bea', 'back-expired']] as const) {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([conn({ status: 'open', relayed: false, ...(contactId ? { backShown: true, contactId: contactId as ContactId } : {}) })], revision(1, 2, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections },
+        trust: {
+          ...A.port.trust,
+          previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+          confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+          showBackCode: () => ({ actId: 'y' as never, done: Promise.resolve({ ok: true, value: { kind: 'not-shown', why: 'expired' } } as never) }),
+        },
+      }
+      const fa = flow(A, port)
+      await fa.until('ready')
+      fa.scanner.source = () => 'https://web-of-trust.de/t#_from=x&_id=e1'
+      fa.send({ type: 'scan' })
+      await fa.until('confirm')
+      fa.send({ type: 'yes' })
+      expect(await fa.until('scanError')).toMatchObject({ code })
+    }
+  })
+
   it('over a port double: the shower after its acceptance: the other side declines, fails, or completes without a contact', async () => {
     const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 141, ceremony: 'shared-connect' })
     for (const [status, to, rowId] of [['declined', 'declined', 'connecting.bundle.declined'], ['failed', 'scanError', 'connecting.bundle.failed'], ['complete', 'exit', 'connecting.bundle.foreign']] as const) {
@@ -1515,6 +1560,8 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
       [{ kind: 'refused', connection: 'e1' as ConnectionId, reason: 'second-propose' }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
       [{ kind: 'expired', connection: 'e1' as ConnectionId }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
       [{ kind: 'no-match' }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
+      // ended with an error after the acceptance opened the contact: the error, the contact stays
+      [{ kind: 'again', connection: 'e1' as ConnectionId }, { status: 'failed', role: 'inviter', accepted: true, contactId: 'c-bea' as ContactId }, 'scanError', 'readingBack.result.failed'],
     ]
     for (const [i, [read, state, to, rowId]] of cases.entries()) {
       let release: () => void = () => undefined

@@ -297,6 +297,7 @@ export const en = {
     fallbackLabel: 'Your sent card as a code',
     backTitle: 'Let {name} scan this code',
     backBody: 'The same encounter continues by camera: {name} scans this code and confirms. On this device {name} is a contact already.',
+    backBodyNoContact: 'The same encounter continues by camera: {name} scans this code and confirms.',
     backKeepWaiting: 'Keep waiting for the connection instead',
     backLabel: 'Your answer as a code',
     connectYes: 'Yes, connect',

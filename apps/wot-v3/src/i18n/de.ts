@@ -296,6 +296,7 @@ export const de: Translations = {
     fallbackLabel: 'Deine gesendete Karte als Code',
     backTitle: 'Lass {name} diesen Code scannen',
     backBody: 'Dieselbe Begegnung geht per Kamera weiter: {name} scannt diesen Code und bestätigt. Auf diesem Gerät ist {name} schon ein Kontakt.',
+    backBodyNoContact: 'Dieselbe Begegnung geht per Kamera weiter: {name} scannt diesen Code und bestätigt.',
     backKeepWaiting: 'Lieber weiter auf die Verbindung warten',
     backLabel: 'Deine Antwort als Code',
     connectYes: 'Ja, verbinden',
