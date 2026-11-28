@@ -12,7 +12,7 @@ import type { FakeScanner } from '../../src/platform/fake'
 import { loginLink } from '../../src/lib/login-request'
 import { BACK_AFTER_MS, verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
 import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
-import { bundleEvent, carrierInReach, flowTimers, timerKey, verifyExecutor } from '../../src/hooks/verify'
+import { bundleEvent, carrierInReach, verifyExecutor, verifyLifetime } from '../../src/hooks/verify'
 import { connectionOf } from '../../src/adapters/rltp/projection'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
@@ -53,8 +53,7 @@ interface Flow {
 function flow(d: LoopbackDevice, port: AppPort = d.port): Flow {
   const scans = { current: null as AbortController | null }
   const scanner = d.platform.scanner as FakeScanner
-  const timers = flowTimers(d.platform.clock)
-  const r = cover.track(createFlowRunner(verify, verifyStart(), verifyExecutor(port, d.platform, scans, null, timers), d.platform))
+  const r = cover.track(createFlowRunner(verify, verifyStart(), verifyExecutor(port, d.platform, scans, null), d.platform, { lifetime: verifyLifetime }))
   const push = () => {
     const e = bundleEvent(port)
     if (e) r.send(e)
@@ -63,12 +62,7 @@ function flow(d: LoopbackDevice, port: AppPort = d.port): Flow {
   port.stores.decisions.subscribe(push)
   port.stores.connections.subscribe(push)
   port.stores.connectivity.subscribe(push)
-  let lastKey = timerKey(r.get())
   r.subscribe(() => {
-    const key = timerKey(r.get())
-    if (key !== lastKey) timers.clear()
-    lastKey = key
-    timers.keep(r.get().run)
     if (r.get().name !== 'scanning') scans.current?.abort()
   })
   push()
@@ -1573,46 +1567,85 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     expect(fa.state().name).toBe('backCode')
   })
 
-  it('a second wait of the same run replaces the first for good: the first one\'s timer cannot remove it', async () => {
-    const clock = virtualClock(T0, 'UTC')
-    const timers = flowTimers(clock)
-    const first = timers.wait(1, T0 + 1000)
-    const second = timers.wait(1, T0 + 5000)
-    expect(await first).toEqual({ ok: false, code: 'cancelled' })
-    clock.advance(1000)
-    timers.clear()
-    clock.advance(5000)
-    expect(await second).toEqual({ ok: false, code: 'cancelled' })
-  })
+  /** a lifecycle double that counts its listeners */
+  const countingLifecycle = (base: LoopbackDevice['platform']['lifecycle'], state: { now: 'active' | 'background' }) => {
+    const listeners = new Set<(s: 'active' | 'background') => void>()
+    return { listeners, lifecycle: { ...base, current: () => state.now, onState: (cb: (s: 'active' | 'background') => void) => (listeners.add(cb), () => void listeners.delete(cb)) } }
+  }
+  /** a clock double that counts its pending timers */
+  const countingClock = () => {
+    const c = virtualClock(T0, 'UTC')
+    const pending = new Set<object>()
+    const clock = {
+      ...c,
+      now: () => c.now(),
+      timeZone: () => c.timeZone(),
+      setTimer: (at: number, cb: () => void) => {
+        const token = {}
+        pending.add(token)
+        const off = c.setTimer(at, () => {
+          pending.delete(token)
+          cb()
+        })
+        return () => {
+          pending.delete(token)
+          off()
+        }
+      },
+    }
+    return { clock, pending, advance: (ms: number) => c.advance(ms) }
+  }
 
-  it('the back-code act waiting for the foreground lets go of the lifecycle when its run ends', async () => {
+  it('the back-code act waiting for the foreground lets go of the lifecycle when its run ends after the listener was set', async () => {
     const { devices } = await world(2)
     const [A] = devices as [LoopbackDevice]
-    const listeners = new Set<(s: 'active' | 'background') => void>()
-    const lifecycle = { ...A.platform.lifecycle, current: () => 'background' as const, onState: (cb: (s: 'active' | 'background') => void) => (listeners.add(cb), () => void listeners.delete(cb)) }
-    const timers = flowTimers(A.platform.clock)
-    const exec = verifyExecutor(A.port, { ...A.platform, lifecycle }, { current: null }, null, timers)
-    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId })
+    const { listeners, lifecycle } = countingLifecycle(A.platform.lifecycle, { now: 'background' })
+    const exec = verifyExecutor(A.port, { ...A.platform, lifecycle }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId }, run.signal)
     await new Promise((r) => setTimeout(r, 0))
     expect(listeners.size).toBe(1)
-    // the run ends (an acceptance ended the code): the wait is released
-    timers.keep(8)
+    run.abort()
     expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
     expect(listeners.size).toBe(0)
   })
 
-  it('timers belong to their state: one of an earlier run is cancelled', async () => {
-    const clock = virtualClock(T0, 'UTC')
-    const timers = flowTimers(clock)
-    const first = timers.wait(1, T0 + 1000)
-    const second = timers.wait(2, T0 + 1000)
-    timers.keep(2)
-    expect(await first).toEqual({ ok: false, code: 'cancelled' })
-    clock.advance(1000)
-    expect(await second).toEqual({ ok: true })
-    const third = timers.wait(3, T0 + 5000)
-    timers.clear()
-    expect(await third).toEqual({ ok: false, code: 'cancelled' })
+  it('a late back-code result after the run ended sets no listener at all', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const state = { now: 'active' as 'active' | 'background' }
+    const { listeners, lifecycle } = countingLifecycle(A.platform.lifecycle, state)
+    let release: (r: Result<BackShow>) => void = () => undefined
+    const port: AppPort = { ...A.port, trust: { ...A.port.trust, showBackCode: () => ({ actId: 'y' as never, done: new Promise<Result<BackShow>>((r) => (release = r)) as never }) } }
+    const exec = verifyExecutor(port, { ...A.platform, lifecycle }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId }, run.signal)
+    // the app goes behind and the run ends while the act is out; then the act answers "background"
+    state.now = 'background'
+    run.abort()
+    release({ ok: true, value: { kind: 'not-shown', why: 'background' } })
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(listeners.size).toBe(0)
+  })
+
+  it('a wait of the flow ends with its run: its timer is removed, and none is set for a run already ended', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const { clock, pending, advance } = countingClock()
+    const exec = verifyExecutor(A.port, { ...A.platform, clock: clock as never }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.wait', run: 3, ms: 12_000 }, run.signal)
+    expect(pending.size).toBe(1)
+    run.abort()
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+    expect(await exec({ id: 'ver.expire', run: 4, at: T0 + 5000 }, run.signal)).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+    const live = new AbortController()
+    const fires = exec({ id: 'ver.wait', run: 5, ms: 1000 }, live.signal)
+    advance(1000)
+    expect(await fires).toEqual({ ok: true })
+    expect(pending.size).toBe(0)
   })
 
   it('over a port double: the shower judges the read against its ceremony as the newest bundle has it', async () => {

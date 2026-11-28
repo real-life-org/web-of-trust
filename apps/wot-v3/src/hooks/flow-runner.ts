@@ -27,11 +27,22 @@ export interface FlowRunner<S, E> {
   dispose(): void
 }
 
+/** What the runner guarantees each effect: the `signal` of the lifetime it was started in. It is aborted as
+ *  soon as the state leaves that lifetime (`lifetime`, by default a new run) and when the flow ends
+ *  (`dispose`, an unmount). An effect may ignore it; one that waits (a timer, a listener) or sets something
+ *  up after an `await` uses it, so nothing of a lifetime that ended stays registered. The machine still drops
+ *  a result of an older run. Aborting ends only the screen's waiting, never an act already at the core. */
+export interface FlowRunnerOptions<S> {
+  /** the lifetime a state's effects belong to; default: its run */
+  readonly lifetime?: (state: S) => string
+}
+
 export function createFlowRunner<S extends { readonly name: string; readonly run: number }, E, F extends Effect>(
   machine: Machine<S, E, F>,
   start: Step<S, F> | S,
-  exec: (effect: F) => Promise<EffectResult>,
+  exec: (effect: F, signal: AbortSignal) => Promise<EffectResult>,
   platform: Pick<Platform, 'screen'> | null = null,
+  opts: FlowRunnerOptions<S> = {},
 ): FlowRunner<S, E> {
   const first: Step<S, F> = 'state' in start && 'effects' in start ? start : { state: start as S, effects: [], row: null }
   let state = first.state
@@ -41,6 +52,22 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
   const rows: string[] = first.row ? [first.row] : []
   const listeners = new Set<() => void>()
   let level: 'normal' | 'sensitive' = 'normal'
+  const lifetimeOf = opts.lifetime ?? ((st: S) => String(st.run))
+  /** the signal of each lifetime with effects started in it */
+  const lifetimes = new Map<string, AbortController>()
+  const signalOf = (key: string): AbortSignal => {
+    let c = lifetimes.get(key)
+    if (!c) lifetimes.set(key, (c = new AbortController()))
+    return c.signal
+  }
+  /** every lifetime but `key` ends: its effects' signals abort */
+  const endOthers = (key: string | null) => {
+    for (const [k, c] of [...lifetimes]) {
+      if (k === key) continue
+      lifetimes.delete(k)
+      c.abort()
+    }
+  }
 
   const protect = () => {
     const next = !disposed && machine.sensitive(state) ? 'sensitive' : 'normal'
@@ -61,15 +88,24 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     }
   }
 
-  const run = (effects: readonly F[]) => {
+  const ended = (() => {
+    const c = new AbortController()
+    c.abort()
+    return c.signal
+  })()
+  /** `key`: the lifetime the effects were asked in; one the state already left gets an aborted signal */
+  const run = (effects: readonly F[], key: string = lifetimeOf(state)) => {
     for (const effect of effects) {
       running++
-      exec(effect)
+      const signal = key === lifetimeOf(state) ? signalOf(key) : ended
+      exec(effect, signal)
         // the flows carry passphrases and words: an unexpected throw enters the machine as the fixed
         // code 'bug' without its text, which could hold a revealed value (architecture §5)
         .catch((): EffectResult => ({ ok: false, code: 'bug' }))
         .then((result) => {
-          if (!disposed) apply({ type: 'result', id: effect.id, run: effect.run, result })
+          // a result of a lifetime that ended reaches no state (with the default lifetime, the run, the
+          // machine would drop it as one of an older run anyway)
+          if (!disposed && !signal.aborted) apply({ type: 'result', id: effect.id, run: effect.run, result })
         })
         .finally(() => {
           running--
@@ -83,6 +119,8 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     if (step.row) rows.push(step.row)
     if (step.state !== state) {
       state = step.state
+      // effects of a lifetime the new state left end now, before its own effects start
+      endOthers(lifetimeOf(state))
       notify()
     }
     run(step.effects)
@@ -94,9 +132,10 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
   // not open twice.
   if (first.effects.length > 0) {
     running++
+    const firstKey = lifetimeOf(first.state)
     queueMicrotask(() => {
       running--
-      if (!disposed) run(first.effects)
+      if (!disposed) run(first.effects, firstKey)
       settle()
     })
   }
@@ -123,6 +162,7 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     },
     dispose() {
       disposed = true
+      endOthers(null)
       protect()
       listeners.clear()
     },

@@ -15,58 +15,48 @@ export type { VerifyState, VerifyEvent, ScanErrorCode, ShownCard } from '../flow
 const fromResult = (r: Result<unknown>): EffectResult =>
   r.ok ? { ok: true, value: r.value } : { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
 
-/** The timers of the flow's effects, each bound to the run that asked for it: a timer whose run is no longer
- *  the machine's (the state changed) or whose flow ended is cancelled, its result `cancelled` (the machine
- *  drops it as a result of an older run anyway) */
-export function flowTimers(clock: Platform['clock']) {
-  /** the waits of the effects, by run: a clock timer, or the wait for the app's foreground */
-  const live = new Map<number, Set<{ settle: () => void }>>()
-  const hold = (run: number, start: (done: (r: EffectResult) => void) => () => void): Promise<EffectResult> =>
-    new Promise((resolve) => {
-      let over = false
-      let stop: (() => void) | null = null
-      const entry = { settle: () => done({ ok: false, code: 'cancelled' }) }
-      const done = (r: EffectResult) => {
-        if (over) return
-        over = true
-        // the clock timer or the lifecycle listener goes with it, once
-        stop?.()
-        stop = null
-        live.get(run)?.delete(entry)
-        if (live.get(run)?.size === 0) live.delete(run)
-        resolve(r)
-      }
-      const off = start(done)
-      if (over) off()
-      else stop = off
-      if (!live.has(run)) live.set(run, new Set())
-      live.get(run)?.add(entry)
-    })
-  const end = (t: { settle: () => void }) => t.settle()
-  return {
-    /** a timer of `run` until `at`; a later timer of the same run replaces it (the earlier one is cancelled) */
-    wait(run: number, at: number): Promise<EffectResult> {
-      for (const t of [...(live.get(run) ?? [])]) end(t)
-      return hold(run, (done) => clock.setTimer(at, () => done({ ok: true })))
-    },
-    /** the app in front again, for `run`: released like a timer when the run ends */
-    front(run: number, life: Platform['lifecycle']): Promise<EffectResult> {
-      return hold(run, (done) => life.onState((st) => (st === 'active' ? done({ ok: true }) : undefined)))
-    },
-    /** every timer of another run than `run` ends now */
-    keep(run: number) {
-      for (const [r, ts] of [...live]) if (r !== run) for (const t of [...ts]) end(t)
-    },
-    clear() {
-      for (const ts of [...live.values()]) for (const t of [...ts]) end(t)
-    },
-  }
-}
-type FlowTimers = ReturnType<typeof flowTimers>
+const CANCELLED: EffectResult = { ok: false, code: 'cancelled' }
 
-/** what a timer belongs to: the state's name and the scanner's phase (`unknown` and `wait` share the wait's
- *  deadline, set at the scan) */
-export const timerKey = (s: VerifyState): string => `${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
+/** Until `at` on the device clock, for an effect whose lifetime is `signal` (the runner's): the timer goes
+ *  when the signal aborts, and none is set for one already aborted; both end as `cancelled` */
+export function untilTime(clock: Platform['clock'], at: number, signal: AbortSignal): Promise<EffectResult> {
+  if (signal.aborted) return Promise.resolve(CANCELLED)
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      off()
+      resolve(CANCELLED)
+    }
+    const off = clock.setTimer(at, () => {
+      signal.removeEventListener('abort', onAbort)
+      resolve({ ok: true })
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Until the app is in front again, for an effect whose lifetime is `signal`: the listener goes when the
+ *  signal aborts, and none is set for one already aborted; both end as `cancelled` */
+export function untilFront(life: Platform['lifecycle'], signal: AbortSignal): Promise<EffectResult> {
+  if (signal.aborted) return Promise.resolve(CANCELLED)
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      off()
+      resolve(CANCELLED)
+    }
+    const off = life.onState((st) => {
+      if (st !== 'active') return
+      off()
+      signal.removeEventListener('abort', onAbort)
+      resolve({ ok: true })
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** The lifetime of the verify flow's effects (the runner's `lifetime`): the run, the state's name and the
+ *  scanner's phase (`unknown` and `wait` share the wait's deadline, set at the scan). A timer or a listener
+ *  does not outlive a change of state */
+export const verifyLifetime = (s: VerifyState): string => `${s.run}:${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
 
 /** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
 function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
@@ -127,16 +117,17 @@ export function verifyExecutor(
   scans: { current: AbortController | null },
   /** web scanners render into it; without a slot the scan gets no target (native, tests) */
   target: ScanTargetSlot | null = null,
-  timers: FlowTimers = flowTimers(platform.clock),
 ) {
-  return async (e: VerifyEffect): Promise<EffectResult> => {
+  /** `signal`: the lifetime of the effect (the runner's); after every `await` an effect sets up nothing for a
+   *  lifetime that ended. Aborting ends only the screen's waiting, never an act already at the core */
+  return async (e: VerifyEffect, signal: AbortSignal = new AbortController().signal): Promise<EffectResult> => {
     switch (e.id) {
       case 'ver.show':
         return fromResult(await port.trust.showCard().done)
       case 'ver.expire':
-        return timers.wait(e.run, e.at)
+        return untilTime(platform.clock, e.at, signal)
       case 'ver.wait':
-        return timers.wait(e.run, platform.clock.now() + e.ms)
+        return untilTime(platform.clock, platform.clock.now() + e.ms, signal)
       case 'cam.check': {
         const availability = await platform.scanner.availability()
         const permission = availability === 'available' ? await platform.scanner.permission() : 'denied'
@@ -146,6 +137,9 @@ export function verifyExecutor(
         scans.current?.abort()
         const ctl = new AbortController()
         scans.current = ctl
+        // the camera goes with the state's lifetime too; one that ended before the view was there starts none
+        if (signal.aborted) ctl.abort()
+        else signal.addEventListener('abort', () => ctl.abort(), { once: true })
         const el = target ? await target.wait(ctl.signal) : null
         if (ctl.signal.aborted) return { ok: true, value: { kind: 'cancelled' } }
         return { ok: true, value: await platform.scanner.scan({ target: el, signal: ctl.signal }) }
@@ -178,8 +172,8 @@ export function verifyExecutor(
         // newest state of the ceremony decides again (`resumed`), nothing ran meanwhile
         const life = platform.lifecycle
         if (life && life.current() === 'background') {
-          // released with the run: an effect whose state ended holds no listener
-          const back = await timers.front(e.run, life)
+          // released with the lifetime: an effect whose state ended holds no listener
+          const back = await untilFront(life, signal)
           return back.ok ? { ok: false, code: 'resumed' } : back
         }
         const r = await port.trust.showBackCode(e.connection).done
@@ -187,8 +181,9 @@ export function verifyExecutor(
         if (r.ok && r.value.kind === 'shown' && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
         // the act found the app behind (a race with the check above): back in front, the newest state decides
         if (r.ok && r.value.kind === 'not-shown' && r.value.why === 'background' && life) {
+          // a lifetime that ended while the act was out sets up no listener (untilFront checks the signal)
           if (life.current() === 'background') {
-            const back = await timers.front(e.run, life)
+            const back = await untilFront(life, signal)
             if (!back.ok) return back
           }
           return { ok: false, code: 'resumed' }
@@ -262,8 +257,9 @@ export function useVerify(
   useEffect(() => {
     if (override) return
     const scans = { current: null as AbortController | null }
-    const timers = flowTimers(platform.clock)
-    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot, timers), platform)
+    // every effect lives as long as its state (verifyLifetime): the runner aborts its signal on a change of
+    // state and when the screen goes
+    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot), platform, { lifetime: verifyLifetime })
     const push = () => {
       const e = bundleEvent(port)
       if (e) r.send(e)
@@ -276,14 +272,7 @@ export function useVerify(
     // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
     // again (a bundle that answered the card while the camera was open takes over now)
     let last = r.get().name
-    let lastKey = timerKey(r.get())
     const offScan = r.subscribe(() => {
-      // a timer belongs to its state: it ends with a change of the state (its name, the scanner's phase) and
-      // with a new run
-      const key = timerKey(r.get())
-      if (key !== lastKey) timers.clear()
-      lastKey = key
-      timers.keep(r.get().run)
       const name = r.get().name
       if (name !== 'scanning') scans.current?.abort()
       if (name === 'ready' && last !== 'ready') push()
@@ -297,7 +286,6 @@ export function useVerify(
       offConnections()
       offConnectivity()
       offScan()
-      timers.clear()
       scans.current?.abort()
       r.dispose()
     }
