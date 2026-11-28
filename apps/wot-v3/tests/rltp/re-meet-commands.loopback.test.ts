@@ -2,8 +2,7 @@
 // The commands on a person met again (Trust 6a.4, 2140): once the library chained the second meeting's
 // fresh contact into the known one, the fresh id is an alias of the known entry. Every command that takes a
 // contact id acts on the entry, whatever id it was given: commands on one person run in one order and two
-// equal gestures are one act; a command taken for the fresh contact and run only after the chaining follows
-// CONTACT-ORDER.md "A contact joined meanwhile" (re-meet-order.loopback.test.ts); a read mark set over the alias's route counts; a message held under the
+// equal gestures are one act; a read mark set over the alias's route counts; a message held under the
 // alias goes out once the entry can be written to; trust is not given to a blocked person; the first
 // meeting stays the first.
 import { describe, expect, it } from 'vitest'
@@ -74,31 +73,6 @@ describe('commands on one person under its alias and its known id run in one ord
         }, 120_000)
       }
     }
-    it(`chained between: ${g1} taken under the fresh id before the chaining, held; ${g2}(known id) after it: the person ends blocked`, async () => {
-      const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
-      const fresh = secondCeremony(w.A)?.contactId as ContactId
-      expect(contactsOf(w.A).map((c) => c.id)).toContain(fresh)
-      if (g1 === 'unblock') {
-        expect((await act(w.A, 'block', fresh).done).ok).toBe(true)
-        await w.settle()
-      }
-      const hold = holdFirst(w.A)
-      const h1 = act(w.A, g1, fresh)
-      await turns(hold.held)
-      // the chaining: the continuity probe and mapping go back and forth as device time passes
-      await w.passHeld(3 * 60_000)
-      const known = onlyContact(w.A)
-      expect(known).not.toBe(fresh)
-      expect(contactsOf(w.A)[0]?.aliases).toContain(fresh)
-      const h2 = act(w.A, g2, known)
-      hold.release()
-      await Promise.all([h1.done, h2.done])
-      await w.settle()
-      await w.pass(4 * CARRIER_TICK_MS)
-      // taken for the fresh contact before the join: an unblock lifts nothing of the person, a block
-      // restricts and runs behind what was taken for the person meanwhile (CONTACT-ORDER.md)
-      expect(blocked(w.A, known), `${g1}(fresh) then ${g2}(known)`).toBe(true)
-    }, 120_000)
   }
 
   it('two blocks of the same person at once, under the alias and the known id, are one act', async () => {
@@ -107,24 +81,6 @@ describe('commands on one person under its alias and its known id run in one ord
     const h2 = act(w.A, 'block', known)
     expect(h2.actId).toBe(h1.actId)
     await Promise.all([h1.done, h2.done])
-    await w.settle()
-    expect(blocked(w.A, known)).toBe(true)
-  }, 120_000)
-
-  it('a block taken under the fresh id before the chaining and one under the known id after it: each its own act, the person ends blocked', async () => {
-    const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
-    const fresh = secondCeremony(w.A)?.contactId as ContactId
-    const hold = holdFirst(w.A)
-    const h1 = act(w.A, 'block', fresh)
-    await turns(hold.held)
-    await w.passHeld(3 * 60_000)
-    const known = onlyContact(w.A)
-    const h2 = act(w.A, 'block', known)
-    // the first was for the fresh contact as it stood, the second is the person's
-    expect(h2.actId).not.toBe(h1.actId)
-    hold.release()
-    expect((await h1.done).ok).toBe(true)
-    expect((await h2.done).ok).toBe(true)
     await w.settle()
     expect(blocked(w.A, known)).toBe(true)
   }, 120_000)

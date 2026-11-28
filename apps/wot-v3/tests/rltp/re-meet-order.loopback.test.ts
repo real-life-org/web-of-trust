@@ -1,13 +1,10 @@
 // @vitest-environment node
-// Commands on one person while its ids are joined (review 2 of #563; CONTACT-ORDER.md "A contact joined
-// meanwhile"): the library chains a second meeting's fresh contact into the known one (Trust 6a.4), so a
-// person can have commands taken under two ids, some before the chaining, some after. A command taken once
-// the ids are one person is the person's, in the one queue. A command taken for the fresh contact and run
-// only after the chaining was for the contact as it stood: it runs where it restricts, behind everything
-// taken for the person until then, and ends without an act where it lifts or grants. Trust is refused for a
-// blocked person when the command runs. An equal unordered gesture under the two ids is one act. Two
-// persons never wait for each other. The runs of the review as their own tests, the rest generated.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+// Commands on a person met again, once its ids are one person (review of #563; CONTACT-ORDER.md "A contact
+// joined meanwhile"): trust is refused for a blocked person when the command runs, behind the gestures
+// taken before it; an equal unordered gesture under the fresh and the known id is one act; a draft key that
+// equals an alias stays a draft key; the encounter caches of a joined contact are its entry's; two persons
+// never wait for each other.
+import { describe, expect, it, vi } from 'vitest'
 import type * as AppDbModule from '../../src/adapters/rltp/app-db'
 import type { AppDb } from '../../src/adapters/rltp/app-db'
 import type { IntentRecord } from '../../src/adapters/rltp/journal'
@@ -17,31 +14,6 @@ import { CARRIER_TICK_MS, memoryCarrier } from '../../src/adapters/rltp'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PASSPHRASE, LOOPBACK_PHRASES, loopbackDevice, type LoopbackDevice } from '../../harness/loopback'
 import { contactsOf, conversationOf, detailOf, meetAgain, metTwice, onlyContact, secondCeremony, value, world, type World } from './re-meet.world'
-
-// a part of an act failing in the library's store: the pause of a block, the resume of an unblock
-const lib = vi.hoisted(() => ({ failPause: 0 }))
-vi.mock('@real-life/trust-protocol', async (original) => {
-  const real = await original<{ createHolder: (...args: unknown[]) => Promise<{ pauseTrust(...a: unknown[]): Promise<unknown> }> }>()
-  return {
-    ...real,
-    createHolder: async (...args: unknown[]) => {
-      const h = await real.createHolder(...args)
-      return {
-        ...h,
-        pauseTrust: async (...a: unknown[]) => {
-          if (lib.failPause > 0) {
-            lib.failPause -= 1
-            throw new Error('injected storage failure in the pause')
-          }
-          return h.pauseTrust(...a)
-        },
-      }
-    },
-  }
-})
-afterEach(() => {
-  lib.failPause = 0
-})
 
 // every app-db the devices open, to read and write the intent journal
 const dbs: AppDb[] = []
@@ -91,13 +63,6 @@ const state = (d: LoopbackDevice, id: ContactId) => {
   const c = detailOf(d, id)
   return { blocked: c?.blocked, given: c?.trust.given }
 }
-/** the block and the pause that belongs to it */
-const held = (d: LoopbackDevice, id: ContactId) => {
-  const c = detailOf(d, id)
-  return { blocked: c?.blocked, paused: c?.trust.paused }
-}
-const openOrdered = (d: LoopbackDevice) => d.port.stores.intents.get().filter((i) => ['block', 'unblock', 'giveTrust', 'withdrawTrust', 'setPaused', 'setClass'].includes(i.command)).map((i) => i.command)
-
 /** a world with A and B met twice, the second meeting not chained yet: A's known contact and fresh contact */
 async function beforeChaining() {
   const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
@@ -117,100 +82,7 @@ const rest = async (w: World) => {
   await w.pass(4 * CARRIER_TICK_MS)
 }
 
-describe('the runs of the review (Astra round 2)', () => {
-  it('two sections started before the chaining: unblock(fresh) journaled and held before its act, block(known) taken and done before the chaining: the person ends blocked', async () => {
-    const { w, fresh, known, chain } = await beforeChaining()
-    const g = gate()
-    let first: string | null = null
-    w.A.faults.hold = async (p, actId) => {
-      if (p !== 'act:before') return
-      first ??= actId
-      if (actId === first) await g.p
-    }
-    const h1 = issue(w.A, 'unblock', fresh)
-    await turns(() => first !== null)
-    // two persons still: the block goes through while the unblock waits
-    const h2 = issue(w.A, 'block', known)
-    expect((await h2.done).ok).toBe(true)
-    await chain()
-    g.open()
-    w.A.faults.hold = null
-    await h1.done
-    await rest(w)
-    expect(state(w.A, known).blocked).toBe(true)
-  }, 120_000)
-
-  it('unblock(fresh) journaled and held before its act, block(known) taken after the chaining: the person ends blocked', async () => {
-    const { w, fresh, known, chain } = await beforeChaining()
-    const g = gate()
-    let first: string | null = null
-    w.A.faults.hold = async (p, actId) => {
-      if (p !== 'act:before') return
-      first ??= actId
-      if (actId === first) await g.p
-    }
-    const h1 = issue(w.A, 'unblock', fresh)
-    await turns(() => first !== null)
-    await chain()
-    const h2 = issue(w.A, 'block', known)
-    // the later block may wait for the earlier unblock; it is let go now
-    g.open()
-    w.A.faults.hold = null
-    await Promise.all([h1.done, h2.done])
-    await rest(w)
-    expect(state(w.A, known).blocked).toBe(true)
-  }, 120_000)
-
-  for (const [g1, g2] of [['unblock', 'block'], ['block', 'unblock']] as const) {
-    for (const recovery of ['automatic', 'at reopening'] as const) {
-      it(`recovery with the same seq and time: ${g1}(fresh), ${g2}(known), both journaled and cut before their act; chained; recovered ${recovery}: the person ends blocked`, async () => {
-        const { w, fresh, known, chain } = await beforeChaining()
-        if (g1 === 'unblock') {
-          expect((await issue(w.A, 'block', fresh).done).ok).toBe(true)
-          await w.settle()
-        }
-        // both cut after their journal: the same seq (1, in two ids' queues), the same device time
-        w.A.faults.killAt = 'after-journal'
-        await issue(w.A, g1, fresh).done
-        w.A.faults.killAt = 'after-journal'
-        await issue(w.A, g2, known).done
-        // their recovery held until the chaining is done
-        const g = gate()
-        w.A.faults.hold = async (p) => {
-          if (p === 'act:before') await g.p
-        }
-        await chain()
-        if (recovery === 'at reopening') {
-          g.open()
-          w.A.faults.hold = null
-          await reopen(w.A)
-        } else {
-          g.open()
-          w.A.faults.hold = null
-        }
-        await rest(w)
-        await w.pass(70_000)
-        // unblock(fresh) lifts nothing after the join; block(fresh) restricts and runs behind the unblock
-        expect(state(w.A, known).blocked).toBe(true)
-      }, 120_000)
-    }
-  }
-
-  it('unblock(fresh) cut after its journal, block(known) done; its recovery and the chaining come on the same clock, nothing held: the person ends blocked', async () => {
-    // the recovery reads what the contact stands for and acts in one turn with the holder's joining work
-    // (contact-turn.ts): before the chaining it is the fresh contact's own unblock, after it nothing
-    const { w, fresh, known, chain } = await beforeChaining()
-    w.A.faults.killAt = 'after-journal'
-    await issue(w.A, 'unblock', fresh).done
-    expect((await issue(w.A, 'block', known).done).ok).toBe(true)
-    await chain()
-    await reopen(w.A)
-    await rest(w)
-    await w.pass(70_000)
-    expect(state(w.A, known).blocked).toBe(true)
-    expect(w.A.port.stores.intents.get().filter((i) => i.command === 'unblock')).toEqual([])
-  }, 120_000)
-
+describe('the runs of the review (round 2) on commands taken once the ids are one person', () => {
   it('block(known) and giveTrust(alias) right after each other: trust is not given to the blocked person', async () => {
     const { w, known, chain } = await beforeChaining()
     await chain()
@@ -250,84 +122,7 @@ describe('the runs of the review (Astra round 2)', () => {
   }, 120_000)
 })
 
-describe('the runs of the review (round 3): a part committed before the join, the surviving id, a draft key that equals an alias', () => {
-  it('unblock(fresh) with its unblock committed and its resume failed, block(known), chained, recovered: the person stays blocked and paused', async () => {
-    const { w, fresh, known, chain } = await beforeChaining()
-    expect((await issue(w.A, 'block', fresh).done).ok).toBe(true)
-    await w.settle()
-    // the resume fails at the gesture and at every recovery until the chaining is done
-    lib.failPause = 1000
-    await issue(w.A, 'unblock', fresh).done
-    await w.A.port.session()?.idle()
-    expect(openOrdered(w.A)).toEqual(['unblock'])
-    expect(held(w.A, fresh)).toEqual({ blocked: false, paused: true })
-    lib.failPause = 0
-    // its recovery held until the block of the known contact and the chaining are done
-    const g = gate()
-    w.A.faults.hold = async (p) => {
-      if (p === 'act:before') await g.p
-    }
-    const blockKnown = issue(w.A, 'block', known)
-    await chain()
-    g.open()
-    w.A.faults.hold = null
-    await blockKnown.done
-    await reopen(w.A)
-    await rest(w)
-    await w.pass(70_000)
-    // the open resume would lift the pause of the person: it does not run
-    expect(held(w.A, known)).toEqual({ blocked: true, paused: true })
-    expect(openOrdered(w.A)).toEqual([])
-  }, 120_000)
-
-  it('block(fresh) with its block committed and its pause failed, chained, unblock(known) done, recovered: the block is carried out on the person, with its pause', async () => {
-    const { w, fresh, known, chain } = await beforeChaining()
-    lib.failPause = 1000
-    await issue(w.A, 'block', fresh).done
-    await w.A.port.session()?.idle()
-    expect(openOrdered(w.A)).toEqual(['block'])
-    expect(held(w.A, fresh)).toEqual({ blocked: true, paused: false })
-    // its recovery held until the chaining and the unblock of the person are done
-    const cut = w.A.port.stores.intents.get().find((i) => i.command === 'block')!.actId
-    const g = gate()
-    w.A.faults.hold = async (p, actId) => {
-      if (p === 'act:before' && actId === cut) await g.p
-    }
-    lib.failPause = 0
-    await chain()
-    expect((await issue(w.A, 'unblock', known).done).ok).toBe(true)
-    g.open()
-    w.A.faults.hold = null
-    await reopen(w.A)
-    await rest(w)
-    await w.pass(70_000)
-    expect(held(w.A, known)).toEqual({ blocked: true, paused: true })
-    expect(openOrdered(w.A)).toEqual([])
-  }, 120_000)
-
-  it('unblock(known) taken and held, block(fresh) done, chained, the unblock let go: it lifts nothing of a person it never saw', async () => {
-    const { w, fresh, known, chain } = await beforeChaining()
-    expect((await issue(w.A, 'block', known).done).ok).toBe(true)
-    await w.settle()
-    const g = gate()
-    let first: string | null = null
-    w.A.faults.hold = async (p, actId) => {
-      if (p !== 'act:before') return
-      first ??= actId
-      if (actId === first) await g.p
-    }
-    const h1 = issue(w.A, 'unblock', known)
-    await turns(() => first !== null)
-    expect((await issue(w.A, 'block', fresh).done).ok).toBe(true)
-    await chain()
-    g.open()
-    w.A.faults.hold = null
-    expect(await h1.done).toMatchObject({ ok: false, error: { kind: 'refused', code: 'superseded' } })
-    await rest(w)
-    expect(held(w.A, known)).toEqual({ blocked: true, paused: true })
-    expect(openOrdered(w.A)).toEqual([])
-  }, 120_000)
-
+describe('a draft key that equals an alias stays a draft key (review round 3)', () => {
   it('a draft whose key equals the alias, sent under the alias and held, sent again under the known id: one message at B', async () => {
     const { w, fresh, known, chain } = await beforeChaining()
     await chain()
@@ -437,122 +232,6 @@ describe('the encounter caches of a joined contact are its entry’s', () => {
     expect(contactsOf(w.A)[0]?.verification).toBe('mutual')
     for (const id of [known, alias]) expect((await w.A.port.trust.sentCardFor(id)).ok, id === known ? 'known' : 'alias').toBe(false)
   }, 120_000)
-})
-
-// ── the class: generated runs over the ordered commands ──
-
-/** A run: commands on one person, each under the fresh or the known id; the chaining falls before command
- *  `at`. The first command, where it comes under the fresh id before the chaining, may be left over: taken
- *  for the fresh contact, run only after the chaining (held before its journal or before its act, or cut
- *  after its journal and recovered at the next opening). Every other command before the chaining is done
- *  before the next is taken. */
-interface Case { seq: Gesture[]; forms: ('fresh' | 'known')[]; at: number; left: 'none' | 'journal' | 'act' | 'crash' }
-
-function rng(seed: number) {
-  let s = seed >>> 0
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0
-    return s / 2 ** 32
-  }
-}
-const RESTRICTS: readonly Gesture[] = ['block', 'withdrawTrust']
-/** The end state by the contract (CONTACT-ORDER.md "A contact joined meanwhile"). Before the chaining the two
- *  ids are two contacts, each command acts on its own, and the chaining joins them blocked where one was
- *  (Message Tasks 6030). From then on the commands act on the one person in the order taken; trust is not
- *  given to a blocked person. A command left over from before the chaining runs behind everything taken
- *  until it runs where it restricts, and not at all where it lifts or grants. */
-function model(c: Case): { blocked: boolean; given: boolean } {
-  const leftOver = c.left !== 'none' && c.at >= 1 && c.forms[0] === 'fresh'
-  const before = { fresh: false, known: false }
-  for (let i = leftOver ? 1 : 0; i < c.at; i++) before[c.forms[i]!] = c.seq[i] === 'block'
-  let blocked = before.fresh || before.known
-  let given = false
-  const run = (g: Gesture) => {
-    if (g === 'block') blocked = true
-    else if (g === 'unblock') blocked = false
-    else if (g === 'withdrawTrust') given = false
-    else if (!blocked) given = true
-  }
-  for (let i = c.at; i < c.seq.length; i++) run(c.seq[i]!)
-  if (leftOver && RESTRICTS.includes(c.seq[0]!)) run(c.seq[0]!)
-  return { blocked, given }
-}
-const CASES: Case[] = (() => {
-  const r = rng(563)
-  const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)]!
-  const out: Case[] = []
-  const ALL = ['block', 'unblock', 'giveTrust', 'withdrawTrust'] as const
-  for (const left of ['none', 'journal', 'act', 'crash'] as const) {
-    for (let k = 0; k < 8; k++) {
-      const n = 2 + Math.floor(r() * 2)
-      // the chaining before all (0, only without a left-over), after the first, or after the second command
-      const at = left === 'none' ? [0, 1, 2][k % 3]! : [1, 2][k % 2]!
-      // before the chaining block and unblock only (trust given to a contact before it is joined is the
-      // library's merge of the settings, Trust 2160, not the order of commands); a left-over is any of the four
-      const seq: Gesture[] = Array.from({ length: n }, (_, i) => (i === 0 && left !== 'none' ? ALL[k % 4]! : i < at ? pick(['block', 'unblock'] as const) : pick(ALL)))
-      // a left-over comes under the fresh id; behind it, before the chaining, the known id (the fresh
-      // contact's section is held by the left-over)
-      const forms = seq.map((_, i) => (left !== 'none' ? (i === 0 ? 'fresh' : i < at ? 'known' : pick(['fresh', 'known'] as const)) : pick(['fresh', 'known'] as const)))
-      out.push({ seq, forms, at: Math.min(at, n), left })
-    }
-  }
-  return out
-})()
-
-describe('the commands on one person across its ids, the chaining anywhere between them (generated)', () => {
-  for (const c of CASES) {
-    const name = `chained before #${c.at + 1}, first ${c.left === 'none' ? 'done' : c.left === 'crash' ? 'cut after its journal' : `held before its ${c.left}`}: ${c.seq.map((g, i) => `${g}(${c.forms[i]})`).join(' → ')}`
-    it(`${name}: the end state by the contract, none left open`, async () => {
-      const { w, fresh, known, chain } = await beforeChaining()
-      const idOf = (i: number) => (c.forms[i] === 'fresh' ? fresh : known)
-      const handles: IntentHandle<void>[] = []
-      const g = gate()
-      let first: string | null = null
-      if (c.left === 'journal') {
-        w.A.faults.probe = async (p, actId) => {
-          if (p !== 'dedupe:before') return
-          first ??= actId
-          if (actId === first) await g.p
-        }
-      }
-      if (c.left === 'act') {
-        w.A.faults.hold = async (p, actId) => {
-          if (p !== 'act:before') return
-          first ??= actId
-          if (actId === first) await g.p
-        }
-      }
-      for (let i = 0; i < c.seq.length; i++) {
-        if (i === c.at) await chain()
-        if (i === 0 && c.left === 'crash') w.A.faults.killAt = 'after-journal'
-        handles.push(issue(w.A, c.seq[i]!, idOf(i)))
-        if (i === 0 && c.left === 'crash') {
-          await handles[0]!.done
-          // its recovery is held until the chaining is done (a recovery before it is the command done in time)
-          const cut = handles[0]!.actId
-          w.A.faults.hold = async (p, actId) => {
-            if (p === 'act:before' && actId === cut) await g.p
-          }
-        }
-        else if (i === 0 && c.left !== 'none') await turns(() => first !== null)
-        // each command before the chaining is done before the next is taken
-        else if (i < c.at) await handles[i]!.done
-      }
-      if (c.at >= c.seq.length) await chain()
-      // the commands behind a left-over are done before it is let go (it runs behind what was taken until then)
-      if (c.left !== 'none') await Promise.all(handles.slice(1).map((h) => h.done))
-      g.open()
-      w.A.faults.probe = null
-      w.A.faults.hold = null
-      await Promise.all(handles.map((h) => h.done))
-      if (c.left === 'crash') await reopen(w.A)
-      await rest(w)
-      await w.pass(70_000)
-      expect(state(w.A, known), name).toEqual(model(c))
-      // every command taken is finished (done, refused or superseded), nothing open
-      expect(w.A.port.stores.intents.get().filter((i) => ['block', 'unblock', 'giveTrust', 'withdrawTrust'].includes(i.command)), name).toEqual([])
-    }, 180_000)
-  }
 })
 
 // ── the unordered commands whose dedupe key names a contact: one act per gesture ──

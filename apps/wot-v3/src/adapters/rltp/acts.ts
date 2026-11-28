@@ -80,15 +80,9 @@ export interface ActSpec {
    *  only when its lanes cover the older one's whole; otherwise the older one runs first (review 483,
    *  rounds 1 to 3). Default: the command's name. */
   lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
-  /** an ordered act that only restricts: it sets something off (a block, trust withdrawn, a pause, a class
-   *  off). It decides what holds for a record whose contact was joined into another before it ran
-   *  (CONTACT-ORDER.md "A contact joined meanwhile"). Default: it lifts or grants. */
-  restricts?(input: Readonly<Record<string, unknown>>): boolean
   /** where the command's dedupe key (`command|<part>|…`, index.ts) holds `input.contactId`: the command
    *  knows which part of its key is a contact. None: its key names no contact (a draft, a prompt, a code). */
   readonly keyContact?: number
-  /** the library act ids of an ordered act, in the order they run. Default: the record's actId. */
-  partIds?(actId: string): readonly string[]
 }
 
 /** why the back-code act does not run for this ceremony now; null when it may */
@@ -285,7 +279,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     ordered: true,
     keyContact: 1,
     lanes: () => ['anchorMapping'],
-    restricts: () => true,
     run: (h, i, o) => h.untrust(str(i, 'contactId'), o),
     outcome: () => undefined,
   },
@@ -294,7 +287,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     ordered: true,
     keyContact: 1,
     lanes: () => ['star', 'groupStar'],
-    restricts: (i) => i.paused === true,
     run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
     outcome: () => undefined,
   },
@@ -303,7 +295,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     ordered: true,
     keyContact: 1,
     lanes: (i) => [str(i, 'cls')],
-    restricts: (i) => i.setting === 'off',
     run: (h, i, o) => h.setClass(str(i, 'contactId'), str(i, 'cls') as never, str(i, 'setting') as never, o),
     outcome: () => undefined,
   },
@@ -322,8 +313,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     ordered: true,
     keyContact: 1,
     lanes: () => ['block', 'star', 'groupStar'],
-    restricts: () => true,
-    partIds: (actId) => [`${actId}:block`, `${actId}:pause`],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:block`, () => h.block(str(i, 'contactId'), { ...o, actId: `${o.actId}:block` })],
@@ -336,7 +325,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     ordered: true,
     keyContact: 1,
     lanes: () => ['block', 'star', 'groupStar'],
-    partIds: (actId) => [`${actId}:unblock`, `${actId}:resume`],
     run: (h, i, o) =>
       parts(h, o.when, [
         [`${o.actId}:unblock`, () => h.unblock(str(i, 'contactId'), { ...o, actId: `${o.actId}:unblock` })],

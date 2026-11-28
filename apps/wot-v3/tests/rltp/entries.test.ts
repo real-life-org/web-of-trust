@@ -29,11 +29,4 @@ describe('entries: one reading of a contact id', () => {
     expect(entryDedupe(e, 'invite|bea-2|bea-2', 'bea-2', 2)).toBe('invite|bea-2|bea')
     expect(entryDedupe(e, 'decide|bea-2', undefined, undefined)).toBe('decide|bea-2')
   })
-
-  it('the contacts joined into an entry, asked by any of its ids', () => {
-    const e = entryIds([contact('bea', ['bea-2']), contact('cem')])
-    expect(e.aliasesOf('bea-2')).toEqual(['bea-2'])
-    expect(e.aliasesOf('bea')).toEqual(['bea-2'])
-    expect(e.aliasesOf('cem')).toEqual([])
-  })
 })

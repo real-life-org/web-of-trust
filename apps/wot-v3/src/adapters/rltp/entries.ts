@@ -4,8 +4,8 @@
 // ceremony's contact, a screen or link that kept an earlier id) stands for the entry it belongs to now.
 // The projection reads with it, the command service resolves a command's ids with it before the queue,
 // the dedupe key and the journal see them, and reads the key of a running gesture or an open record with it
-// (a record journaled under an id that became an alias later is read, never rewritten; what holds for its
-// act is CONTACT-ORDER.md "A contact joined meanwhile").
+// (a record journaled under an id that became an alias later is read, never rewritten; CONTACT-ORDER.md
+// "A contact joined meanwhile").
 import type { ContactView } from '@real-life/trust-protocol'
 
 export interface Entries {
@@ -13,19 +13,12 @@ export interface Entries {
   (id: string): string
   /** no alias at all: every id stands for itself */
   readonly none: boolean
-  /** the contacts joined into the entry `id` stands for (its aliases) */
-  aliasesOf(id: string): readonly string[]
 }
 
 export function entryIds(contacts: readonly ContactView[]): Entries {
   const of = new Map<string, string>()
-  const aliases = new Map<string, readonly string[]>()
-  for (const c of contacts) {
-    aliases.set(c.id, c.aliases)
-    for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
-  }
-  const entry = (id: string) => of.get(id) ?? id
-  return Object.assign(entry, { none: of.size === 0, aliasesOf: (id: string) => aliases.get(entry(id)) ?? [] })
+  for (const c of contacts) for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
+  return Object.assign((id: string) => of.get(id) ?? id, { none: of.size === 0 })
 }
 
 /** a conversation or command target (`c:<id>`) as its entry's; any other target as it is */

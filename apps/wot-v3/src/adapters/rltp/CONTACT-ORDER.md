@@ -104,39 +104,6 @@ where one of the two was (Message Tasks RLTP-MSG-6030), a class is `off` where o
 entry (`entries.ts`) before the section, the dedupe key, the actId and the journal see it. A command
 under an alias is the entry's command, in the entry's one queue; everything above holds unchanged.
 
-**The person changed between taking and running.** A gesture is for the person as it stood when it
-was taken: an ordered record journals the contacts joined into its entry by then (`aliases`). Its
-attempt reads at the holder what its contact stands for. A contact was joined meanwhile where the
-record's own contact is an alias of another entry now (taken for the fresh contact, run after the
-join: held, a failure, a restart; or taken under the fresh id in the moment the holder had joined it
-and the app had not read that yet), or where its entry holds an alias the record does not name (taken
-for the known contact, the fresh one joined into it since). Then:
-
-- a record that **lifts or grants** (`unblock`, `giveTrust`, `setPaused` off, `setClass` on or
-  default) runs nothing more, no part of it: the person may carry a restriction the gesture never saw
-  (a block or a pause of the other contact). Where every part committed before, it answers from the
-  library's journal; otherwise it ends `done` with `refused/superseded`. A part left open stays undone
-  (an unblock whose resume failed leaves the pause): lifting it takes a new gesture for the person;
-- a record that **restricts** (`acts.ts` `restricts`: `block`, `withdrawTrust`, `setPaused` on,
-  `setClass` off) runs. Taken for the fresh contact, it runs in the entry's section, behind everything
-  open for the entry (the entry's open records get their attempt first; one that stays open holds it,
-  its recovery planned), and as an act of its own on the entry (act id `<actId>@<entry>`, its parts
-  under it): a part it committed for the fresh contact before the join was that contact's, the person
-  gets the whole restriction. The record stays in the fresh contact's queue and is never rewritten.
-
-So no gesture lifts a restriction of a person it did not see, and a restriction taken for either
-contact holds for the person, whatever order the queues recover in and wherever a failure cut an act.
-The price: a restriction of the fresh contact taken before the join ends behind a lift taken for the
-person before that attempt ran, and a lift that did not run before the join has to be repeated by the
-human. An entry joined, split off and joined again while one attempt runs is not followed from inside
-its own section: the record stays open and its recovery starts over.
-
-**One turn for reading and act** (`contact-turn.ts`). The write gate counts calls and does not order
-them, and the holder's joining work (`receive`, `tick`, `resume`, `sharedConnectReceive`) runs on the
-same clock as a recovery. The attempt reads what its contact stands for and acts on it alone in the
-turn; joining work shares the turn among itself and never runs between the two. Without it a recovered
-`unblock` of the fresh contact lifted the block of the person joined an instant later.
-
 `giveTrust` reads the block of its contact inside the act (`acts.ts`), behind every gesture taken
 before it: trust toward a blocked contact is refused (`contact-blocked`) when it runs, not when the
 screen offered it.
@@ -146,6 +113,13 @@ screen offered it.
 running gesture or an open record is looked for (`keyNow`, `runningUnder`: found under any id of the
 person), and when a journaled key is read. A draft key or a group id that equals a contact id stays
 what it is.
+
+**Open across the join: not covered.** A record taken for the fresh contact before the join and run
+only after it (held, a failure, a restart) stays in the fresh contact's queue, and its act reaches
+the person through the library's reading of the alias. It is not ordered against the entry's queue:
+an `unblock` taken for the fresh contact can run after a `block` of the known one and lift it. The
+same holds for a gesture on the known contact that waits while the fresh one is restricted and
+joined. What these records should do is issue #566.
 
 ## Timers
 
@@ -180,9 +154,5 @@ failures and a dedupe read held across a reopening, `review-422-r5`/`-r6` the in
 (records without `seq`), `review-422-r8` (#428) the timers at lock, after a failed opening and a
 timer of an ended opening that fires anyway, plus a `gc-only` probe that the locked opening's holder
 is collectible before its planned recovery was due. `tests/rltp/trust.loopback.test.ts` holds the
-trust acts in the queue (review 483 B1, rounds 1 to 3). `tests/rltp/re-meet-order.loopback.test.ts` holds a
-contact joined meanwhile: the runs of the reviews of #563 (a part committed before the join, the
-surviving id, a draft key that equals an alias among them), generated runs with the chaining before any
-command and the first command left over (held before its journal, before its act, or cut and
-recovered), each against the end state this section gives; `re-meet-commands.loopback.test.ts` the
-commands under an alias; `contact-turn.test.ts` the turn.
+trust acts in the queue (review 483 B1, rounds 1 to 3). `tests/rltp/re-meet-commands.loopback.test.ts` and
+`re-meet-order.loopback.test.ts` hold the commands on a person met again, once its ids are one.

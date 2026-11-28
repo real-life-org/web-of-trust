@@ -25,7 +25,6 @@ import { createSharedConnectCarriage, type SharedConnectCarriage } from './share
 import { keysFromRootIkm } from './keys'
 import { answerLogin, type LoginKeys } from './login'
 import { idbHolderStore, type HolderStore } from './store-idb'
-import { createContactTurn } from './contact-turn'
 import { entryDedupe, entryIds, entryInput, entryKey, type Entries } from './entries'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
@@ -209,8 +208,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const { store, app, seal } = r
   const holder: Holder = await createHolder({ store, keys: keysFromRootIkm(deps.rootIkm), ...(deps.retry ? { retry: deps.retry } : {}) })
   const gate: Gate<Holder> = createGate(holder, deps.generation)
-  /** the holder's joining work and the ordered attempts, never interleaved (contact-turn.ts) */
-  const contactTurn = createContactTurn()
   let holderClosed: Promise<void> | null = null
   /** the holder's own close, kept across attempts: a close that outlived the limit is awaited again,
    *  never started twice; a rejected one is forgotten, so the next attempt calls close() again */
@@ -616,9 +613,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const due = async () => {
     timer = null
     try {
-      const t = await contactTurn.joining(() => gate.run((h) => h.tick(when())))
+      const t = await gate.run((h) => h.tick(when()))
       if (t.ok) schedule(t.nextDueAt)
-      const r = await contactTurn.joining(() => gate.run((h) => h.resume(when())))
+      const r = await gate.run((h) => h.resume(when()))
       schedule(r.nextDueAt)
       resumed = true
     } catch {
@@ -654,7 +651,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
           keys,
           views: () => gate.run((h) => h.sharedConnect()),
           receive: async (doc, sender) => {
-            const r = await contactTurn.joining(() => gate.run((h) => h.sharedConnectReceive(doc, sender, when())))
+            const r = await gate.run((h) => h.sharedConnectReceive(doc, sender, when()))
             if (r.ok) schedule(r.nextDueAt)
             return r
           },
@@ -690,7 +687,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** the holder's receive of an envelope a carrier delivered, and its answer to the carrier: a failure
    *  (storage, a closed gate) throws and is `later` in the lease (TRANSPORT.md) */
   const receive = async (env: unknown) => {
-    const r = await contactTurn.joining(() => gate.run((h) => h.receive(env, when())))
+    const r = await gate.run((h) => h.receive(env, when()))
     // validated answers for own documents (an acknowledgement, a refusal): a custody carrier's open
     // deposits are answered before the collection that carried them is concluded (lib 0.7.0)
     if (r.disposition === 'unique' && deps.transport.kind === 'custody') {
@@ -799,12 +796,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     })
     return p
   }
-  /** the person of an ordered gesture as it stands when the gesture is taken: the contacts joined into its
-   *  entry so far (journal.ts `aliases`; nothing where there are none) */
-  const known = (input: Readonly<Record<string, unknown>>): { aliases?: readonly string[] } => {
-    const aliases = typeof input.contactId === 'string' ? entries.aliasesOf(input.contactId) : []
-    return aliases.length > 0 ? { aliases: [...aliases] } : {}
-  }
   /** the last gesture taken per contact while it runs: the same gesture again joins it */
   const lastTaken = new Map<string, { readonly dedupe: string; readonly input: Readonly<Record<string, unknown>>; readonly handle: IntentHandle<unknown> }>()
   /** contacts whose recovery waits for their section: one at a time per contact */
@@ -894,46 +885,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       deps.faults.killAt = null
       return stillOpen(UNKNOWN)
     }
-    await deps.faults?.hold?.('act:before', rec.actId)
-    return attemptOrdered<T>(rec, spec, null)
-  }
-  /** The attempt itself. `entry` is the entry whose turn the attempt runs in: null for the record's own
-   *  contact, else the entry that contact was joined into since the gesture was taken (CONTACT-ORDER.md
-   *  "A contact joined meanwhile"); `inside`: the entries whose sections this attempt already holds. What the
-   *  contact stands for is read at the holder in the same turn as the act (contact-turn.ts): a join the
-   *  attempt does not run under yet sends it to that entry's section, behind everything open there. Where
-   *  a contact was joined into the person since the gesture was taken (the record's own into an entry, or
-   *  another into it), a record that restricts runs, on a joined entry as an act of its own; one that lifts
-   *  or grants runs nothing: it answers from the library's journal where it committed whole, else it ends
-   *  as superseded. */
-  const attemptOrdered = async <T>(rec: IntentRecord, spec: ActSpec, entry: string | null, inside: readonly string[] = []): Promise<Attempt<T>> => {
-    if (stopped || !gate.isOpen()) return stillOpen(LOCKED)
     const input = rec.input ?? {}
-    let r: ActOutcome | { readonly turnOf: string | null } | { readonly joined: true }
+    await deps.faults?.hold?.('act:before', rec.actId)
+    let r: ActOutcome
     try {
-      // reading and act in one turn: no joining work of the holder runs between them (contact-turn.ts)
-      r = await contactTurn.attempt(() =>
-        gate.run(async (h) => {
-          const id = input.contactId
-          const person = typeof id === 'string' ? (await h.contacts()).find((c) => c.id === id || c.aliases.includes(id)) : undefined
-          const into = person && person.id !== id ? person.id : null
-          if (into !== entry) return { turnOf: into }
-          const joined = into !== null || (person?.aliases ?? []).some((a) => !(rec.aliases ?? []).includes(a))
-          if (joined && !spec.restricts?.(input)) {
-            // the gesture was for the person as it stood then: nothing of it runs now
-            const events: HolderEvent[] = []
-            for (const part of spec.partIds?.(rec.actId) ?? [rec.actId]) {
-              const rp = await h.replay(part, rec.when)
-              if (!rp.ok) return { joined: true as const }
-              events.push(...rp.result.events)
-            }
-            return { ok: true as const, outbound: [], events }
-          }
-          // on a joined entry the restriction is an act of its own: what it committed for the fresh contact
-          // before the join is that contact's, not the person's
-          return spec.run(h, input, { when: rec.when, actId: into === null ? rec.actId : `${rec.actId}@${into}` }, actContext)
-        }),
-      )
+      r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }, actContext))
     } catch (e) {
       const error = toAppError(e)
       // locked: the opening ended, the next one completes the record (replayOpen)
@@ -941,48 +897,18 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await markOpen(rec)
       return stillOpen(UNKNOWN)
     }
-    if ('turnOf' in r) {
-      const into = r.turnOf
-      if (into === null) return attemptOrdered<T>(rec, spec, null, inside)
-      // an entry whose section this attempt holds already (joined, split off, joined again): not from
-      // inside it; the record stays open, its recovery starts over
-      if (inside.includes(into)) {
-        planOrdered(rec.target)
-        return stillOpen(UNKNOWN)
-      }
-      const target = `c:${into}`
-      return section(target, async (): Promise<Attempt<T>> => {
-        let ahead: IntentRecord[]
-        try {
-          ahead = openOrdered((await app.readAll()).intents.values(), target)
-        } catch (e) {
-          if (toAppError(e).kind === 'locked') return stillOpen(LOCKED)
-          planOrdered(rec.target)
-          return stillOpen(UNKNOWN)
-        }
-        const { last: held } = await runQueue(ahead)
-        // a record of the entry stays open: this one waits behind it, its own recovery planned
-        if (held && !held.settled) {
-          planOrdered(rec.target)
-          return stillOpen(!held.result.ok && held.result.error.kind === 'locked' ? LOCKED : UNKNOWN)
-        }
-        return attemptOrdered<T>(rec, spec, into, [...inside, into])
-      })
-    }
-    const done: ActOutcome | null = 'joined' in r ? null : r
-    if (done?.ok && done.nextDueAt !== undefined) schedule(done.nextDueAt)
+    if (r.ok && r.nextDueAt !== undefined) schedule(r.nextDueAt)
     // "not now", or a later part refused after a committed one (the state is partial): the record
     // stays open, its completion planned (CONTACT-ORDER.md "Failures")
     // (#485: the handle says open, like every other open path, not refused)
-    if (done && !done.ok && ('partial' in done || TRANSIENT_REFUSALS.has(done.code))) {
+    if (!r.ok && ('partial' in r || TRANSIENT_REFUSALS.has(r.code))) {
       await markOpen(rec)
       return stillOpen(UNKNOWN)
     }
-    const value = done?.ok ? spec.outcome(done.events, input) : undefined
-    const outcome: { ok: true; value: unknown } | { ok: false; error: AppError } =
-      done === null ? { ok: false, error: { kind: 'refused', code: 'superseded' } } : done.ok ? { ok: true, value } : { ok: false, error: mapActError(done.code) }
-    if (done?.ok) {
-      for (const e of done.events) {
+    const value = r.ok ? spec.outcome(r.events, input) : undefined
+    const outcome = r.ok ? { ok: true as const, value } : { ok: false as const, error: mapActError(r.code) }
+    if (r.ok) {
+      for (const e of r.events) {
         if (seen.has(e.eventId)) continue
         seen.add(e.eventId)
         pending.push(e)
@@ -1037,7 +963,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // its act answers from the library's journal, never a second act (§3.4 step 1)
       const last = open.at(-1)
       const same = last && last.dedupe === dedupe && sameInput(last.input, input) ? last : null
-      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policyFor?.(input) ?? spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq: (last ? place(last) : 0) + 1, attempts: 0, ...known(input) }
+      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policyFor?.(input) ?? spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq: (last ? place(last) : 0) + 1, attempts: 0 }
       // replaced whole: every older record this gesture covers; the rest stays ahead in the queue
       const superseded = open.filter((r) => r !== same && covers(lanes, r))
       ahead = open.filter((r) => r !== same && !superseded.includes(r))
