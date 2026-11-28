@@ -42,6 +42,7 @@ import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type 
 import { DEPARTED } from './ingest'
 import { proposalValidUntil } from './acts'
 import { isOpen, type IntentRecord } from './journal'
+import { entryIds, entryKey, type Entries } from './entries'
 
 export interface ProjectionInput {
   readonly revision: Revision
@@ -116,14 +117,17 @@ export function relayCache(resolve: (did: string) => Promise<boolean | null> = r
 }
 
 /** One ceremony as the port shows it: every fact from the core's view of it (shared-connect-holder.ts
- *  `sharedConnectView`), nothing from a screen */
-export function connectionOf(v: SharedConnectView, relayed: boolean | null): Connection {
+ *  `sharedConnectView`), nothing from a screen. `entry`: the entry an id stands for now (`entryIds`); the
+ *  ceremony's contact is read through it */
+export function connectionOf(v: SharedConnectView, relayed: boolean | null, entry: (id: string) => string = (id) => id): Connection {
+  const contactId = v.contactId === null ? null : entry(v.contactId)
   return {
     id: v.id as ConnectionId,
     role: v.role,
     status: v.status,
     name: v.name,
-    contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    contactId: (contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    recognized: contactId !== null && contactId !== v.contactId,
     met: v.met,
     failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null,
     closedAt: v.closedAt,
@@ -152,6 +156,18 @@ function runningTargets(intents: readonly IntentRecord[]): Set<string> {
   return s
 }
 
+/** the requests a running counter-step answers: the one it names, else the encounter requests of the
+ *  contact it was taken for, by that contact's id as the request names it (not read as an entry: a request
+ *  is a meeting's, the library names its contact) */
+function answering(intents: readonly IntentRecord[]): Set<string> {
+  const s = new Set<string>()
+  for (const r of intents) {
+    if ((r.state !== 'journaled' && r.state !== 'running') || r.command !== 'counterVerify') continue
+    s.add(typeof r.input?.promptId === 'string' ? `prompt|${r.input.promptId}` : `contact|${r.target}`)
+  }
+  return s
+}
+
 /** The own displayed card an encounter-confirm answers (E9): the relationship that holds a displayed
  *  card's N is the record of that card's challenge (VTI §1c RLTP-VTI-1260, the rule the carrier binds
  *  the card's instance by). Exact, never inferred from timing: a contact none of whose relationships
@@ -165,12 +181,17 @@ function answeredCard(contact: ContactView | undefined, displayed: DisplayedCard
   return null
 }
 
-function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards, connections: readonly SharedConnectView[], now: number): Decision | null {
+function decisionOf(p: PromptView, running: Set<string>, answered: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards, connections: readonly SharedConnectView[], now: number): Decision | null {
   const base = {
     id: p.id as DecisionId,
     openedAt: p.openedAt,
     expiresAt: p.expiresAt ?? null,
-    state: running.has(`decide|${p.id}`) || (p.contactId !== undefined && running.has(`counterVerify|c:${p.contactId}`)) ? ('in-flight' as const) : ('open' as const),
+    // in flight: its own answer, or a counter-step that names it, or (an encounter request) the contact's
+    // counter-step without a request. Another request of the person stays open
+    state:
+      running.has(`decide|${p.id}`) || answered.has(`prompt|${p.id}`) || (p.kind === 'encounter-confirm' && p.contactId !== undefined && answered.has(`contact|c:${p.contactId}`))
+        ? ('in-flight' as const)
+        : ('open' as const),
   }
   if (p.kind === 'encounter-confirm' && p.contactId !== undefined) {
     return { ...base, kind: 'encounter-confirm', contactId: p.contactId as ContactId, answers: answeredCard(contacts.get(p.contactId), displayed) }
@@ -335,10 +356,11 @@ function authorOf(l: MessageLine, names: ReadonlyMap<string, string | null>) {
   return l.dir === 'out' ? ({ kind: 'self' } as const) : ({ kind: 'contact', contactId: l.contactId as ContactId, name: names.get(l.contactId) ?? null } as const)
 }
 
-function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, names: ReadonlyMap<string, string | null>): MessageItem {
+function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, names: ReadonlyMap<string, string | null>, relOf: (l: LogLine) => string): MessageItem {
   // replyTo names a mid of this relationship (Message Tasks 3.2); shown only when the app holds an
-  // earlier message with it in this conversation, otherwise the reference is dropped
-  const ref = l.replyTo !== null ? byMid.get(l.replyTo) : undefined
+  // earlier message with it in this relationship, otherwise the reference is dropped. A conversation
+  // joined from two contacts holds two relationships: a mid is looked up in the line's own
+  const ref = l.replyTo !== null ? byMid.get(`${relOf(l)}|${l.replyTo}`) : undefined
   // a mid is random, not causal: any other message of this relationship that the app holds counts,
   // whatever order the display gives them within a second (review 421 R2-5)
   const replyTo = ref && ref !== l ? { id: ref.id as MessageId, author: authorOf(ref, names), text: ref.text } : undefined
@@ -383,13 +405,48 @@ function namedByCeremony(c: ContactView, connections: readonly SharedConnectView
   return name ? { ...c, displayName: name } : c
 }
 
-export function project(raw: ProjectionInput): ReadModels {
+/** The input with every contact id it names read as the entry it stands for now (`entryIds`). */
+function byEntry(raw: ProjectionInput, entry: Entries): ProjectionInput {
+  // no alias: nothing to read differently, every record stays the one the app holds
+  if (entry.none) return raw
+  const key = <K extends string>(k: K): K => entryKey(entry, k)
+  const line = (l: LogLine): LogLine => {
+    if (key(l.key) === l.key && (l.kind !== 'message' || entry(l.contactId) === l.contactId)) return l
+    return l.kind === 'message' ? { ...l, key: key(l.key), contactId: entry(l.contactId) } : { ...l, key: key(l.key) }
+  }
+  const intent = (r: IntentRecord): IntentRecord => {
+    const contactId = r.input && typeof r.input.contactId === 'string' ? r.input.contactId : null
+    if (key(r.target) === r.target && (contactId === null || entry(contactId) === contactId)) return r
+    return { ...r, target: key(r.target), ...(r.input && contactId !== null ? { input: { ...r.input, contactId: entry(contactId) } } : {}) }
+  }
+  return {
+    ...raw,
+    lines: raw.lines.map(line),
+    intents: raw.intents.map(intent),
+  }
+}
+
+/** The maps read by a contact id, extended by every alias to the entry's value. */
+function withAliases<V>(map: Map<string, V>, contacts: readonly ContactView[], at: (id: string) => string = (id) => id): void {
+  for (const c of contacts) {
+    const v = map.get(at(c.id))
+    if (v !== undefined) for (const a of c.aliases) if (a !== c.id && !map.has(at(a))) map.set(at(a), v)
+  }
+}
+
+export function project(raw0: ProjectionInput): ReadModels {
+  const entry = entryIds(raw0.contacts)
+  const raw = byEntry(raw0, entry)
+  // the relationship a line came over: the contact it was filed under, before it is read as its entry
+  const filed = entry.none ? null : new Map(raw0.lines.map((l) => [l.id, l.key] as const))
+  const relOf = (l: LogLine): string => filed?.get(l.id) ?? l.key
   const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => namedByCeremony(shownProfile(c, raw.shown[c.id]), raw.connections ?? [])) }
   const running = runningTargets(input.intents)
+  const answered = answering(raw0.intents)
   const decisions: Decision[] = []
   const byId = new Map(input.contacts.map((c) => [c.id, c] as const))
   for (const p of input.prompts) {
-    const d = decisionOf(p, running, byId, input.displayed, input.connections ?? [], input.now)
+    const d = decisionOf(p, running, answered, byId, input.displayed, input.connections ?? [], input.now)
     if (d) decisions.push(d)
   }
   const decisionById = new Map<string, Decision>(decisions.map((d) => [d.id, d]))
@@ -432,14 +489,17 @@ export function project(raw: ProjectionInput): ReadModels {
     // blocked: nothing of the contact's content is shown (Message Tasks 6230)
     const visible = contact?.blocked ? sorted.filter((l) => l.kind !== 'message' || l.dir === 'out') : sorted
     const byMid = new Map<string, MessageLine>()
-    for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(l.mid, l)
+    for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(`${relOf(l)}|${l.mid}`, l)
     // the report selection alone reads the hidden messages: reporting after a silent block (paper §6, Anton 21.10.)
     if (contactId !== null && contact) {
       const all = new Map<string, MessageLine>()
-      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(l.mid, l)
-      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names)))
+      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(`${relOf(l)}|${l.mid}`, l)
+      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names, relOf)))
     }
-    const mark = input.reads[key]
+    // a line is read by the mark of the conversation it was filed under: a mark set in one contact's
+    // conversation before it was joined says nothing of the other's lines (session.markRead sets every
+    // key of the person once the joined conversation is read)
+    const markOf = (l: LogLine) => input.reads[relOf(l)]
     const items: ConversationItem[] = []
     let day: string | null = null
     let openDecisions = 0
@@ -458,7 +518,8 @@ export function project(raw: ProjectionInput): ReadModels {
         items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, ...(l.of ? { of: l.of } : {}), // the group's name is the inviter's text: none of a blocked contact's content is shown (6230)
         ...(l.groupName && !contact?.blocked ? { groupName: l.groupName } : {}), at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
       } else {
-        items.push(messageItem(l, byMid, names))
+        items.push(messageItem(l, byMid, names, relOf))
+        const mark = markOf(l)
         if (l.dir === 'in' && (!mark || compareOrder(orderKey(l), mark) > 0)) unread++
       }
     }
@@ -475,6 +536,15 @@ export function project(raw: ProjectionInput): ReadModels {
 
   const contactDetails = new Map<string, ContactDetail>()
   const connections = input.connections ?? []
+  // the end of the connection ceremony that opened a contact, by that contact's own id (an entry's by the
+  // ceremony it names, a joined contact's by the ceremony that names it): one pass over each
+  const ceremonyById = new Map(connections.map((v) => [v.id, v] as const))
+  const endOf = new Map<string, number>()
+  for (const v of connections) if (v.contactId !== null && v.closedAt !== null && entry(v.contactId) !== v.contactId) endOf.set(v.contactId, v.closedAt)
+  for (const c of input.contacts) {
+    const at = c.sharedConnect ? ceremonyById.get(c.sharedConnect.enactmentId)?.closedAt : undefined
+    if (typeof at === 'number') endOf.set(c.id, at)
+  }
   const contacts: ContactListItem[] = input.contacts.map((c) => {
     const key: ConversationKey = `c:${c.id}`
     // a contact from a connection ceremony over a link, not in person: its class is 'link' (no trust)
@@ -517,16 +587,25 @@ export function project(raw: ProjectionInput): ReadModels {
       unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
     }
-    const met = input.encounters.met[c.id]
-    // a contact of a connection ceremony has no encounter record: the ceremony's end is the meeting
-    const ceremony = c.sharedConnect ? connections.find((v) => v.id === c.sharedConnect?.enactmentId) : undefined
+    // the meetings of the person: of the entry and of every contact joined into it, each by its encounter
+    // record, else by the end of the ceremony that opened it (a ceremony has no encounter record). The
+    // first meeting stays the first; the last is the newest
+    const firsts: number[] = []
+    const lasts: number[] = []
+    for (const id of [c.id, ...c.aliases]) {
+      const m = input.encounters.met[id]
+      const first = m ? m.metAt : endOf.get(id)
+      const last = m ? m.lastMetAt : endOf.get(id)
+      if (first !== undefined) firsts.push(first)
+      if (last !== undefined) lasts.push(last)
+    }
     const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
     contactDetails.set(c.id, {
       ...summary,
       classes: { anchorMapping: cls('anchorMapping'), profile: cls('profile'), star: cls('star'), groupStar: cls('groupStar'), sealedGroupStar: cls('sealedGroupStar') },
       introducedBy: (c.via ?? null) as ContactId | null,
-      metAt: met?.metAt ?? ceremony?.closedAt ?? null,
-      lastMetAt: met?.lastMetAt ?? ceremony?.closedAt ?? null,
+      metAt: firsts.length > 0 ? Math.min(...firsts) : null,
+      lastMetAt: lasts.length > 0 ? Math.max(...lasts) : null,
       // the contact's group star tested against this holder's groups (lib sharedGroups): the contact says
       // it is in them, which member of the group it is the star does not say; nothing of a blocked contact
       sharedGroups: c.blocked || c.sharedGroups === undefined ? null : (c.sharedGroups as readonly string[] as readonly GroupId[]),
@@ -582,6 +661,10 @@ export function project(raw: ProjectionInput): ReadModels {
       ...(r.state === 'needs-confirmation' && r.preview ? { confirm: { kind: 'card' as const, preview: r.preview } } : {}),
     }))
 
+  // an alias reads as its entry: its conversation, its details, its reportable messages
+  withAliases(conversations as Map<string, Conversation>, input.contacts, (id) => `c:${id}`)
+  withAliases(contactDetails, input.contacts)
+  withAliases(reportable as Map<string, readonly MessageItem[]>, input.contacts)
   const groups = groupsOf(input, running, names)
   return {
     revision: input.revision,
@@ -592,7 +675,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: connections.map((v) => connectionOf(v, input.relayed?.[v.id] ?? null)),
+    connections: connections.map((v) => connectionOf(v, input.relayed?.[v.id] ?? null, entry)),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

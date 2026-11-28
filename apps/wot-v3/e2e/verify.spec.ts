@@ -251,7 +251,7 @@ test('two phones in German', async ({ page }) => {
   await expect(jonas.getByRole('heading', { name: /^Du und \S+ seid jetzt verbunden\.$/ })).toBeVisible({ timeout: 20_000 })
 })
 
-test('two phones that met already meet again: both end in the success of the contact they know, one entry each', async ({ page }) => {
+test('two phones that met already meet again: both end in the contact they know, recognized, one entry each', async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 960 })
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
   await page.goto(`/?${new URLSearchParams({ scenario: 'conversation', theme: 'light', carrier: 'mediator' }).toString()}`)
@@ -263,11 +263,24 @@ test('two phones that met already meet again: both end in the success of the con
   await jonas.getByRole('button', { name: 'Verify in person' }).click()
   await jonas.getByRole('button', { name: 'Scan code' }).click()
   await jonas.getByRole('button', { name: 'Confirm', exact: true }).click()
-  await noah.getByRole('button', { name: 'Confirm', exact: true }).click({ timeout: 20_000 })
-  // the library joins the second encounter into the first as its clock moves on
+  await noah.getByRole('button', { name: 'Yes, connect' }).click({ timeout: 20_000 })
+  // the library joins the second meeting into the first as its clock moves on (Trust 6a.4): the success
+  // turns to the contact they know, recognized, without a dialog
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '+1 min' }).click()
-  await expect(jonas.getByText(/^You and \S+ are now connected\.$/)).toBeVisible({ timeout: 20_000 })
-  await expect(noah.getByText(/^You and \S+ are now connected\.$/)).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByText('Met again · recognized', { exact: true })).toBeVisible({ timeout: 20_000 })
+  await expect(noah.getByText('Met again · recognized', { exact: true })).toBeVisible({ timeout: 20_000 })
+  await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist' })).toBeVisible()
+  await expect(noah.getByRole('heading', { name: 'Jonas Weber' })).toBeVisible()
+  // "close" leads to the conversation of the contact they know: its name, a composer to write in
   await jonas.getByRole('button', { name: 'Close' }).click()
+  await noah.getByRole('button', { name: 'Close' }).click()
+  await expect(jonas.getByRole('heading', { name: 'Noah Lindqvist' })).toBeVisible()
+  await expect(jonas.getByRole('textbox', { name: /^Message Noah/ })).toBeEnabled()
+  await expect(noah.getByRole('heading', { name: 'Jonas Weber' })).toBeVisible()
+  await expect(noah.getByRole('textbox', { name: /^Message Jonas/ })).toBeEnabled()
+  // and the list holds them once
+  await jonas.getByRole('button', { name: 'Back' }).click()
+  await noah.getByRole('button', { name: 'Back' }).click()
   await expect(jonas.getByRole('button', { name: /^Noah Lindqvist/ })).toHaveCount(1)
+  await expect(noah.getByRole('button', { name: /^Jonas Weber/ })).toHaveCount(1)
 })

@@ -1662,13 +1662,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     void queue(async () => {
       if (stopped) return false
       // the line of the item, so the mark uses the conversation's own order (R1-4)
+      // the conversation of a person joined from two contacts holds the lines filed under each: reading it
+      // marks them all, under every key lines of the person are filed under (the entry's and its aliases').
+      // A mark set in one of them before the join stays that conversation's alone
+      const own = entryKey(entries, key)
       const line = await app.get<LogLine>('log', upTo)
-      if (!line || line.key !== key) return false
+      if (!line || entryKey(entries, line.key) !== own) return false
       const mark = orderKey(line)
       const reads = (await app.get<ReadMarks>('kv', KV.reads)) ?? {}
-      const cur = reads[key]
-      if (cur && compareOrder(cur, mark) >= 0) return false
-      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [key]: mark } }])
+      const person = own.startsWith('c:') ? lastViews?.contacts.find((c) => c.id === own.slice(2)) : undefined
+      const next = { ...reads }
+      let changed = false
+      for (const k of [own, ...(person?.aliases ?? []).map((a) => `c:${a}`)]) {
+        const cur = next[k]
+        if (cur && compareOrder(cur, mark) >= 0) continue
+        next[k] = mark
+        changed = true
+      }
+      if (!changed) return false
+      await app.write([{ store: 'kv', key: KV.reads, value: next }])
       return true
     })
       .then((changed) => (changed ? sync() : undefined))
