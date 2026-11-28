@@ -269,6 +269,86 @@ describe('incoming transitions over a scripted executor', () => {
   })
 })
 
+// ── the card's end timer lives as long as its state (the runner's signal) ─────────────────────
+describe('the expiry timer of the queue ends with its lifetime', () => {
+  const T0 = 1_000_000
+  const entry = (id: string, validUntil: number): IncomingEntry => ({ id: id as DecisionId, contactId: `c-${id}` as ContactId, name: id, openedAt: 1, validUntil })
+  /** a clock double that counts its pending timers */
+  const countingClock = () => {
+    const c = virtualClock(T0, 'UTC')
+    const pending = new Set<object>()
+    const clock = {
+      ...c,
+      now: () => c.now(),
+      timeZone: () => c.timeZone(),
+      setTimer: (at: number, cb: () => void) => {
+        const token = {}
+        pending.add(token)
+        const off = c.setTimer(at, () => {
+          pending.delete(token)
+          cb()
+        })
+        return () => {
+          pending.delete(token)
+          off()
+        }
+      },
+    }
+    return { clock, pending, advance: (ms: number) => c.advance(ms) }
+  }
+  /** a port whose counter-step never answers: only the queue's own timer is under test */
+  const port = { trust: { counterVerify: () => ({ actId: 'x', done: new Promise(() => undefined) }), decide: () => ({ actId: 'x', done: new Promise(() => undefined) }) } } as unknown as AppPort
+  const queue = () => {
+    const { clock, pending, advance } = countingClock()
+    const r = createFlowRunner(incoming, incomingStart(T0), incomingExecutor(port, { clock: clock as never }))
+    return { r, pending, advance }
+  }
+
+  it('the state leaves the timer’s lifetime: a confirm, an earlier card end; its timer is removed', () => {
+    const { r, pending } = queue()
+    r.send({ type: 'decisions', entries: [entry('a', T0 + 5000)], now: T0 })
+    expect(r.get().name).toBe('asking')
+    expect(pending.size).toBe(1)
+    // an earlier end replaces the timer: one runs, not two
+    r.send({ type: 'decisions', entries: [entry('a', T0 + 5000), entry('b', T0 + 3000)], now: T0 })
+    expect(pending.size).toBe(1)
+    // the counter-step starts a new run: the card's end timer of the old run goes
+    r.send({ type: 'confirm' })
+    expect(r.get()).toMatchObject({ name: 'asking', busy: true })
+    expect(pending.size).toBe(0)
+    r.dispose()
+  })
+
+  it('the screen goes (the runner is disposed): its timer is removed', () => {
+    const { r, pending } = queue()
+    r.send({ type: 'decisions', entries: [entry('a', T0 + 5000)], now: T0 })
+    expect(pending.size).toBe(1)
+    r.dispose()
+    expect(pending.size).toBe(0)
+  })
+
+  it('the executor sets no timer for a lifetime already ended; a live one fires with the device time', async () => {
+    const { clock, pending, advance } = countingClock()
+    const exec = incomingExecutor(port, { clock: clock as never })
+    const ended = new AbortController()
+    ended.abort()
+    expect(await exec({ id: 'inc.expire', run: 2, at: T0 + 5000 }, ended.signal)).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+    const live = new AbortController()
+    const fires = exec({ id: 'inc.expire', run: 3, at: T0 + 1000 }, live.signal)
+    expect(pending.size).toBe(1)
+    advance(1000)
+    expect(await fires).toEqual({ ok: true, value: { now: T0 + 1000 } })
+    expect(pending.size).toBe(0)
+    const aborted = new AbortController()
+    const waiting = exec({ id: 'inc.expire', run: 4, at: T0 + 9000 }, aborted.signal)
+    expect(pending.size).toBe(1)
+    aborted.abort()
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+  })
+})
+
 describe('the success moment (E7)', () => {
   it('once per relationship, never at the first view, never for a contact first seen mutual', () => {
     const c = (id: string, verification: 'mutual' | 'outgoing' | 'incoming') => ({ id: id as ContactId, verification })
