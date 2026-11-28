@@ -700,8 +700,15 @@ async function mediatorWorld(n = 2, ceremony?: 'shared-connect') {
     clock.advance(CARRIER_TICK_MS)
     await settle()
   }
-  /** carrier ticks until `ok` holds (the bundle crossing the mediator) */
+  /** until `ok` holds (the bundle crossing the mediator). First without moving the device clock: the
+   *  mediator double's delivery takes real time, which on a slow machine outlasts the settle loop's rest, and a
+   *  device clock moved meanwhile would pass the scanner's wait (BACK_AFTER_MS) on the speed of the machine.
+   *  Only what does not arrive in real time gets carrier ticks */
   const until = async (ok: () => boolean, what: string) => {
+    for (let i = 0; i < 200 && !ok(); i++) {
+      await settle()
+      await new Promise((r) => setTimeout(r, 25))
+    }
     for (let i = 0; i < 12 && !ok(); i++) await tick()
     if (!ok()) throw new Error(`mediator world: never ${what}`)
   }
