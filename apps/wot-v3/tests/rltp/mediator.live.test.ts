@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const LIVE = process.env.RLTP_LIVE_MEDIATOR === '1'
 /** a TSP 1.0 mediator (0.45 or later); there is no default (the storm.ws dev instance runs 0.44, Rev 3) */
@@ -43,7 +44,7 @@ describe.skipIf(!LIVE)('two phones against the live VTI mediator', () => {
       return Date.now() - t0
     }
     const timings: Record<string, number> = {}
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show ' + JSON.stringify(shown))
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')

@@ -4,6 +4,7 @@
 import { expect, it, vi } from 'vitest'
 import { IDBFactory, IDBDatabase } from 'fake-indexeddb'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { virtualClock, fakeEntropy } from '../../src/platform/fake'
 import { secret, type ContactId, type Loadable, type ReadStore } from '../../src/port'
 import { verify, type VerifyState } from '../../src/flows/verify'
@@ -42,7 +43,7 @@ const keys = () => ({ rootIkm: new Uint8Array(64).fill(1), dek: new Uint8Array(3
 it('R1-7: a repeated optical capture finds its contact again and lands at the open decision', async () => {
   const { A, B, carrier, settle } = await pair()
   carrier.setOnline('A', false)
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   const scan = await A.port.trust.confirmCard(shown.value.qr).done
   if (!scan.ok) throw Error('scan')
@@ -57,7 +58,7 @@ it('R1-7: a repeated optical capture finds its contact again and lands at the op
 
 it('R1-6: the counter result after the only mutual bundle still ends in success', async () => {
   const { A, B, carrier, settle } = await pair()
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()
@@ -84,7 +85,7 @@ it('R1-1: a failed first take-over does not lose the sent card of an act that re
   const { A, B, carrier, settle } = await pair()
   carrier.setOnline('A', false)
   await settle()
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   const original = IDBDatabase.prototype.transaction
   let failed = false
@@ -109,7 +110,7 @@ it('R1-1: a failed first take-over does not lose the sent card of an act that re
 
 it('R1-8: an own decision stays in the history after the journal clean-up', async () => {
   const { A, B, clock, settle } = await pair()
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()
@@ -142,7 +143,7 @@ it('R1-4: a staged restore opens beside the old holder under the same lock; the 
       }
     },
   } as unknown as LockManager
-  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(91), transport: unconfiguredTransport(), writer: webLockWriter(locks), publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(91), transport: unconfiguredTransport(), writer: webLockWriter(locks), publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const a = await host.open('old', keys())
   const b = await host.open('staged', keys())
   expect([a.kind, b.kind]).toEqual(['ok', 'ok'])
@@ -159,7 +160,7 @@ it('R1-3: a failed opening stops its transport before the writer is released', a
   const tr = unconfiguredTransport()
   const order: string[] = []
   vi.spyOn(tr, 'stop').mockImplementation(() => void order.push('stop'))
-  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(92), transport: tr, writer: { acquire: async () => () => void order.push('release') }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(92), transport: tr, writer: { acquire: async () => () => void order.push('release') }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const original = IDBDatabase.prototype.transaction
   const spy = vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
     if (this.name.startsWith('wot-v3-app-') && args[1] === 'readwrite') throw Error('injected first ingest failure')
@@ -206,7 +207,7 @@ it('R1-5: closing the old opening leaves the staged opening its transport', asyn
   const device = carrier.endpoint('me')
   const other = carrier.endpoint('other')
   const stop = vi.spyOn(device, 'stop')
-  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(93), transport: device, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(93), transport: device, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const a = await host.open('old', keys())
   const b = await host.open('staged', keys())
   if (a.kind !== 'ok' || b.kind !== 'ok') throw Error('open')
@@ -227,7 +228,7 @@ it('R1-5: closing the old opening leaves the staged opening its transport', asyn
 // after the next resume; the library never committed it, so it is not run blind
 it('R1-9, R1-10: an act cut off by a process end is settled from the library journal, never run blind', async () => {
   const { A, B, clock, settle } = await pair()
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()

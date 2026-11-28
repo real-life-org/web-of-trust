@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import type { ContactId, Conversation, EncounterOutcome, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
 
@@ -35,7 +36,7 @@ describe('encounter over the real adapter (loopback)', () => {
   it('B shows, A scans, B confirms: both mutual, with system lines and the decision card', async () => {
     const { A, B, settle } = await pair()
     expect(A.port.stores.identity.get().status).toBe('unlocked')
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     expect(shown.ok).toBe(true)
     if (!shown.ok) return
     expect(shown.value.qr).toMatch(/^https:\/\/web-of-trust\.de\/c#3:[A-Z2-7]+$/)
@@ -73,7 +74,7 @@ describe('encounter over the real adapter (loopback)', () => {
 
   it('refuses the own code and garbage; an expired displayed code is refused before confirming', async () => {
     const { A, B, clock } = await pair()
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     expect(await B.port.trust.previewCard(shown.value.qr)).toMatchObject({ ok: true, value: { self: true } })
     expect(await A.port.trust.previewCard('hello')).toEqual({ ok: false, error: { kind: 'refused', code: 'card-invalid' } })
@@ -85,7 +86,7 @@ describe('encounter over the real adapter (loopback)', () => {
   it('optical return path: the scanner is offline, the displayer captures the sent card and counters', async () => {
     const { A, B, carrier, settle } = await pair()
     carrier.setOnline('A', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -118,7 +119,7 @@ describe('encounter over the real adapter (loopback)', () => {
 
   it('locking empties the stores; unlocking brings back the same contacts', async () => {
     const { A, B, settle } = await pair()
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     await A.port.trust.confirmCard(shown.value.qr).done
     await settle()
@@ -131,7 +132,7 @@ describe('encounter over the real adapter (loopback)', () => {
   })
   it('the counter-step closes with the issuance window (#479): not offered past it, and the library refuses it', async () => {
     const { A, B, clock, settle } = await pair()
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     await A.port.trust.confirmCard(shown.value.qr).done
     await settle()
@@ -160,7 +161,7 @@ describe('encounter over the real adapter (loopback)', () => {
     const { A, B, carrier, clock, settle } = await pair()
     const { secret } = await import('../../src/port')
     carrier.setOnline('A', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -192,7 +193,7 @@ describe('encounter over the real adapter (loopback)', () => {
   it('a confirm journaled before a process loss is never run on its own: needs-confirmation, then confirm or discard (§3.4, N3)', async () => {
     const { A, B, settle } = await pair()
     const { secret } = await import('../../src/port')
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     A.faults.killAt = 'after-journal'
     const lost = await A.port.trust.confirmCard(shown.value.qr).done
@@ -225,7 +226,7 @@ describe('encounter over the real adapter (loopback)', () => {
   it('a pending confirm can be discarded', async () => {
     const { A, B } = await pair()
     const { secret } = await import('../../src/port')
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     A.faults.killAt = 'after-journal'
     await A.port.trust.confirmCard(shown.value.qr).done

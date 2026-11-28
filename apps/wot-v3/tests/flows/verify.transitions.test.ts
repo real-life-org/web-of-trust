@@ -15,6 +15,7 @@ import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
 import { bundleEvent, carrierInReach, verifyExecutor, verifyLifetime } from '../../src/hooks/verify'
 import { connectionOf } from '../../src/adapters/rltp/projection'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
 import { tableCoverage } from './world'
@@ -89,6 +90,14 @@ function decisionsOf(d: LoopbackDevice) {
   return v.value.flatMap((x) => (x.kind === 'encounter-confirm' ? [x] : []))
 }
 
+/** the card of encounter-scan as an earlier version of the app showed it on `d` (harness/older-card.ts):
+ *  the app reads such cards and finishes their encounters, it shows none itself */
+const olderQr = async (d: LoopbackDevice): Promise<string> => {
+  const r = await showOlderCardOn(d)
+  if (!r.ok) throw new Error('older card')
+  return r.value.qr
+}
+
 const qrOf = (f: Flow): string => {
   const s = f.state()
   if (!s.card) throw new Error('no card shown')
@@ -122,9 +131,10 @@ describe('verify transitions', () => {
     const fb = flow(B)
     await fb.until('ready')
     carrier.setOnline('Al', false)
+    const card = await olderQr(B)
     const fa = flow(A)
     await fa.until('ready')
-    fa.scanner.source = () => qrOf(fb)
+    fa.scanner.source = () => card
     fa.send({ type: 'scan' })
     await fa.until('confirm')
     expect(fa.state()).toMatchObject({ name: 'confirm', preview: { role: 'displayed', name: 'Bea' } })
@@ -169,7 +179,7 @@ describe('verify transitions', () => {
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fb = flow(B)
     await fb.until('ready')
-    const firstQr = qrOf(fb)
+    const firstQr = await olderQr(B)
     const fa = flow(A)
     await fa.until('ready')
     fa.scanner.source = () => firstQr
@@ -178,10 +188,12 @@ describe('verify transitions', () => {
     fa.send({ type: 'yes' })
     await fa.until('waiting')
     await settle()
-    // no card instance without a carrier offer: nothing names the card, nothing is inferred (E9)
+    // no card instance without a carrier offer: nothing names the card, nothing is inferred (E9); B's
+    // own code screen stays as it is
     const [decision] = decisionsOf(B)
     expect(decision).toMatchObject({ answers: null })
-    expect(fb.state()).toMatchObject({ name: 'ready', card: { qr: firstQr, card: null } })
+    expect(fb.state()).toMatchObject({ name: 'ready' })
+    expect(fb.state().card?.qr).not.toBe(firstQr)
     expect((await B.port.trust.counterVerify(decision!.contactId).done).ok).toBe(true)
     await settle()
     await fa.until('success')
@@ -331,17 +343,18 @@ describe('verify transitions', () => {
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fb = flow(B)
     await fb.until('ready')
+    const card = await olderQr(B)
     const fa = flow(A)
     await fa.until('ready')
     // the link: no camera, no typing; the preview and the question are the same as after a scan
-    fa.send({ type: 'link', raw: qrOf(fb) })
+    fa.send({ type: 'link', raw: card })
     expect(fa.state()).toMatchObject({ name: 'previewing', origin: 'url' })
     await fa.until('confirm')
     expect(fa.state()).toMatchObject({ name: 'confirm', origin: 'url', preview: { role: 'displayed', name: 'Bea' } })
     fa.send({ type: 'notThem' })
     await fa.until('ready')
     // the camera
-    fa.scanner.source = () => qrOf(fb)
+    fa.scanner.source = () => card
     fa.send({ type: 'scan' })
     await fa.until('confirm')
     expect(fa.state()).toMatchObject({ origin: 'camera' })
@@ -349,7 +362,7 @@ describe('verify transitions', () => {
     await fa.until('ready')
     // typed
     fa.send({ type: 'manual' })
-    fa.send({ type: 'text', text: qrOf(fb) })
+    fa.send({ type: 'text', text: card })
     fa.send({ type: 'submit' })
     await fa.until('confirm')
     expect(fa.state()).toMatchObject({ origin: 'manual' })
@@ -365,7 +378,7 @@ describe('verify transitions', () => {
     const fa = flow(A)
     await fa.until('ready')
     const first = qrOf(fa)
-    clock.advance(5 * 60_000 + 1000)
+    clock.advance((fa.state().card?.expiresAt ?? 0) - clock.now() + 1000)
     await expect.poll(() => fa.state().card?.qr ?? null).not.toBe(first)
     await fa.until('ready')
     await A.port.runtime.lock('user')
@@ -382,7 +395,7 @@ describe('verify transitions', () => {
     const { carrier, devices, settle } = await world(3)
     const [A, B, C] = devices as [LoopbackDevice, LoopbackDevice, LoopbackDevice]
     carrier.setOnline('Al', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -420,7 +433,7 @@ describe('verify transitions', () => {
     const { carrier, devices, settle } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     carrier.setOnline('Al', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -465,7 +478,7 @@ describe('verify transitions', () => {
   it('network before optics: the sent card of an encounter already taken in over the network names no contact; the note points to the conversation, where the request is open', async () => {
     const { devices, settle } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -488,9 +501,10 @@ describe('verify transitions', () => {
     carrier.setOnline('Al', false)
     const fb = flow(B)
     await fb.until('ready')
+    const card = await olderQr(B)
     const fa = flow(A)
     await fa.until('ready')
-    fa.scanner.source = () => qrOf(fb)
+    fa.scanner.source = () => card
     fa.send({ type: 'scan' })
     await fa.until('confirm')
     fa.send({ type: 'yes' })
@@ -503,7 +517,7 @@ describe('verify transitions', () => {
     const fa2 = flow(A)
     await fa2.until('ready')
     // the fallback reached from a second waiting: scan another code of B
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     fa2.scanner.source = () => shown.value.qr
     fa2.send({ type: 'scan' })
@@ -542,7 +556,7 @@ describe('verify transitions, mutual while the counter-step runs', () => {
     const { carrier, devices, settle } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     carrier.setOnline('Al', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -580,7 +594,7 @@ describe('verify transitions over a port double', () => {
   it('recognized at scan time goes to the conversation; a failing sent card stays in waiting', async () => {
     const { devices } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const fa = flow(A, double(A, { confirm: () => ({ ok: true, value: { kind: 'recognized', contactId: 'c1' } }) }))
     await fa.until('ready')
@@ -606,7 +620,7 @@ describe('verify transitions over a port double', () => {
     const { carrier, devices, settle } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     carrier.setOnline('Al', false)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -647,7 +661,7 @@ describe('verify transitions over a port double', () => {
   it('mutual seen before the act result: committing goes to success; a bundle while the fallback loads goes to success', async () => {
     const { devices, settle } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const fa = flow(A, double(A, { confirm: () => ({ ok: true, value: { kind: 'scanned', contactId: 'x1' } }) }))
     await fa.until('ready')
@@ -655,7 +669,7 @@ describe('verify transitions over a port double', () => {
     fa.send({ type: 'scan' })
     await fa.until('confirm')
     fa.send({ type: 'yes' })
-    fa.send({ type: 'bundle', verifications: { x1: 'mutual' }, decisions: [] })
+    fa.send({ type: 'bundle', verifications: { x1: 'mutual' } })
     await fa.until('success')
     // the fallback is loading (its card never comes) when the bundle says mutual
     const fa2 = flow(A, double(A, { confirm: () => ({ ok: true, value: { kind: 'scanned', contactId: 'x2' } }), sent: () => new Promise<never>(() => undefined) }))
@@ -667,21 +681,21 @@ describe('verify transitions over a port double', () => {
     await fa2.until('waiting')
     fa2.send({ type: 'showCode' })
     await fa2.until('loadingFallback')
-    fa2.send({ type: 'bundle', verifications: { x2: 'mutual' }, decisions: [] })
+    fa2.send({ type: 'bundle', verifications: { x2: 'mutual' } })
     await fa2.until('success')
     void settle
   })
 })
 
-// ── over the VTI mediator: the displayed card has an instance, the bundle names the card it answers (E9) ──
-async function mediatorWorld(n = 2, ceremony?: 'shared-connect') {
+// ── over the VTI mediator: a card an earlier version displayed has an instance, its bundle names the card (E9) ──
+async function mediatorWorld(n = 2) {
   const med = mediatorDouble()
   // the double issues tokens on its own (real) clock: the device clock starts at the real time
   const clock = virtualClock(Date.now(), 'UTC')
   const names = ['Al', 'Bea', 'Cem']
   const devices: LoopbackDevice[] = []
   for (let i = 0; i < n; i++) {
-    devices.push(await loopbackDevice({ carrier: { mediator: med }, id: names[i] ?? `d${i}`, name: names[i] ?? `d${i}`, words: LOOPBACK_PHRASES[i] ?? LOOPBACK_PHRASES[0], clock, seed: 61 + i * 7, ...(ceremony ? { ceremony } : {}) }))
+    devices.push(await loopbackDevice({ carrier: { mediator: med }, id: names[i] ?? `d${i}`, name: names[i] ?? `d${i}`, words: LOOPBACK_PHRASES[i] ?? LOOPBACK_PHRASES[0], clock, seed: 61 + i * 7 }))
   }
   const settle = async () => {
     let last = ''
@@ -715,59 +729,14 @@ async function mediatorWorld(n = 2, ceremony?: 'shared-connect') {
   return { med, clock, devices, settle, tick, until }
 }
 
-describe('verify transitions over the mediator: the shown card takes the bundle that answers it (E9)', () => {
-  it('ready → the same screen asks "is this the person?"; confirm; success on both; "next person" shows a fresh card', async () => {
-    const { devices, until } = await mediatorWorld()
-    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    const fb = flow(B)
-    await fb.until('ready')
-    const card = fb.state().card
-    expect(card?.card).toEqual(expect.any(String))
-    const fa = flow(A)
-    await fa.until('ready')
-    fa.scanner.source = () => card?.qr ?? null
-    fa.send({ type: 'scan' })
-    await fa.until('confirm')
-    fa.send({ type: 'yes' })
-    await fa.until('waiting')
-    await until(() => fb.state().name === 'confirmIncoming', 'the takeover')
-    expect(fb.state()).toMatchObject({ name: 'confirmIncoming', card: null, name2: 'Al', busy: false, failed: false })
-    fb.send({ type: 'accept' })
-    await fb.until('success')
-    await until(() => fa.state().name === 'success', 'mutual at the scanner')
-  }, 60_000)
-
-  it('"not now" goes back to the list, the decision stays open and is set aside; a decision closed elsewhere gives a fresh card', async () => {
-    const { devices, until, settle } = await mediatorWorld(3)
-    const [A, B, C] = devices as [LoopbackDevice, LoopbackDevice, LoopbackDevice]
-    const fb = flow(B)
-    await fb.until('ready')
-    const first = fb.state().card
-    expect((await A.port.trust.confirmCard(first?.qr ?? '').done).ok).toBe(true)
-    await until(() => fb.state().name === 'confirmIncoming', 'the takeover')
-    const decision = (fb.state() as { decision: string }).decision
-    fb.send({ type: 'notNow' })
-    expect(fb.state()).toMatchObject({ name: 'exit', to: 'back', contactId: null, deferred: decision })
-    expect(decisionsOf(B).map((d) => d.id)).toContain(decision)
-    // a second flow, another scanner; the decision is closed in the conversation (declined there)
-    const fb2 = flow(B)
-    await fb2.until('ready')
-    expect((await C.port.trust.confirmCard(fb2.state().card?.qr ?? '').done).ok).toBe(true)
-    await until(() => fb2.state().name === 'confirmIncoming', 'the second takeover')
-    const second = (fb2.state() as { decision: string }).decision
-    expect(second).not.toBe(decision)
-    expect((await B.port.trust.decide(second as never, 'decline').done).ok).toBe(true)
-    await settle()
-    await fb2.until('ready')
-    expect(fb2.rows()).toContain('confirmIncoming.bundle.gone')
-  }, 60_000)
-
+describe('verify transitions over the mediator: a card of an earlier version on display', () => {
   it('E8: a second scanner of the same card stays waiting; the shower has one decision', async () => {
-    const { devices, until, tick } = await mediatorWorld(3)
+    const { devices, until, tick, settle } = await mediatorWorld(3)
     const [A, B, C] = devices as [LoopbackDevice, LoopbackDevice, LoopbackDevice]
-    const fb = flow(B)
-    await fb.until('ready')
-    const qr = fb.state().card?.qr ?? ''
+    // the card an earlier version showed on B, with its instance at the mediator (TRANSPORT.md "The
+    // displayed card's instance"); the confirmation is answered outside the verify flow (the app shows
+    // no such card any more, its screen asks nothing for one)
+    const qr = await olderQr(B)
     const fa = flow(A)
     await fa.until('ready')
     fa.scanner.source = () => qr
@@ -782,36 +751,15 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
     await fc.until('confirm')
     fc.send({ type: 'yes' })
     await fc.until('waiting')
-    await until(() => fb.state().name === 'confirmIncoming', 'the takeover')
-    fb.send({ type: 'accept' })
-    await fb.until('success')
+    await until(() => decisionsOf(B).length > 0, 'the bundle at the card')
+    expect(decisionsOf(B)).toHaveLength(1)
+    const [decision] = decisionsOf(B)
+    expect((await B.port.trust.counterVerify(decision!.contactId).done).ok).toBe(true)
+    await settle()
     await until(() => fa.state().name === 'success', 'mutual at the first scanner')
     for (let i = 0; i < 4; i++) await tick()
     expect(fc.state().name).toBe('waiting')
     expect(decisionsOf(B)).toEqual([])
-  }, 60_000)
-
-  it('a failing counter-step keeps the question; a counter-step without the mutual bundle waits in counter pending', async () => {
-    const { devices, until } = await mediatorWorld()
-    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    let fail = true
-    const port = {
-      ...B.port,
-      trust: {
-        ...B.port.trust,
-        counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve((fail ? { ok: false, error: { kind: 'infra', code: 'transport', retryable: true } } : { ok: true, value: undefined }) as never) }),
-      },
-    } as AppPort
-    const fb = flow(B, port)
-    await fb.until('ready')
-    expect((await A.port.trust.confirmCard(fb.state().card?.qr ?? '').done).ok).toBe(true)
-    await until(() => fb.state().name === 'confirmIncoming', 'the takeover')
-    fb.send({ type: 'accept' })
-    await expect.poll(() => (fb.state() as { failed?: boolean }).failed).toBe(true)
-    expect(fb.state()).toMatchObject({ name: 'confirmIncoming', busy: false })
-    fail = false
-    fb.send({ type: 'accept' })
-    await fb.until('counterPending')
   }, 60_000)
 })
 
@@ -834,7 +782,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   }
 
   it('scan, propose, the shower accepts on the same screen before the scanner’s wait ends: both reach success, no back-code, no early contact', async () => {
-    const { devices, until, settle } = await mediatorWorld(2, 'shared-connect')
+    const { devices, until, settle } = await mediatorWorld(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fa = flow(A)
     const fb = flow(B)
@@ -857,7 +805,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   }, 60_000)
 
   it('the shower declines: a fresh code there, "declined" at the scanner, then its own code again', async () => {
-    const { devices, until } = await mediatorWorld(2, 'shared-connect')
+    const { devices, until } = await mediatorWorld(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fa = flow(A)
     const fb = flow(B)
@@ -876,7 +824,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   }, 60_000)
 
   it('"not now" leaves the request open; one decided elsewhere gives a fresh code; a failing answer keeps the question; the scanner may leave', async () => {
-    const { devices, until, settle } = await mediatorWorld(2, 'shared-connect')
+    const { devices, until, settle } = await mediatorWorld(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fa = flow(A)
     const fb = flow(B)
@@ -888,7 +836,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     fa.send({ type: 'leave' })
     expect(fa.state()).toMatchObject({ name: 'exit', to: 'back', contactId: null })
     // a second scanner and a second code: the answer fails once (a port double), the question stays
-    const { devices: d2, until: until2 } = await mediatorWorld(2, 'shared-connect')
+    const { devices: d2, until: until2 } = await mediatorWorld(2)
     const [C, D] = d2 as [LoopbackDevice, LoopbackDevice]
     const failing: AppPort = { ...D.port, trust: { ...D.port.trust, decide: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: false, error: { kind: 'infra', code: 'storage', retryable: true } } as never) }) } }
     const fd = flow(D, failing)
@@ -910,7 +858,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   }, 60_000)
 
   it('an accepted proposal whose last documents are still under way waits as the shower (the answer over a port double)', async () => {
-    const { devices, until } = await mediatorWorld(2, 'shared-connect')
+    const { devices, until } = await mediatorWorld(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     // the answer is taken and nothing completes yet
     const held: AppPort = { ...B.port, trust: { ...B.port.trust, decide: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: undefined } as never) }) } }
@@ -925,7 +873,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   }, 60_000)
 
   it('an accept past the end of the answered code issues nothing: a fresh code is shown, the scanner scans again', async () => {
-    const { clock, devices, until, settle } = await mediatorWorld(2, 'shared-connect')
+    const { clock, devices, until, settle } = await mediatorWorld(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fb = flow(B)
     await fb.until('ready')
@@ -945,7 +893,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
   it('over a port double: the other side’s error ends in the error screen; a ceremony complete without a contact leaves the flow', async () => {
     const { devices } = await world()
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const run = async (end: Partial<Connection> & Pick<Connection, 'status' | 'contactId'>) => {
       const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
@@ -993,7 +941,7 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     const nets = [phoneNet(med.net), phoneNet(med.net)]
     const devices: LoopbackDevice[] = []
     for (const [i, name] of ['Al', 'Bea'].entries()) {
-      devices.push(await loopbackDevice({ carrier: { mediator: { did: med.did, net: nets[i]!.net } }, id: name, name, words: LOOPBACK_PHRASES[i] ?? LOOPBACK_PHRASES[0], clock, seed: 91 + i * 7, ceremony: 'shared-connect' }))
+      devices.push(await loopbackDevice({ carrier: { mediator: { did: med.did, net: nets[i]!.net } }, id: name, name, words: LOOPBACK_PHRASES[i] ?? LOOPBACK_PHRASES[0], clock, seed: 91 + i * 7 }))
     }
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const online = (on: boolean) => devices.forEach((d, i) => (nets[i]!.setOnline(on), d.platform.network.set(on ? 'online' : 'offline')))
@@ -1489,7 +1437,7 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
   })
 
   it('maintainer review: a confirmation accepted elsewhere whose ceremony holds the contact is the success, no new code; "the contact stays" only with a contact', async () => {
-    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 151, ceremony: 'shared-connect' })
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 151 })
     // the shower: its confirmation disappears (accepted in the list), the ceremony open with the contact
     {
       const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
@@ -1531,7 +1479,7 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
   })
 
   it('over a port double: the shower after its acceptance: the other side declines, fails, or completes without a contact', async () => {
-    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 141, ceremony: 'shared-connect' })
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 141 })
     for (const [status, to, rowId] of [['declined', 'declined', 'connecting.bundle.declined'], ['failed', 'scanError', 'connecting.bundle.failed'], ['complete', 'exit', 'connecting.bundle.foreign']] as const) {
       const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
       const decisions = writableStore(A.port.stores.decisions.get())
@@ -1704,8 +1652,8 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
     // A: no mediator (a carrier that takes documents, no shared-connect wires); B: the mediator, online
-    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 121, ceremony: 'shared-connect' })
-    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'Bea', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 128, ceremony: 'shared-connect' })
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 121 })
+    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'Bea', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 128 })
     const settle = async () => {
       for (let i = 0; i < 40; i++) {
         await med.settled()

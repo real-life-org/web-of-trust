@@ -2,7 +2,8 @@
 // adapter and the real library, one in-memory carrier, one virtual clock. The page shows both phones
 // as iframes (each its own viewport, so the phone layout is the real one); the phones' fake cameras
 // see the code the other phone shows last (QR round trip as data). Controls: each phone online or
-// offline, the clock forward.
+// offline, the clock forward, and per phone the card of encounter-scan as an earlier version of the app
+// showed it (harness/older-card.ts), for the other phone's camera to read.
 //
 //   ?scenario=encounter                 the page with both phones, not met yet
 //   ?scenario=conversation              the same after a real encounter and a few real messages
@@ -24,7 +25,8 @@ import { useState, useSyncExternalStore } from 'react'
 import type { Composition, HarnessPage } from '../src/app/compose'
 import { writableStore, type ContactId, type ReadStore } from '../src/port'
 import { virtualClock, type FakeMail, type FakeScanner, type VirtualClock } from '../src/platform/fake'
-import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, meetOverCeremony, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, meet, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from './loopback'
+import { showOlderCardOn } from './older-card'
 import { exposeDevice } from './device'
 import { mediatorDouble, phoneNet, type MediatorDouble } from './mediator-double'
 
@@ -47,7 +49,7 @@ const TZ = 'America/Los_Angeles'
 interface PairWorld {
   readonly clock: VirtualClock
   readonly devices: ReadonlyMap<string, LoopbackDevice>
-  /** the code each phone shows last (its displayed card or its sent card) */
+  /** the code each phone shows last (its code, its sent card, its back-code, an earlier version's card) */
   readonly optics: Map<string, string>
   readonly online: ReadStore<Readonly<Record<string, boolean>>> & { set(v: Readonly<Record<string, boolean>>): void }
   readonly theme: 'light' | 'dark' | 'system'
@@ -75,11 +77,11 @@ function settler(jonas: LoopbackDevice, noah: LoopbackDevice, carrier: MemoryCar
   }
 }
 
-/** The two phones meet and write, through real acts only (architecture §3.3: no seeded state). Over the
- *  mediator they meet in the connection ceremony (shared-connect), as the store builds do; on the
- *  in-memory carrier with the card. */
-async function seedConversation(settle: () => Promise<void>, optical: boolean, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice, block: boolean): Promise<void> {
-  const { noahAtJonas, jonasAtNoah } = optical ? await meetOverCeremony(jonas, noah, settle).then((m) => ({ noahAtJonas: m.bAtA, jonasAtNoah: m.aAtB })) : await meetOverCards(settle, jonas, noah)
+/** The two phones meet and write, through real acts only (architecture §3.3: no seeded state). They meet
+ *  in the connection ceremony (shared-connect), as the store builds do: over the mediator the proposal
+ *  travels through it, on the in-memory carrier the back-code is read. */
+async function seedConversation(settle: () => Promise<void>, clock: VirtualClock, jonas: LoopbackDevice, noah: LoopbackDevice, block: boolean): Promise<void> {
+  const { bAtA: noahAtJonas, aAtB: jonasAtNoah } = await meet(jonas, noah, settle)
   clock.advance(4 * 60_000)
   await jonas.port.trust.send(`c:${noahAtJonas}`, 'Great to meet you at the session on offline verification!', 'seed-1').done
   await settle()
@@ -89,25 +91,6 @@ async function seedConversation(settle: () => Promise<void>, optical: boolean, c
   clock.advance(60_000)
   await jonas.port.trust.send(`c:${noahAtJonas}`, 'Yes, see you at the stall.', 'seed-3').done
   await seedRest(settle, clock, noah, block, jonasAtNoah)
-}
-
-/** the encounter with the card (the in-memory carrier): shown, scanned, the counter-step */
-async function meetOverCards(settle: () => Promise<void>, jonas: LoopbackDevice, noah: LoopbackDevice): Promise<{ noahAtJonas: ContactId; jonasAtNoah: ContactId }> {
-  const shown = await noah.port.trust.showCard().done
-  if (!shown.ok) throw new Error('harness: show')
-  const scanned = await jonas.port.trust.confirmCard(shown.value.qr).done
-  if (!scanned.ok) throw new Error('harness: scan')
-  await settle()
-  const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
-  const decisions = noah.port.stores.decisions.get()
-  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm') : undefined
-  if (!open || open.kind !== 'encounter-confirm') throw new Error('harness: no confirmation at noah')
-  await noah.port.trust.counterVerify(open.contactId).done
-  await settle()
-  const noahAtJonas = scannedContact
-  const jonasAtNoah = open.contactId
-  if (!noahAtJonas) throw new Error('harness: no contact at jonas')
-  return { noahAtJonas, jonasAtNoah }
 }
 
 /** what follows the first three messages */
@@ -147,16 +130,14 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
       clock,
       seed: (seed += 17),
       language: lang,
-      // over a mediator the phones run the connection ceremony, as the store builds do
-      ...(carrier ? {} : { ceremony: 'shared-connect' as const }),
     })
     switches.set(p.id, (on) => {
       if (carrier) return carrier.setOnline(p.id, on)
       pn?.setOnline(on)
       d.platform.network.set(on ? 'online' : 'offline')
     })
-    // record what this phone shows: the displayed card, the sent card of the optical return path and the
-    // back-code of the connection ceremony without a carrier
+    // record what this phone shows: its code, the sent card of the optical return path after it read an
+    // earlier version's card, and the back-code of the connection ceremony without a carrier
     const trust = d.port.trust
     const showCard = trust.showCard.bind(trust)
     const sentCardFor = trust.sentCardFor.bind(trust)
@@ -196,7 +177,7 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
   }
   if (met) {
     const [jonas, noah] = PAIR_PHONES.map((p) => devices.get(p.id))
-    if (jonas && noah) await seedConversation(settler(jonas, noah, carrier, med), how.kind !== 'memory', clock, jonas, noah, block)
+    if (jonas && noah) await seedConversation(settler(jonas, noah, carrier, med), clock, jonas, noah, block)
     optics.clear()
   }
   const online = writableStore<Readonly<Record<string, boolean>>>(Object.fromEntries(PAIR_PHONES.map((p) => [p.id, true])))
@@ -271,6 +252,23 @@ function MailToggle({ world, id, name }: { world: PairWorld; id: string; name: s
   )
 }
 
+/** the card of encounter-scan as an earlier version of the app showed it on this phone: the other phone's
+ *  camera sees it from now on (the phone's own screen shows nothing of it) */
+function OlderCard({ world, id }: { world: PairWorld; id: string }) {
+  const [state, setState] = useState<'idle' | 'shown' | 'failed'>('idle')
+  const show = async () => {
+    const d = world.devices.get(id)
+    const r = d ? await showOlderCardOn(d) : null
+    if (r?.ok) world.optics.set(id, r.value.qr)
+    setState(r?.ok ? 'shown' : 'failed')
+  }
+  return (
+    <button type="button" className="rounded-md border border-border bg-background px-2 py-1" onClick={() => void show()}>
+      {state === 'shown' ? 'Older card shown' : state === 'failed' ? 'Older card failed' : 'Show card of an older version'}
+    </button>
+  )
+}
+
 function PairPage({ world, query }: { world: PairWorld; query: string }) {
   const online = useSyncExternalStore(world.online.subscribe, world.online.get)
   const [now, setNow] = useState(world.clock.now())
@@ -297,13 +295,15 @@ function PairPage({ world, query }: { world: PairWorld; query: string }) {
       </div>
       <div className="flex flex-wrap items-start gap-6">
         {PAIR_PHONES.map((p) => (
-          <div key={p.id} className="flex flex-col gap-2">
+          // the phone's width: its controls wrap above it, the two phones stay side by side
+          <div key={p.id} className="flex flex-col gap-2" style={{ width: 390 }}>
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <label className="flex items-center gap-2">
                 <input type="checkbox" checked={online[p.id] ?? true} onChange={(e) => world.online.set({ ...online, [p.id]: e.target.checked })} />
                 {p.name} online
               </label>
               <MailToggle world={world} id={p.id} name={p.name} />
+              <OlderCard world={world} id={p.id} />
             </div>
             <iframe
               title={p.name}

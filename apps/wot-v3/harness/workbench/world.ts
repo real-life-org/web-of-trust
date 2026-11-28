@@ -8,7 +8,7 @@ import type { Composition } from '../../src/app/compose'
 import { writableStore, type ContactListItem, type Loadable, type ReadStore } from '../../src/port'
 import type { FakeScanner, VirtualClock } from '../../src/platform/fake'
 import { virtualClock } from '../../src/platform/fake'
-import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from '../loopback'
+import { drivenTimers, LOOPBACK_PHRASES, loopbackDevice, meet as meetDevices, memoryCarrier, type LoopbackDevice, type MemoryCarrier } from '../loopback'
 import { mediatorDouble, phoneNet, type MediatorDouble } from '../mediator-double'
 import { edgesOf, starEdgesOf, type DeviceContacts, type DeviceGroup, type Edge, type StarEdge } from './graph'
 import { tapDevice, type DeviceEvent } from './tap'
@@ -98,7 +98,7 @@ export interface WorkbenchWorld {
   }
   /** until the devices rest */
   settle(): Promise<void>
-  /** god mode: the two meet, both ways (a real ceremony on both ports; optical leg over the mediator) */
+  /** god mode: the two meet in the connection ceremony (a real ceremony on both ports; the back-code where no carrier brings the proposal) */
   meet(a: string, b: string): Promise<void>
 }
 
@@ -252,6 +252,7 @@ export async function createWorkbenchWorld(opts: {
     const trust = d.port.trust
     const showCard = trust.showCard.bind(trust)
     const sentCardFor = trust.sentCardFor.bind(trust)
+    const showBackCode = trust.showBackCode.bind(trust)
     const send = trust.send.bind(trust)
     const shown = (qr: string) => {
       const at = optics.findIndex((o) => o.id === p.id)
@@ -266,6 +267,12 @@ export async function createWorkbenchWorld(opts: {
       showCard: () => {
         const h = showCard()
         void h.done.then((r) => (r.ok ? shown(r.value.qr) : undefined))
+        return h
+      },
+      // the back-code of the connection ceremony where no carrier brings the proposal
+      showBackCode: (connection: Parameters<typeof showBackCode>[0]) => {
+        const h = showBackCode(connection)
+        void h.done.then((r) => (r.ok && r.value.kind === 'shown' ? shown(r.value.qr) : undefined))
         return h
       },
       sentCardFor: async (contactId: Parameters<typeof sentCardFor>[0]) => {
@@ -321,27 +328,8 @@ export async function createWorkbenchWorld(opts: {
     if (!A || !B) throw new Error(`workbench: no phone ${a} / ${b}`)
     // a meeting takes a moment: the wire shows the order of what it left behind
     clock.advance(15_000)
-    const shown = await B.port.trust.showCard().done
-    if (!shown.ok) throw new Error('workbench: show')
-    // god mode reads the code directly, no camera: the lens is not involved
-    const scanned = await A.port.trust.confirmCard(shown.value.qr).done
-    if (!scanned.ok) throw new Error('workbench: scan')
-    await settle()
-    // over a mediator B learns A's delivery hint from A's sent card (the optical leg)
-    const scannedContact = 'contactId' in scanned.value ? scanned.value.contactId : null
-    if (how.kind !== 'memory' && scannedContact) {
-      const sent = await A.port.trust.sentCardFor(scannedContact)
-      if (!sent.ok) throw new Error('workbench: sent card')
-      const captured = await B.port.trust.confirmCard(sent.value.qr).done
-      if (!captured.ok) throw new Error('workbench: capture')
-      await settle()
-    }
-    const decisions = B.port.stores.decisions.get()
-    const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm') : undefined
-    if (!open || open.kind !== 'encounter-confirm') throw new Error(`workbench: no confirmation at ${b}`)
-    clock.advance(5_000)
-    await B.port.trust.counterVerify(open.contactId).done
-    await settle()
+    // god mode reads the codes directly, no camera: the lens is not involved
+    await meetDevices(A, B, settle)
     optics.length = 0
   }
 

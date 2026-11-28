@@ -1,9 +1,10 @@
 // @vitest-environment node
 // Incoming confirmations (handshake UX 2.6, E6) and the success moment (2.7, E7), architecture §7.2
 // "Übergangstests": every row of the `incoming` table. The queue over real devices on the VTI mediator
-// double (the displayed card has an instance, a bundle names the card it answers, E9): two cards and
-// two scanners in arrival order, a bundle after the flow was closed, a bundle past the card's end, a
-// card ending while it is asked. The holds, the hand-overs from the verify flow and the failures over
+// double. The cards of encounter-scan are shown as an earlier version of the app showed them
+// (harness/older-card.ts): the displayed card has an instance, a bundle names the card it answers (E9);
+// two cards and two scanners in arrival order, a bundle past the card's end, a card ending while it is
+// asked. A proposal after the verify flow was closed, and one outside the flow. The holds, the hand-overs from the verify flow and the failures over
 // a scripted executor.
 import { describe, expect, it } from 'vitest'
 import type { AppPort, ContactId, DecisionId, Loadable, ReadStore } from '../../src/port'
@@ -17,6 +18,7 @@ import { flowAsks, flowCovers, incomingEntries, incomingExecutor } from '../../s
 import { bundleEvent, verifyExecutor } from '../../src/hooks/verify'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
 import { LOOPBACK_PHRASES, loopbackDevice, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { mediatorDouble } from '../../harness/mediator-double'
 import { tableCoverage } from './world'
 
@@ -80,8 +82,8 @@ describe('incoming confirmations over the mediator (real devices)', () => {
     const { devices, settle, until } = await world()
     const [A, B, C] = devices as [LoopbackDevice, LoopbackDevice, LoopbackDevice]
     const q = queueOn(B)
-    const one = await B.port.trust.showCard().done
-    const two = await B.port.trust.showCard().done
+    const one = await showOlderCardOn(B)
+    const two = await showOlderCardOn(B)
     if (!one.ok || !two.ok) throw new Error('show')
     // the later card is scanned first: the queue follows arrival, not the cards' order (review 468 #3)
     expect((await C.port.trust.confirmCard(two.value.qr).done).ok).toBe(true)
@@ -133,14 +135,15 @@ describe('incoming confirmations over the mediator (real devices)', () => {
     const id = (q.state() as Extract<IncomingState, { name: 'asking' }>).head.id
     q.r.send({ type: 'notNow' })
     expect(q.state().name).toBe('idle')
-    expect(encounterDecisions(B).map((d) => d.id)).toContain(id)
+    // the flow's code was the connection ceremony's link: the proposal stays open in the list
+    expect(value(B.port.stores.decisions).map((d) => d.id)).toContain(id)
   }, 60_000)
 
   it('a bundle that arrives past the card’s end (inside the skew) asks nothing; the list keeps it', async () => {
     const { clock, devices, until, tick } = await world(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const q = queueOn(B)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     A.platform.network.set('offline')
     expect((await A.port.trust.confirmCard(shown.value.qr).done).ok).toBe(true)
@@ -156,7 +159,7 @@ describe('incoming confirmations over the mediator (real devices)', () => {
     const { clock, devices, until, settle } = await world(2)
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const q = queueOn(B)
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     expect((await A.port.trust.confirmCard(shown.value.qr).done).ok).toBe(true)
     await until(() => q.state().name === 'asking', 'the sheet')
@@ -301,7 +304,7 @@ describe('the success moment (E7)', () => {
       d.port.stores.contacts.subscribe(look)
       look()
     }
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     const scanned = await A.port.trust.confirmCard(shown.value.qr).done
     if (!scanned.ok) throw new Error('scan')
@@ -332,8 +335,8 @@ describe('incoming proposals over the mediator (real devices, the connection cer
   it('a proposal that arrives outside the verify flow is asked; confirming accepts it and both sides connect; past the code’s end it is asked nowhere', async () => {
     const med = mediatorDouble()
     const clock = virtualClock(Date.now(), 'UTC')
-    const A = await loopbackDevice({ carrier: { mediator: med }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 81, ceremony: 'shared-connect' })
-    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 87, ceremony: 'shared-connect' })
+    const A = await loopbackDevice({ carrier: { mediator: med }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 81 })
+    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 87 })
     const settle = async () => {
       let last = ''
       for (let i = 0, calm = 0; i < 400 && calm < 2; i++) {

@@ -7,20 +7,12 @@ import type { BackRead, BackShow, CardPreview, CardRef, Connection, ConnectionId
 import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
 import { isLoginRequest } from '../lib/login-request'
 
-/** The own displayed card while it is valid. */
+/** The own shown code (the trigger link of the connection ceremony) while it is valid. */
 export interface ShownCard {
   readonly qr: string
   readonly expiresAt: number
-  /** the card's instance (E9); null where it is shown without a carrier offer */
+  /** the code's instance, its ceremony: a proposal names the code it answers (E9) */
   readonly card: CardRef | null
-}
-
-/** An open encounter-confirm as the bundle event names it: the card it answers (E9) and the name. */
-export interface IncomingRef {
-  readonly id: DecisionId
-  readonly contactId: ContactId
-  readonly card: CardRef | null
-  readonly name: string | null
 }
 
 /** An open proposal of a connection ceremony as the bundle event names it: the shown code it answers
@@ -104,8 +96,6 @@ export type VerifyState =
   /** `decision`: the open request it answers; null when none is open any more (declined, gone) and the
    *  counter-step is offered directly */
   | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId | null; readonly name2: string | null; readonly busy: boolean })
-  /** the bundle that answers the shown card arrived (E9): the shower confirms on the same screen */
-  | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   /** a proposal answers the shown code (a connection ceremony): the shower accepts or declines; a
    *  decline tells the other side and spends the code */
   | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly validUntil: number; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
@@ -152,14 +142,13 @@ export type VerifyEvent =
   /** "Next person": a fresh card (a new N) in the same flow */
   | { readonly type: 'back' }
   | { readonly type: 'retry' }
-  /** the hook's view of the published bundle: verification per contact, open encounter-confirm decisions */
+  /** the hook's view of the published bundle: verification per contact, the connection ceremonies */
   | {
       readonly type: 'bundle'
       readonly verifications: Readonly<Record<string, Verification>>
       /** ids that now resolve to another contact (a second encounter joined into the first, Trust
        *  6a.4; entries merged, 2140): alias → the surviving contact */
       readonly aliases?: Readonly<Record<string, ContactId>>
-      readonly decisions: readonly IncomingRef[]
       /** open proposals of connection ceremonies, and where every ceremony stands */
       readonly proposals?: readonly ProposalRef[]
       readonly connections?: Readonly<Record<string, ConnectionState>>
@@ -185,7 +174,7 @@ export type VerifyEffect =
 export const VERIFY_STATES = [
   'showing', 'ready', 'cameraChecking', 'cameraExplain', 'scanning', 'cameraDenied', 'cameraUnavailable', 'manualEntry',
   'previewing', 'scanError', 'confirm', 'committing', 'waiting', 'loadingFallback', 'fallback', 'capturing',
-  'confirmationRequired', 'confirmIncoming', 'connectIncoming', 'connecting', 'backing', 'backCode', 'readingBack', 'declined', 'counterPending', 'success', 'exit',
+  'confirmationRequired', 'connectIncoming', 'connecting', 'backing', 'backCode', 'readingBack', 'declined', 'counterPending', 'success', 'exit',
 ] as const satisfies readonly VerifyState['name'][]
 
 /** the waiting note turns into "no answer yet" after 20 s of device time: the confirmation returns over
@@ -214,7 +203,6 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('showing.result.failed', 'result ver.show', 'showing{error}', 'free', '–'),
   row('showing.retry', 'retry', 'showing', 'free', '–', { effects: ['ver.show'] }),
   row('ready.expire', 'result ver.expire', 'showing', 'free', '–', { guard: 'card expired while the screen is open', effects: ['ver.show'] }),
-  row('ready.bundle.answered', 'bundle', 'confirmIncoming{card: null}', 'free', 'the decision stays open in the list and the conversation', { guard: 'an open encounter-confirm answers the shown card (E9): one card, one person' }),
   row('ready.scan', 'scan', 'cameraChecking', 'free', '–', { effects: ['cam.check'] }),
   row('ready.manual', 'manual', 'manualEntry', 'free', '–'),
   row('ready.link', 'link', 'previewing{raw, origin: url}', 'free', '–', { effects: ['ver.preview'] }),
@@ -279,12 +267,6 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('confirmationRequired.result.failed', 'result ver.counter', 'confirmationRequired', 'free', 'the decision stays open'),
   row('confirmationRequired.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation (E4: no decline here)'),
   row('confirmationRequired.leave', 'leave', 'exit(chat)', 'free', 'the decision stays open in the conversation'),
-  row('confirmIncoming.accept', 'accept', 'confirmIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
-  row('confirmIncoming.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
-  row('confirmIncoming.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay', { guard: 'not mutual yet' }),
-  row('confirmIncoming.result.failed', 'result ver.counter', 'confirmIncoming{failed}', 'free', 'the decision stays open'),
-  row('confirmIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation'),
-  row('confirmIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the decision is no longer open (decided on another device or in the conversation)', effects: ['ver.show'] }),
   row('ready.bundle.proposed', 'bundle', 'connectIncoming{card: null}', 'free', 'the decision stays open in the list', { guard: 'an open proposal answers the shown code: one code, one person' }),
   // the scanner of a shown code (the responder): every step below is decided by `scannerStep` against the
   // newest state of its ceremony in the last bundle (stores.connections), on the first scan and on a resumption
@@ -417,14 +399,7 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'ready':
       if (isResult(e, s.run, 'ver.expire')) return show(s, 'ready.expire')
-      if (e.type === 'bundle') {
-        // the bundle that answers this very card (E9, exact by its instance, never by timing): the card
-        // is used (one card, one person, VTI Open Issue 8), the person in front of you is asked here
-        const ref = s.card?.card ?? null
-        const d = ref === null ? undefined : e.decisions.find((x) => x.card === ref)
-        if (d) return goto(s, { name: 'confirmIncoming', card: null, contactId: d.contactId, decision: d.id, name2: d.name, busy: false, failed: false }, 'ready.bundle.answered')
-        return proposedHere(s, e, 'ready.bundle.proposed') ?? stay(s)
-      }
+      if (e.type === 'bundle') return proposedHere(s, e, 'ready.bundle.proposed') ?? stay(s)
       if (e.type === 'scan') return emit(s, { name: 'cameraChecking' }, 'ready.scan', (r) => [{ id: 'cam.check', run: r }])
       if (e.type === 'manual') return goto(s, { name: 'manualEntry', text: '' }, 'ready.manual')
       if (e.type === 'link') return emit(s, { name: 'previewing', raw: e.raw, origin: 'url' }, 'ready.link', (r) => [{ id: 'ver.preview', run: r, raw: e.raw }])
@@ -564,18 +539,6 @@ function step(s: S, e: E): Out {
       }
       if (e.type === 'notNow' && !s.busy) return exit(s, 'back', null, 'confirmationRequired.notNow', s.decision)
       if ((e.type === 'leave' || e.type === 'back') && !s.busy) return exit(s, 'chat', s.contactId, 'confirmationRequired.leave', s.decision)
-      return stay(s)
-    case 'confirmIncoming':
-      if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
-      if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
-      if (isResult(e, s.run, 'ver.counter')) {
-        if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')
-        if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
-        return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmIncoming.result.ok')
-      }
-      if ((e.type === 'notNow' || e.type === 'back' || e.type === 'leave') && !s.busy) return exit(s, 'back', null, 'confirmIncoming.notNow', s.decision)
-      // decided elsewhere (another device, the conversation) and not mutual: the person is gone, a new card
-      if (e.type === 'bundle' && !s.busy && !e.decisions.some((d) => d.id === s.decision)) return show(s, 'confirmIncoming.bundle.gone')
       return stay(s)
     case 'connectIncoming': {
       if (isResult(e, s.run, 'ver.decide')) {
@@ -784,7 +747,6 @@ function connectionEnd(s: S, connection: ConnectionId, name2: string | null): Ou
 }
 
 const pick = (s: Extract<S, { name: 'confirmationRequired' }>) => ({ name: s.name, contactId: s.contactId, decision: s.decision, name2: s.name2 })
-const pickIncoming = (s: Extract<S, { name: 'confirmIncoming' }>) => ({ name: s.name, contactId: s.contactId, decision: s.decision, name2: s.name2 })
 
 export const verify: Machine<S, VerifyEvent, VerifyEffect> = {
   name: 'verify',

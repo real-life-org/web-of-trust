@@ -9,6 +9,7 @@ import {unconfiguredTransport} from '../../src/adapters/rltp/transport'
 import {leaseInUse} from '../../src/adapters/rltp/testing'
 import {virtualClock, fakeEntropy} from '../../src/platform/fake'
 import {LOOPBACK_PHRASES, loopbackDevice, memoryCarrier} from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import {secret} from '../../src/port'
 const T0=Date.parse('2026-10-20T10:00:00Z')
 const keys=()=>({rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2)})
@@ -19,7 +20,7 @@ it('R1-3: a failed createHolder closes its connection before the writer is relea
  const idb=new IDBFactory(),release=vi.fn(),close=vi.spyOn(IDBDatabase.prototype,'close');let opened:IDBDatabase|undefined
  const orig=IDBDatabase.prototype.transaction
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){if(this.name==='wot-v3-holder-early'&&args[1]==='readonly'){opened=this;throw Error('read unavailable')}return orig.apply(this,args as any)})
- const host=rltpHolderHost({ ceremony: 'card',idb,clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(81),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const host=rltpHolderHost({ idb,clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(81),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  try{await expect(host.open('early',keys())).rejects.toThrow();expect(opened).toBeDefined();expect(release).toHaveBeenCalledOnce();await new Promise((r)=>setTimeout(r,0))
  const result=await new Promise<string>((r)=>{const q=idb.deleteDatabase('wot-v3-holder-early');q.onblocked=()=>r('blocked');q.onsuccess=()=>r('deleted')});expect(result).toBe('deleted')
  }finally{tx.mockRestore();opened?.close();close.mockRestore()}
@@ -27,7 +28,7 @@ it('R1-3: a failed createHolder closes its connection before the writer is relea
 it('R1-4: an opening still being built keeps the writer when the last registered one closes',async()=>{
  const entered=pause(),barrier=pause();let slow=false,held=false;const release=vi.fn(()=>{held=false})
  const subtle=new Proxy(crypto.subtle,{get(t,k){if(k==='digest')return async(...a:any[])=>{if(slow){entered.resolve();await barrier.promise}return (t.digest as any).apply(t,a)};const v=(t as any)[k];return typeof v==='function'?v.bind(t):v}})
- const host=rltpHolderHost({ ceremony: 'card',idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(82),transport:unconfiguredTransport(),writer:{acquire:async()=>{held=true;return release}},subtle,publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const host=rltpHolderHost({ idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(82),transport:unconfiguredTransport(),writer:{acquire:async()=>{held=true;return release}},subtle,publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  const old=await host.open('old',keys());if(old.kind!=='ok')throw Error('open');slow=true
  const pending=host.open('staged',keys());await entered.promise
  await host.quiesce(old.holder);await host.seal(old.holder);await host.close(old.holder)
@@ -37,14 +38,14 @@ it('R1-4: an opening still being built keeps the writer when the last registered
  expect(release).toHaveBeenCalledOnce()
 })
 it('R1-7: network before optics stays honest, the decision is reachable',async()=>{
- const {A,B,settle}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show')
+ const {A,B,settle}=await pair();const shown=await showOlderCardOn(B);if(!shown.ok)throw Error('show')
  const scan=await A.port.trust.confirmCard(shown.value.qr).done;if(!scan.ok)throw Error('scan');const sent=await A.port.trust.sentCardFor(scan.value.contactId!);if(!sent.ok)throw Error('sent');await settle()
  const capture=await B.port.trust.confirmCard(sent.value.qr).done
  expect(capture).toMatchObject({ok:true,value:{kind:'already-captured',contactId:null}});expect(val(B.port.stores.decisions)).toHaveLength(1);expect(val(B.port.stores.contacts)[0].verification).toBe('incoming')
 })
 it('R1-7: an own capture maps back after decline, counter-step and mutual',async()=>{
  const {A,B,carrier,settle}=await pair();carrier.setOnline('A',false)
- const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show');const scan=await A.port.trust.confirmCard(shown.value.qr).done;if(!scan.ok)throw Error('scan');const sent=await A.port.trust.sentCardFor(scan.value.contactId!);if(!sent.ok)throw Error('sent');await B.port.trust.confirmCard(sent.value.qr).done;await settle()
+ const shown=await showOlderCardOn(B);if(!shown.ok)throw Error('show');const scan=await A.port.trust.confirmCard(shown.value.qr).done;if(!scan.ok)throw Error('scan');const sent=await A.port.trust.sentCardFor(scan.value.contactId!);if(!sent.ok)throw Error('sent');await B.port.trust.confirmCard(sent.value.qr).done;await settle()
  const d=val(B.port.stores.decisions)[0];await B.port.trust.decide(d.id,'decline').done
  expect(await B.port.trust.confirmCard(sent.value.qr).done).toMatchObject({ok:true,value:{kind:'already-captured',contactId:d.contactId}})
  await B.port.trust.counterVerify(d.contactId).done;expect(val(B.port.stores.contacts)[0].verification).toBe('outgoing')
@@ -53,7 +54,7 @@ it('R1-7: an own capture maps back after decline, counter-step and mutual',async
  expect(await B.port.trust.confirmCard(sent.value.qr).done).toMatchObject({ok:true,value:{kind:'already-captured',contactId:d.contactId}})
 })
 it('R2-1: a finished decision is never published beside views that still show it open; a timer retries',async()=>{
- const {A,B,carrier,clock,settle}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show');await A.port.trust.confirmCard(shown.value.qr).done;await settle();carrier.setOnline('B',false);await settle()
+ const {A,B,carrier,clock,settle}=await pair();const shown=await showOlderCardOn(B);if(!shown.ok)throw Error('show');await A.port.trust.confirmCard(shown.value.qr).done;await settle();carrier.setOnline('B',false);await settle()
  const d=val(B.port.stores.decisions)[0],orig=IDBDatabase.prototype.transaction
  let fail=true
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){if(fail&&this.name.startsWith('wot-v3-app-')&&args[1]==='readwrite'&&Array.isArray(args[0])&&args[0].includes('kv')&&!args[0].includes('intents'))throw Error('ingestion storage unavailable');return orig.apply(this,args as any)})
@@ -81,7 +82,7 @@ it('R1-9: an unreadable clock high mark aborts the opening; nothing smaller is w
  const {openSession}=await import('../../src/adapters/rltp/session');const {createSealer}=await import('../../src/adapters/rltp/sealed');const {idbAppDb}=await import('../../src/adapters/rltp/app-db');const {decodeCardLink}=await import('../../src/adapters/rltp/card-link')
  const idb=new IDBFactory(),clock=virtualClock(T0,'UTC'),k=keys(),faults={killAt:'after-journal' as 'after-journal'|null}
  const deps={ns:'clock',generation:1,idb,...k,clock,entropy:fakeEntropy(191),transport:leaseInUse(unconfiguredTransport(), clock),anchorShort:'id',publish:()=>{},emit:()=>{},faults}
- const {B}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show')
+ const {B}=await pair();const shown=await showOlderCardOn(B);if(!shown.ok)throw Error('show')
  const s=await openSession(deps);await s.idle();const h=s.intent('confirmCard','encounter','confirm',{card:decodeCardLink(shown.value.qr),role:'displayed'});await h.done;await s.quiesce();s.seal();s.close()
  const db=idbAppDb({idb,name:'wot-v3-app-clock',sealer:await createSealer(k.dek),seal:{sealed:false}})
  await db.write([{store:'kv',key:'clock',value:{high:T0+100*86400000}}]);db.close()
@@ -94,7 +95,7 @@ it('R1-9: an unreadable clock high mark aborts the opening; nothing smaller is w
 // lib 0.6.1 (review 421 R10-1): an open act is settled through holder.replay; one the library never
 // committed is not run blind, the decision stays open for the human
 it('R1-10: after the backoff, an act the library never committed is settled without running it again',async()=>{
- const {A,B,clock,carrier,settle}=await pair();const shown=await B.port.trust.showCard().done;if(!shown.ok)throw Error('show');await A.port.trust.confirmCard(shown.value.qr).done;await settle();const d=val(B.port.stores.decisions)[0]
+ const {A,B,clock,carrier,settle}=await pair();const shown=await showOlderCardOn(B);if(!shown.ok)throw Error('show');await A.port.trust.confirmCard(shown.value.qr).done;await settle();const d=val(B.port.stores.decisions)[0]
  let fail=true,count=0;const orig=IDBDatabase.prototype.transaction
  const tx=vi.spyOn(IDBDatabase.prototype,'transaction').mockImplementation(function(this:IDBDatabase,...args:any[]){if(fail&&this.name.startsWith('wot-v3-holder-')&&args[1]==='readwrite'){count++;throw Error('holder write unavailable')}return orig.apply(this,args as any)})
  try{expect((await B.port.trust.decide(d.id,'decline').done).ok).toBe(false);await settle();for(const ms of [2000,10000,60000]){clock.advance(ms);await settle()}
@@ -112,6 +113,6 @@ it('R1-2: a sealed and closed app-db cannot recreate a wiped database either',as
  const rejection=expect(pending).rejects.toThrow('sealed');barrier.resolve();await rejection;expect(await idb.databases()).toEqual([])
 })
 it('R1-4: a delete keeps the writer through close and forget until the wipe is verified',async()=>{
- const release=vi.fn(),host=rltpHolderHost({ ceremony: 'card',idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(183),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
+ const release=vi.fn(),host=rltpHolderHost({ idb:new IDBFactory(),clock:virtualClock(T0,'UTC'),entropy:fakeEntropy(183),transport:unconfiguredTransport(),writer:{acquire:async()=>release},publish:()=>{},emit:()=>{},onCurrent:()=>{}})
  const a=await host.open('delete',keys());if(a.kind!=='ok')throw Error('open');await host.quiesce(a.holder);await host.deregister(a.holder,'skip');await host.seal(a.holder);await host.close(a.holder);host.forget('delete');expect(release).not.toHaveBeenCalled();host.wiped?.('delete');expect(release).toHaveBeenCalledOnce()
 })

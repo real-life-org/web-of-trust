@@ -203,23 +203,18 @@ export function carrierInReach(port: AppPort): boolean {
   return c.network !== 'offline' && c.carrier !== 'unreachable' && c.carrier !== 'not-configured'
 }
 
-/** The bundle event: verification per contact and the open encounter-confirm decisions with the card
- *  each answers (E9) and the contact's name. */
+/** The bundle event: verification per contact, the open proposals of connection ceremonies with the code
+ *  each answers, and where every ceremony stands. */
 export function bundleEvent(port: AppPort): VerifyEvent | null {
   const contacts = port.stores.contacts.get()
   const decisions = port.stores.decisions.get()
   if (contacts.status !== 'ready' || decisions.status !== 'ready') return null
   const verifications: Record<string, Verification> = {}
   const aliases: Record<string, ContactId> = {}
-  const names = new Map<string, string | null>()
   for (const c of contacts.value) {
     verifications[c.id] = c.verification
-    names.set(c.id, c.name)
     for (const a of c.aliases ?? []) if (a !== c.id) aliases[a] = c.id
   }
-  const open = decisions.value.flatMap((d) =>
-    d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
-  )
   const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
   const all = port.stores.connections.get()
   // every ceremony as the core holds it: the flow decides against exactly these facts
@@ -229,7 +224,7 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
       { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, validUntil: c.validUntil, decision: c.decision },
     ]),
   )
-  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections, inReach: carrierInReach(port) }
+  return { type: 'bundle', verifications, aliases, proposals, connections, inReach: carrierInReach(port) }
 }
 
 export interface VerifyFlow {

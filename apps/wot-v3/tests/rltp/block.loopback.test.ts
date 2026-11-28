@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { ContactId, Conversation, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -26,7 +27,7 @@ async function met() {
       await B.port.session()?.idle()
     }
   }
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw new Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()

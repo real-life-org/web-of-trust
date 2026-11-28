@@ -9,6 +9,7 @@ import { project, type ProjectionInput } from '../../src/adapters/rltp/projectio
 import { EMPTY_ENCOUNTERS, EMPTY_LEDGER } from '../../src/adapters/rltp/app-data'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 type Res = { ok: boolean }
 interface HolderLike {
@@ -48,7 +49,7 @@ async function world() {
   const ah = capture.holders.at(-1)!
   const B = await loopbackDevice({ carrier, clock, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], seed: 143 })
   const settle = async () => { for (let i = 0; i < 8; i++) { await carrier.settled(); await A.port.session()?.idle(); await B.port.session()?.idle(); await new Promise(r => setTimeout(r, 0)) } }
-  const shown = await B.port.trust.showCard().done; if (!shown.ok) throw Error('show')
+  const shown = await showOlderCardOn(B); if (!shown.ok) throw Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done; await settle()
   const bId = value(B.port.stores.contacts)[0]!.id
   await B.port.trust.counterVerify(bId).done; await settle()

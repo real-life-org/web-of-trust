@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest'
 import type { AppPort, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
 
@@ -15,10 +16,11 @@ function loadables(port: AppPort): [string, ReadStore<Loadable<unknown>>][] {
   return Object.entries({ contacts: s.contacts, groups: s.groups, decisions: s.decisions, candidacies: s.candidacies, profile: s.profile, standing: s.standing, visibility: s.visibility, blocked: s.blocked, reports: s.reports })
 }
 
-async function meet(shower: AppPort, scanner: AppPort) {
-  const shown = await shower.trust.showCard().done
+/** the scanner meets the shower in encounter-scan: the shower's card as an earlier version showed it */
+async function meet(shower: LoopbackDevice, scanner: LoopbackDevice) {
+  const shown = await showOlderCardOn(shower)
   if (!shown.ok) throw new Error('show')
-  const r = await scanner.trust.confirmCard(shown.value.qr).done
+  const r = await scanner.port.trust.confirmCard(shown.value.qr).done
   if (!r.ok) throw new Error('scan')
 }
 
@@ -35,8 +37,8 @@ describe('port rules on the real adapter', () => {
         for (const d of [A, B, C]) await d.port.session()?.idle()
       }
     }
-    await meet(B.port, A.port)
-    await meet(C.port, A.port)
+    await meet(B, A)
+    await meet(C, A)
     await settle()
     const contacts = A.port.stores.contacts.get()
     if (contacts.status !== 'ready') throw new Error('not ready')

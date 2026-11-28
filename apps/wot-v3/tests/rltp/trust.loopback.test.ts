@@ -8,7 +8,7 @@ import { IDBDatabase } from 'fake-indexeddb'
 import { holderDbName } from '../../src/adapters/rltp/session'
 import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 
 const T0 = Date.parse('2026-10-30T09:00:00+01:00')
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -32,13 +32,8 @@ async function met() {
       await B.port.session()?.idle()
     }
   }
-  const shown = await B.port.trust.showCard().done
-  if (!shown.ok) throw new Error('show')
-  await A.port.trust.confirmCard(shown.value.qr).done
-  await settle()
-  const bId = value(B.port.stores.contacts)[0]!.id
-  await B.port.trust.counterVerify(bId).done
-  await settle()
+  // the two meet in the connection ceremony (the back-code: the in-memory carrier carries no ceremony)
+  const { aAtB: bId } = await meet(A, B, settle)
   const aId = value(A.port.stores.contacts)[0]!.id
   return { carrier, clock, A, B, aId, bId, settle }
 }

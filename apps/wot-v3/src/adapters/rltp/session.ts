@@ -45,8 +45,6 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
-  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'shared-connect' when absent */
-  readonly ceremony?: 'shared-connect' | 'card'
   /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
    *  in use */
   readonly diagnose?: (entry: Omit<DiagnosticEntry, 'id'>) => void
@@ -1086,7 +1084,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const { own, sent, met, capturedBy } = applyEncounterEvents(cache, events, rec.when, captured)
     const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { ...cache, own, sent, met, capturedBy } satisfies EncounterCache }]
     // a card shown with a carrier offer: its N moves from the act input (dropped with `done`) to the
-    // displayed cards, in this transaction (TRANSPORT.md "The displayed card's instance")
+    // displayed cards, in this transaction (TRANSPORT.md "The displayed card's instance"). Only an earlier
+    // version of the app showed such cards; its open show act settles here from the library's journal
     const offer = input.carrier as { c?: unknown; nonce?: unknown } | undefined
     const shown = events.find((e) => e.type === 'encounter.shown')
     if (rec.command === 'showCard' && shown?.type === 'encounter.shown' && typeof offer?.c === 'string' && typeof offer.nonce === 'string') {
@@ -1357,7 +1356,6 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // the documents of a connection ceremony travel over the carrier's address, where the carrier has
     // wires for them (the VTI mediator): configuration, known also while the device is offline
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
-    legacyCard: deps.ceremony === 'card',
     foreground: () => foreground,
     now,
   }

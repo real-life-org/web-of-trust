@@ -14,7 +14,7 @@ it('a copy held by the app is cleared when wipeNamespace throws in delete.wipe',
   const device = fakeDevice()
   const identity = fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(910) })
   let failWipe = false
-  const A = createRltpPort({ ceremony: 'card',
+  const A = createRltpPort({ 
     identity: { ...identity, vault: { ...identity.vault, wipe: async (ns: string) => { if (failWipe) throw Error('vault wipe failed'); return identity.vault.wipe(ns) } } },
     idb: new IDBFactory(), transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })

@@ -80,7 +80,7 @@ it('#430: a refused start is retried after the retry delay of device time, not b
 
 it('one shutdown (quiesce, then close) shares one 2 s window (review 432 R1-11)', async () => {
   const clock = virtualClock(Date.parse('2026-10-21T10:00:00Z'), 'UTC')
-  const host = rltpHolderHost({ ceremony: 'card',
+  const host = rltpHolderHost({ 
     idb: new IDBFactory(), clock, entropy: fakeEntropy(4310), transport: unconfiguredTransport(),
     writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {},
   })
@@ -107,7 +107,7 @@ it('one shutdown (quiesce, then close) shares one 2 s window (review 432 R1-11)'
 it('S2/S5: a hanging holder close is bounded; the opening stays registered, the next open fails instead of waiting, and closes once the host returns', async () => {
   const clock = virtualClock(Date.parse('2026-10-21T10:00:00Z'), 'UTC')
   const recorded: string[] = []
-  const host = rltpHolderHost({ ceremony: 'card',
+  const host = rltpHolderHost({ 
     idb: new IDBFactory(),
     clock,
     entropy: fakeEntropy(4300),

@@ -11,6 +11,7 @@ import { createFlowRunner } from '../../src/hooks/flow-runner'
 import { reportExecutor } from '../../src/hooks/report'
 import { reportMail, transcript, REPORT_ADDRESS } from '../../src/lib/report'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { drive, tableCoverage } from './world'
 
 const cover = tableCoverage('report', REPORT_TABLE)
@@ -28,7 +29,7 @@ async function met(n = 2) {
       await B.port.session()?.idle()
     }
   }
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw new Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()

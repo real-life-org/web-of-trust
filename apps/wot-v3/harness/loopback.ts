@@ -83,10 +83,6 @@ export async function loopbackDevice(opts: {
   clock: VirtualClock
   seed: number
   language?: Language
-  /** tests: the carrier as the adapter sees it (a lease that records what the session hands it) */
-  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent: the harness's
-   *  phones show the card of encounter-scan unless they run the app's ceremony */
-  ceremony?: 'shared-connect' | 'card'
   /** tests: the app's foreground and background, as the session sees it */
   lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   wrap?: (t: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier) => ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier
@@ -106,7 +102,6 @@ export async function loopbackDevice(opts: {
   const transport = opts.wrap ? opts.wrap(made) : made
   const port = createRltpPort({
     faults,
-    ceremony: opts.ceremony ?? 'card',
     ...(opts.lifecycle ? { lifecycle: opts.lifecycle } : {}),
     identity,
     idb,
@@ -133,27 +128,40 @@ export async function loopbackDevice(opts: {
   return { id: opts.id, port, platform, device, faults }
 }
 
-/** Two phones meet in the connection ceremony (shared-connect; the phones were made with
- *  `ceremony: 'shared-connect'`): B shows the code, A reads it with its camera and proposes, B accepts
- *  the proposal. Returns each phone's id of the other, once both ceremonies are complete. */
-export async function meetOverCeremony(A: LoopbackDevice, B: LoopbackDevice, settle: () => Promise<void>): Promise<{ bAtA: ContactId; aAtB: ContactId }> {
+/** Two phones meet in the connection ceremony (shared-connect), the app's one ceremony: B shows its code, A
+ *  reads it with its camera and proposes, B accepts the proposal. Over a carrier the proposal reaches B
+ *  through it; without one (the in-memory carrier carries no ceremony) A shows its back-code and B's camera
+ *  reads it. Returns each phone's id of the other, once both have the contact. */
+export async function meet(A: LoopbackDevice, B: LoopbackDevice, settle: () => Promise<void>): Promise<{ bAtA: ContactId; aAtB: ContactId }> {
   const shown = await B.port.trust.showCard().done
   if (!shown.ok) throw new Error('harness: show')
   await settle()
   const proposed = await A.port.trust.confirmCard(shown.value.qr, 'camera').done
   if (!proposed.ok || proposed.value.kind !== 'proposed') throw new Error('harness: propose')
+  const connection = proposed.value.connection
   await settle()
-  const decisions = B.port.stores.decisions.get()
-  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'connect-confirm') : undefined
+  const proposal = () => {
+    const decisions = B.port.stores.decisions.get()
+    return decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'connect-confirm' && d.state === 'open') : undefined
+  }
+  if (!proposal()) {
+    // no carrier brought the proposal: the back-code, read by B's camera
+    const back = await A.port.trust.showBackCode(connection).done
+    if (!back.ok || back.value.kind !== 'shown') throw new Error('harness: back-code')
+    const read = await B.port.trust.readBackCode(back.value.qr)
+    if (!read.ok || read.value.kind !== 'taken') throw new Error('harness: read back-code')
+    await settle()
+  }
+  const open = proposal()
   if (!open) throw new Error('harness: no proposal at the shower')
   const accepted = await B.port.trust.decide(open.id, 'accept').done
   if (!accepted.ok) throw new Error('harness: accept')
   await settle()
-  const contactOf = (d: LoopbackDevice): ContactId => {
+  const contactOf = (d: LoopbackDevice, id: string): ContactId => {
     const c = d.port.stores.connections.get()
-    const id = c.status === 'ready' ? c.value.find((x) => x.status === 'complete')?.contactId : null
-    if (!id) throw new Error(`harness: the ceremony did not complete at ${d.id}`)
-    return id
+    const contactId = c.status === 'ready' ? c.value.find((x) => x.id === id)?.contactId : null
+    if (!contactId) throw new Error(`harness: the ceremony gave no contact at ${d.id}`)
+    return contactId
   }
-  return { bAtA: contactOf(A), aAtB: contactOf(B) }
+  return { bAtA: contactOf(A, connection), aAtB: contactOf(B, shown.value.card ?? connection) }
 }

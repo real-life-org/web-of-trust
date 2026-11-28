@@ -168,7 +168,7 @@ it('R12-2 a failed transport stop must not let the writer go before holder.close
   hooks.created = []
   let failStop = true
   const released = vi.fn()
-  const host = rltpHolderHost({ ceremony: 'card',
+  const host = rltpHolderHost({ 
     idb: new IDBFactory(),
     clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(12420),

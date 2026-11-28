@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet as meetDevices, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 
 const T0 = Date.parse('2026-11-04T09:00:00+01:00')
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -35,15 +35,11 @@ async function three() {
     if (!c) throw new Error(`no ${name}`)
     return c.id
   }
-  /** a scans b's code, b confirms back: mutual */
+  /** a reads b's code, b accepts: both have the contact (the connection ceremony) */
   const meet = async (a: LoopbackDevice, b: LoopbackDevice, bName: string, aName: string) => {
-    const shown = await b.port.trust.showCard().done
-    if (!shown.ok) throw new Error('show')
-    await a.port.trust.confirmCard(shown.value.qr).done
-    await settle()
-    await b.port.trust.counterVerify(idOf(b, aName)).done
-    await settle()
+    await meetDevices(a, b, settle)
     void bName
+    void aName
   }
   await meet(J, N, 'Noah', 'Jonas')
   await meet(N, L, 'Lea', 'Noah')

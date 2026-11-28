@@ -12,7 +12,7 @@ import type * as AppDbModule from '../../src/adapters/rltp/app-db'
 import type { AppWrite } from '../../src/adapters/rltp/app-db'
 import { secret, type ContactId, type Loadable, type ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 
 type Res = { ok: boolean }
 interface HolderLike {
@@ -85,13 +85,8 @@ async function met() {
       await B.port.session()?.idle()
     }
   }
-  const shown = await B.port.trust.showCard().done
-  if (!shown.ok) throw new Error('show')
-  await A.port.trust.confirmCard(shown.value.qr).done
-  await settle()
-  const bId = value(B.port.stores.contacts)[0]!.id
-  await B.port.trust.counterVerify(bId).done
-  await settle()
+  // the two meet in the connection ceremony (the back-code: the in-memory carrier carries no ceremony)
+  const { aAtB: bId } = await meet(A, B, settle)
   const aId = value(A.port.stores.contacts)[0]!.id
   const reopen = async () => {
     await A.port.runtime.lock('user')
@@ -109,7 +104,8 @@ const lines = (d: LoopbackDevice, id: ContactId) =>
   value(d.port.stores.conversation(`c:${id}`))
     .items.filter((i) => i.kind === 'system')
     .map((i) => (i as { readonly system: string }).system)
-const open = (d: LoopbackDevice) => d.port.stores.intents.get().map((i) => i.command)
+/** the open records' commands, sorted: the store lists records by act id, not in the queue's order */
+const open = (d: LoopbackDevice) => d.port.stores.intents.get().map((i) => i.command).sort()
 
 /** the library's store refuses its next `n` writes: an act's commit fails, its record stays open; a
  *  gesture behind it retries it at once, so a lasting fault takes two */
@@ -269,7 +265,7 @@ describe('the contact order as a queue', () => {
     const trust = w.A.port.trust.giveTrust(w.aId)
     expect(await fault(w.A, () => trust.done)).toMatchObject(WAITING)
     await w.A.port.session()?.idle()
-    expect(open(w.A)).toEqual(['setPaused', 'giveTrust'])
+    expect(open(w.A)).toEqual(['giveTrust', 'setPaused'])
     // the trust asked while the pause ahead of it fails once more: the trust still waits
     expect(await fault(w.A, () => w.A.port.session()!.retryIntent(trust.actId).done)).toMatchObject(WAITING)
     // the pause asked, refused for good this time; the trust behind it succeeds: the pause's handle

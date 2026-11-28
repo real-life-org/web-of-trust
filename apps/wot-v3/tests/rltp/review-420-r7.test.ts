@@ -5,6 +5,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createRltpPort } from '../../src/adapters/rltp'
 import { fakeDevice, fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { secret } from '../../src/port'
 
 const T0 = Date.parse('2026-10-20T10:00:00Z')
@@ -26,7 +27,7 @@ it.each([false, true])('R7: offline committed submission survives a fresh host=%
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const device = fakeDevice(), idb = new IDBFactory()
   let entropySeed = 700
-  const build = () => createRltpPort({ ceremony: 'card',
+  const build = () => createRltpPort({ 
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(entropySeed++) }),
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })
@@ -38,7 +39,7 @@ it.each([false, true])('R7: offline committed submission survives a fresh host=%
   try {
     await setup(A)
     carrier.setOnline('A', false)
-    const card = await B.port.trust.showCard().done
+    const card = await showOlderCardOn(B)
     if (!card.ok) throw Error('show')
     expect((await A.trust.confirmCard(card.value.qr).done).ok).toBe(true)
     await settle()
@@ -61,7 +62,7 @@ it('R7: a submit failure during handOn must not strand the activated session', a
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const device = fakeDevice(), idb = new IDBFactory(), endpoint = carrier.endpoint('A')
   let fail = false
-  const A = createRltpPort({ ceremony: 'card',
+  const A = createRltpPort({ 
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(720) }),
     idb, writer: { acquire: async () => () => {} },
     transport: { ...endpoint, submit(out) { if (fail) { fail = false; throw Error('transport unavailable') }; endpoint.submit(out) } },
@@ -71,7 +72,7 @@ it('R7: a submit failure during handOn must not strand the activated session', a
   try {
     await setup(A)
     carrier.setOnline('A', false)
-    const card = await B.port.trust.showCard().done
+    const card = await showOlderCardOn(B)
     if (!card.ok) throw Error('show')
     expect((await A.trust.confirmCard(card.value.qr).done).ok).toBe(true)
     await settle()
@@ -89,7 +90,7 @@ it('R7: a submit failure during handOn must not strand the activated session', a
 it('R7: failed finishRestore marker removal is repaired by a fresh runtime', async () => {
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC'), device = fakeDevice(), idb = new IDBFactory()
   let seed = 730
-  const build = () => createRltpPort({ ceremony: 'card',
+  const build = () => createRltpPort({ 
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(seed++) }),
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })
