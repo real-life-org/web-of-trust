@@ -147,3 +147,16 @@ describe('the bundle the verify flow decides against', () => {
     expect(bundleEvent(port)).toMatchObject({ type: 'bundle', connections: {} })
   })
 })
+
+describe('a capture result for a contact the last bundle names mutual (CodeRabbit on #562)', () => {
+  it('is the success, never the question again: for the confirm and the counter follow-up', async () => {
+    const { verifyTransition } = await import('../src/flows/verify')
+    for (const follow of ['confirm', 'counter'] as const) {
+      const capturing = { name: 'capturing', run: 7, card: null, mutual: [], preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as never
+      // the bundle arrives while the capture runs: capturing ignores it, the machine keeps who is mutual
+      const afterBundle = verifyTransition(capturing, { type: 'bundle', verifications: { [CONTACT]: 'mutual' }, decisions: [] }).state
+      const out = verifyTransition(afterBundle, { type: 'result', id: 'ver.capture', run: 7, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: CONTACT }, contactId: CONTACT, follow, decision: follow === 'confirm' ? DECISION : null } } } as never)
+      expect(out.state, follow).toMatchObject({ name: 'success', contactId: CONTACT, isNew: false })
+    }
+  })
+})
