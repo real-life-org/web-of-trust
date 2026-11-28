@@ -10,6 +10,7 @@ import { incoming, incomingPosition, incomingStart, type IncomingEffect, type In
 import { MUTUAL_WATCH, watchMutual, type MutualWatch } from '../flows/mutual'
 import type { VerifyState } from '../flows/verify'
 import { createFlowRunner, type FlowRunner } from './flow-runner'
+import { untilTime } from './until'
 import { usePlatform, usePort } from './context'
 
 export type { IncomingState, IncomingEvent, IncomingEntry } from '../flows/incoming'
@@ -34,14 +35,16 @@ export function incomingEntries(port: AppPort, shownByFlow: CardRef | null): Inc
 }
 
 export function incomingExecutor(port: AppPort, platform: Pick<Platform, 'clock'>) {
-  return async (e: IncomingEffect): Promise<EffectResult> => {
+  /** `signal`: the lifetime of the effect (the runner's): the card's end timer goes with it */
+  return async (e: IncomingEffect, signal: AbortSignal = new AbortController().signal): Promise<EffectResult> => {
     switch (e.id) {
       case 'inc.counter':
         // (a proposal is asked only before its code's end: the queue's expiry takes it away then)
         return fromResult(e.contactId === null ? await port.trust.decide(e.decision, 'accept').done : await port.trust.counterVerify(e.contactId).done)
-      case 'inc.expire':
-        await new Promise<void>((resolve) => platform.clock.setTimer(e.at, resolve))
-        return { ok: true, value: { now: platform.clock.now() } }
+      case 'inc.expire': {
+        const r = await untilTime(platform.clock, e.at, signal)
+        return r.ok ? { ok: true, value: { now: platform.clock.now() } } : r
+      }
     }
   }
 }

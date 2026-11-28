@@ -8,50 +8,13 @@ import type { Platform } from '../platform/ports'
 import type { EffectResult } from '../flows/machine'
 import { verify, verifyStart, type CaptureFollow, type VerifyEffect, type VerifyEvent, type VerifyState } from '../flows/verify'
 import { createFlowRunner, type FlowRunner } from './flow-runner'
+import { untilFront, untilTime } from './until'
 import { usePlatform, usePort } from './context'
 
 export type { VerifyState, VerifyEvent, ScanErrorCode, ShownCard } from '../flows/verify'
 
 const fromResult = (r: Result<unknown>): EffectResult =>
   r.ok ? { ok: true, value: r.value } : { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
-
-const CANCELLED: EffectResult = { ok: false, code: 'cancelled' }
-
-/** Until `at` on the device clock, for an effect whose lifetime is `signal` (the runner's): the timer goes
- *  when the signal aborts, and none is set for one already aborted; both end as `cancelled` */
-export function untilTime(clock: Platform['clock'], at: number, signal: AbortSignal): Promise<EffectResult> {
-  if (signal.aborted) return Promise.resolve(CANCELLED)
-  return new Promise((resolve) => {
-    const onAbort = () => {
-      off()
-      resolve(CANCELLED)
-    }
-    const off = clock.setTimer(at, () => {
-      signal.removeEventListener('abort', onAbort)
-      resolve({ ok: true })
-    })
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-/** Until the app is in front again, for an effect whose lifetime is `signal`: the listener goes when the
- *  signal aborts, and none is set for one already aborted; both end as `cancelled` */
-export function untilFront(life: Platform['lifecycle'], signal: AbortSignal): Promise<EffectResult> {
-  if (signal.aborted) return Promise.resolve(CANCELLED)
-  return new Promise((resolve) => {
-    const onAbort = () => {
-      off()
-      resolve(CANCELLED)
-    }
-    const off = life.onState((st) => {
-      if (st !== 'active') return
-      off()
-      signal.removeEventListener('abort', onAbort)
-      resolve({ ok: true })
-    })
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
 
 /** The lifetime of the verify flow's effects (the runner's `lifetime`): the run, the state's name and the
  *  scanner's phase (`unknown` and `wait` share the wait's deadline, set at the scan). A timer or a listener
