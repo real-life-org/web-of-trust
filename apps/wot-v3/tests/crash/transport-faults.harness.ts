@@ -4,6 +4,8 @@
 // (holder.close in the shutdown order); each one throws, is late and answers after the next step,
 // answers to an earlier generation, or answers twice. A seeded generator runs acts on both sides,
 // deliveries, resumes, locks, process ends, reopenings and clock jumps (forward and back).
+// The two meet in encounter-scan: a card shown as an earlier version of the app showed it
+// (harness/older-card.ts), scanned by the current one.
 // Invariants after every step and at the end:
 //  - custody: the holder records accepted (or an ack sent) only for what the carrier durably accepted,
 //    gives up nothing on a fault, so pendingTransport names every document the carrier has not taken;
@@ -27,6 +29,7 @@ import { RETRY_HORIZON_MS } from '../../src/adapters/rltp/journal'
 import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
+import { showOlderCard } from '../../harness/older-card'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import type { ClockPort } from '../../src/platform/ports'
 
@@ -602,11 +605,11 @@ export async function run(seed: number) {
   const life = new Set<(s: 'active' | 'background') => void>()
   let ent = 900 + seed * 10
   const lifecycle = { onState(cb: (s: 'active' | 'background') => void) { life.add(cb); return () => void life.delete(cb) } }
-  const makeA = () => rltpHolderHost({ ceremony: 'card', idb, clock: clockA, entropy: fakeEntropy(ent++), transport: sim.endpoint(), writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
+  const makeA = () => rltpHolderHost({ idb, clock: clockA, entropy: fakeEntropy(ent++), transport: sim.endpoint(), writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
   const mc = memoryCarrier(vc)
   const bT = mc.endpoint('B')
   // B's carrier hands every document of B to A's carrier
-  const B = rltpHolderHost({ ceremony: 'card', idb, clock: vc, entropy: fakeEntropy(ent++), transport: { ...bT, submit(out) { for (const o of out) sim.post(o); bT.submit(out) } }, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
+  const B = rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport: { ...bT, submit(out) { for (const o of out) sim.post(o); bT.submit(out) } }, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle })
   let A = makeA()
   const a = await A.open('A', keysA), b = await B.open('B', keysB)
   if (a.kind !== 'ok' || b.kind !== 'ok') throw Error('open')
@@ -716,7 +719,7 @@ export async function run(seed: number) {
   }
   /** the scanner confirms the shower's fresh card: the scanner's bundle goes to the shower */
   const scan = async (shower: typeof A, scanner: typeof A, k: number) => {
-    const card = await shower.current()!.intent<{ qr: string }>('showCard', '', `show-${k}`, {}).done
+    const card = await showOlderCard(shower.current()!)
     if (!card.ok) throw Error(`show ${JSON.stringify(card)}`)
     const done = await scanner.current()!.intent('confirmCard', '', `scan-${k}`, { card: decodeCardLink(card.value.qr), role: 'displayed' }).done
     if (!done.ok) throw Error(`scan ${JSON.stringify(done)}`)

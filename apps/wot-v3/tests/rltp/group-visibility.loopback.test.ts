@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { GroupDetail, GroupId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet as meetDevices, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 import { graphInputOf } from '../../src/hooks/graph'
 import { graphModel } from '../../src/hooks/graph-model'
 
@@ -35,14 +35,7 @@ async function world(order: readonly Step[], seed: number) {
     }
   }
   const meet = async (a: LoopbackDevice, b: LoopbackDevice) => {
-    const shown = await b.port.trust.showCard().done
-    if (!shown.ok) throw new Error('show')
-    if (!(await a.port.trust.confirmCard(shown.value.qr).done).ok) throw new Error('scan')
-    await settle()
-    const open = value(b.port.stores.decisions).find((d) => d.kind === 'encounter-confirm')
-    if (!open || open.kind !== 'encounter-confirm') throw new Error('no confirmation')
-    await b.port.trust.counterVerify(open.contactId).done
-    await settle()
+    await meetDevices(a, b, settle)
   }
   const contact = (at: LoopbackDevice, name: string) => {
     const c = value(at.port.stores.contacts).find((x) => x.name === name)

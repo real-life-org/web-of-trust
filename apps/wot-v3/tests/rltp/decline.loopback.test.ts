@@ -6,6 +6,7 @@
 // (RLTP-ENC-5750; the library's counter finds the displayer's record without a prompt).
 import { expect, it } from 'vitest'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { virtualClock } from '../../src/platform/fake'
 import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import type { Transport } from '../../src/adapters/rltp/transport'
@@ -44,7 +45,7 @@ async function pair() {
 
 it('A2: decline closes the confirmation on this device only; nothing goes out; the scanner stays outgoing; confirming later still makes both mutual', async () => {
   const { A, B, submitted, settle } = await pair()
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   const scan = await A.port.trust.confirmCard(shown.value.qr).done
   if (!scan.ok || scan.value.kind !== 'scanned') throw Error('scan')

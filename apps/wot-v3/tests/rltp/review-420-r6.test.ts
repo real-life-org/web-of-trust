@@ -2,6 +2,7 @@
 // Regressions of Astra's sixth review of #420 (rltp/design/store-launch-v3/app-review-420-6-2026-10-20.md).
 import { expect, it } from 'vitest'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
 import { secret } from '../../src/port'
 import { createFlowRunner, identityExecutor } from '../../src/hooks/flow-runner'
@@ -17,7 +18,7 @@ it.each([false, true])('R6: offline submission, lock/unlock=%s', async (reopen) 
   const settle=async()=>{for(let i=0;i<8;i++){await carrier.settled();await A.port.session()?.idle();await B.port.session()?.idle()}await flush()}
   try {
     carrier.setOnline('A',false)
-    const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
+    const card=await showOlderCardOn(B);if(!card.ok)throw Error('show')
     expect((await A.port.trust.confirmCard(card.value.qr).done).ok).toBe(true)
     await settle()
     expect(B.port.stores.decisions.get()).toMatchObject({status:'ready',value:[]})

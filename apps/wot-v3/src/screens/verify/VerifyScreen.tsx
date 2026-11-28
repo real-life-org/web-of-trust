@@ -309,12 +309,11 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       // read, its confirmation not published yet: said so, and back is a way out
       return page(<Working label={s.connection ? v.readBackPending : v.checking} />, undefined, s.connection ? back : undefined)
     case 'confirmationRequired':
-    case 'confirmIncoming':
-      // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
+      // the scanner's confirmation (E4): "not now" leaves the decision open
       return page(
-        <PersonConfirmBody name={nameOf(s.name2)} when="now" scanned failed={s.name === 'confirmIncoming' && s.failed} />,
+        <PersonConfirmBody name={nameOf(s.name2)} when="now" scanned />,
         <PersonConfirmActions busy={s.busy} onConfirm={() => send({ type: 'accept' })} onNotNow={() => send({ type: 'notNow' })} />,
-        () => send({ type: s.name === 'confirmIncoming' ? 'notNow' : 'leave' }),
+        () => send({ type: 'leave' }),
       )
     case 'connectIncoming':
       // a proposal answers the shown code: accept issues the own credential, decline tells the other

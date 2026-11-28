@@ -39,8 +39,6 @@ const S: Record<string, VerifyState> = {
   fallback: { ...base, name: 'fallback', contactId: noah, name2: 'Noah Lindqvist', sentQr: sent },
   capturing: { ...base, name: 'capturing', preview: { ...preview, role: 'sent' }, origin: 'camera' },
   confirmationRequired: { ...base, name: 'confirmationRequired', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false },
-  confirmIncoming: { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: false },
-  'confirmIncoming-failed': { ...base, card: null, name: 'confirmIncoming', contactId: noah, decision: 'p-noah' as DecisionId, name2: 'Noah Lindqvist', busy: false, failed: true },
   connectIncoming: { ...base, card: null, name: 'connectIncoming', connection: 'e-noah' as ConnectionId, decision: 'sharedconnect:e-noah' as DecisionId, validUntil: card.expiresAt, name2: 'Noah Lindqvist', busy: null, failed: false },
   'connectIncoming-failed': { ...base, card: null, name: 'connectIncoming', connection: 'e-noah' as ConnectionId, decision: 'sharedconnect:e-noah' as DecisionId, validUntil: card.expiresAt, name2: 'Noah Lindqvist', busy: null, failed: true },
   'connecting-scanner': { ...base, name: 'connecting', connection: 'e-noah' as ConnectionId, name2: 'Noah Lindqvist', role: 'scanner', waitLong: false },

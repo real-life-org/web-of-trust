@@ -4,6 +4,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { createRltpPort } from '../../src/adapters/rltp'
 import { fakeDevice, fakeEntropy, fakeIdentityPlatform, virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { secret } from '../../src/port'
 
 const T0 = Date.parse('2026-10-20T10:00:00Z')
@@ -12,7 +13,7 @@ const flush = async () => { for (let i=0;i<15;i++) await new Promise(r=>setTimeo
 it('R5 probe: lock revokes a resumed setup while host.init is pending', async () => {
   const clock=virtualClock(T0,'UTC'),device=fakeDevice(),entropy=fakeEntropy(501)
   const identity=fakeIdentityPlatform(device,{clock,entropy}),carrier=memoryCarrier()
-  const port=createRltpPort({ ceremony: 'card',identity,idb:new IDBFactory(),transport:carrier.endpoint('A'),writer:{acquire:async()=>()=>{}}})
+  const port=createRltpPort({ identity,idb:new IDBFactory(),transport:carrier.endpoint('A'),writer:{acquire:async()=>()=>{}}})
   await port.runtime.boot()
   const r=await port.runtime.setup.reserve('setup','passphrase');if(!r.ok)throw Error('reserve')
   await port.runtime.setup.writeVault(r.value.ns,{mnemonic:secret(LOOPBACK_PHRASES[0].split(' ')) as never,protection:{mode:'passphrase',passphrase:secret('harness passphrase')},profile:{name:'resumed-profile'},termsVersion:port.runtime.termsConsent().current})
@@ -62,7 +63,7 @@ it('R5 probe: switching identities cannot flush a sealed opening outbox', async 
   const settle=async()=>{for(let i=0;i<6;i++){await carrier.settled();await A.port.session()?.idle();await B.port.session()?.idle()}}
   try {
     carrier.setOnline('A',false)
-    const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
+    const card=await showOlderCardOn(B);if(!card.ok)throw Error('show')
     await A.port.trust.confirmCard(card.value.qr).done
     await settle()
     expect(B.port.stores.decisions.get()).toMatchObject({status:'ready',value:[]})
@@ -85,7 +86,7 @@ it('R5 probe: unlock for interrupted delete must not activate normal reception',
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:522})
   const settle=async()=>{for(let i=0;i<6;i++){await carrier.settled();await A.port.session()?.idle();await B.port.session()?.idle()}}
   try {
-    const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
+    const card=await showOlderCardOn(B);if(!card.ok)throw Error('show')
     await B.port.runtime.delete.quiesce()
     await B.port.runtime.boot()
     expect(B.port.runtime.state.get()).toMatchObject({status:'resuming',step:'wipe'})

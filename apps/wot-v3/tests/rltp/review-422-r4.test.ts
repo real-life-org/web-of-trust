@@ -13,6 +13,7 @@ import type * as AppDbModule from '../../src/adapters/rltp/app-db'
 import type { AppWrite } from '../../src/adapters/rltp/app-db'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 type Res = { ok: boolean }
 interface HolderLike {
@@ -79,7 +80,7 @@ async function world() {
       await new Promise((r) => setTimeout(r, 0))
     }
   }
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw Error('show')
   await A.port.trust.confirmCard(shown.value.qr).done
   await settle()

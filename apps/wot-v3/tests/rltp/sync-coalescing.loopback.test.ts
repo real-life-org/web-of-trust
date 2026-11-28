@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const probe = vi.hoisted(() => ({
   contacts: new Map<number, number>(),
@@ -75,7 +76,7 @@ async function world() {
       await new Promise((r) => setTimeout(r, 0))
     }
   }
-  const shown = await B.port.trust.showCard().done
+  const shown = await showOlderCardOn(B)
   if (!shown.ok) throw new Error('show')
   if (!(await A.port.trust.confirmCard(shown.value.qr).done).ok) throw new Error('scan')
   await settle()

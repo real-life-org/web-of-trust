@@ -9,6 +9,7 @@ import { virtualClock } from '../../src/platform/fake'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { mediatorDouble } from '../../harness/mediator-double'
 
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -52,7 +53,7 @@ async function world() {
 
 /** B shows, A scans (A's card carries its hint), A shows its sent card, B captures it optically */
 async function meet(w: Awaited<ReturnType<typeof world>>) {
-  const shown = await w.B.port.trust.showCard().done
+  const shown = await showOlderCardOn(w.B)
   if (!shown.ok) throw new Error('show')
   const scanned = await w.A.port.trust.confirmCard(shown.value.qr).done
   if (!scanned.ok) throw new Error('scan')
@@ -122,7 +123,7 @@ describe('two phones over the VTI mediator (double)', () => {
       const carrier = mediator ? { mediator: med } : memoryCarrier()
       const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 51 })
       const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 53 })
-      const shown = await B.port.trust.showCard().done
+      const shown = await showOlderCardOn(B)
       if (!shown.ok) throw new Error('show')
       // the process dies after the intent is journaled: the record stays open
       A.faults.killAt = 'after-journal'
@@ -137,10 +138,10 @@ describe('two phones over the VTI mediator (double)', () => {
 
   it('E9: an incoming confirmation names the displayed card it answers (its N), until the card ends; a card shown without an offer has no instance', async () => {
     const w = await world()
-    const shown = await w.B.port.trust.showCard().done
+    const shown = await showOlderCardOn(w.B)
     if (!shown.ok) throw new Error('show')
     expect(shown.value.card).toEqual(expect.any(String))
-    const other = await w.B.port.trust.showCard().done
+    const other = await showOlderCardOn(w.B)
     if (!other.ok) throw new Error('show 2')
     expect(other.value.card).not.toBe(shown.value.card)
     const scanned = await w.A.port.trust.confirmCard(shown.value.qr).done
@@ -160,7 +161,7 @@ describe('two phones over the VTI mediator (double)', () => {
     const clock = virtualClock(Date.now(), 'UTC')
     const A = await loopbackDevice({ carrier, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 41 })
     const B = await loopbackDevice({ carrier, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 43 })
-    const shown = await B.port.trust.showCard().done
+    const shown = await showOlderCardOn(B)
     if (!shown.ok) throw new Error('show')
     expect(shown.value.card).toBeNull()
     await A.port.trust.confirmCard(shown.value.qr).done

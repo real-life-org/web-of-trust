@@ -5,18 +5,12 @@
 // held by the counterpart's next step (accepted with `held`, RLTP-DEL-6140, RLTP-VTI-5050); a document
 // only accepted is not. Over the mediator double, the real adapter and the real holder.
 import { describe, expect, it } from 'vitest'
-import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { CARRIER_TICK_MS, type MediatorCarrier } from '../../src/adapters/rltp'
 import type { CarrierOpening, CustodyLease, TransportHandlers } from '../../src/adapters/rltp/transport'
-import { LOOPBACK_PHRASES, loopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet } from '../../harness/loopback'
 import { mediatorDouble } from '../../harness/mediator-double'
 
-const value = <T>(s: ReadStore<Loadable<T>>): T => {
-  const v = s.get()
-  if (v.status !== 'ready') throw new Error(`store ${v.status}`)
-  return v.value
-}
 
 describe("the opening's answered (holder truth for a restored carrier instance)", () => {
   it('counts a document held by the counterpart’s next step as answered, a document only accepted not', async () => {
@@ -60,16 +54,8 @@ describe("the opening's answered (holder truth for a restored carrier instance)"
       clock.advance(CARRIER_TICK_MS)
       await settle()
     }
-    // B shows, A scans, A's sent card reaches B optically; B confirms
-    const shown = await B.port.trust.showCard().done
-    if (!shown.ok) throw new Error('show')
-    if (!(await A.port.trust.confirmCard(shown.value.qr).done).ok) throw new Error('scan')
-    await settle()
-    const aId = value(A.port.stores.contacts)[0]!.id as ContactId
-    const sent = await A.port.trust.sentCardFor(aId)
-    if (!sent.ok) throw new Error('sent card')
-    if (!(await B.port.trust.confirmCard(sent.value.qr).done).ok) throw new Error('capture')
-    await settle()
+    // the two meet in the connection ceremony, carried over the mediator
+    const { bAtA: aId } = await meet(A, B, settle)
     await tick()
 
     // A's message goes out routed and the mediator loses it: accepted, never acknowledged

@@ -57,12 +57,6 @@ export interface RltpDeps {
   readonly subtle?: SubtleCrypto
   /** tests and harness only */
   readonly faults?: RltpFaults
-  /** the ceremony a shown code starts: 'shared-connect', the one ceremony of the app (the default; with
-   *  a carrier in reach or not: lib 0.22.0 opens both contacts from the link and the back-code). 'card'
-   *  only for tests and the harness: the card of encounter-scan as the app showed it before, so that the
-   *  paths that read such cards and keep the contacts and confirmations they made stay exercised. No
-   *  build passes it; codes of both kinds are read either way */
-  readonly ceremony?: 'shared-connect' | 'card'
   /** foreground / background of the app (LifecyclePort.onState) */
   readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   /** the interop probe of the developer area (interop-probe.ts): only a build that enables it passes one */
@@ -158,7 +152,6 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     ...(deps.retry ? { retry: deps.retry } : {}),
     ...(deps.subtle ? { subtle: deps.subtle } : {}),
     ...(deps.faults ? { faults: deps.faults } : {}),
-    ...(deps.ceremony ? { ceremony: deps.ceremony } : {}),
     diagnostics,
     ...(deps.lifecycle ? { lifecycle: deps.lifecycle } : {}),
     publish,

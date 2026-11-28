@@ -7,6 +7,7 @@ import type { ContactId, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { bundleEvent } from '../../src/hooks/verify'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const T0 = Date.parse('2026-11-04T09:00:00+01:00')
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -30,7 +31,7 @@ describe('a second encounter (loopback)', () => {
       }
     }
     const meet = async (): Promise<ContactId> => {
-      const shown = await B.port.trust.showCard().done
+      const shown = await showOlderCardOn(B)
       if (!shown.ok) throw new Error('show')
       const r = await A.port.trust.confirmCard(shown.value.qr).done
       if (!r.ok) throw new Error('scan')

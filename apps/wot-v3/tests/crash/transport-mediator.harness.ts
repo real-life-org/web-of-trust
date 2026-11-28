@@ -1,7 +1,8 @@
 // The transport contract (src/adapters/rltp/TRANSPORT.md, rules 1 to 6) against the real carrier: the VTI
 // mediator (carrier-mediator.ts), the library's MediatorCarrierAdapter per relationship and the real
 // wire (wire.ts), over the mediator double (the live double: real TSP and DIDComm crypto, the network
-// below replaced). Two real holders A and B meet with delivery hints and write; a seeded generator runs
+// below replaced). Two real holders A and B meet with delivery hints (encounter-scan: a card shown as an
+// earlier version of the app showed it, harness/older-card.ts, scanned by the current one) and write; a seeded generator runs
 // sends both ways, locks, process ends, the network going away and time; each seed arms its cells of
 // the matrix, every cell is armed by exactly one seed and must fire:
 //   deposit: the wire throws (before the network, or after the frame went out), the answer comes late
@@ -96,6 +97,7 @@ import { idbHolderStore } from '../../src/adapters/rltp/store-idb'
 import { idbAppDb } from '../../src/adapters/rltp/app-db'
 import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
+import { showOlderCard } from '../../harness/older-card'
 import { KV } from '../../src/adapters/rltp/app-data'
 import { deriveWireIdentities, peerKeys, type VtiWire } from '../../src/adapters/rltp/wire'
 import { diagnosticLog, type DiagnosticLog } from '../../src/adapters/rltp/diagnostics'
@@ -294,7 +296,7 @@ async function runSeed(seed: number, standing: Standing) {
   /** what A's openings in use diagnosed (the displayed cells read their codes) */
   const diagA = diagnosticLog(() => crypto.randomUUID(), 1000)
   const host = (transport: Parameters<typeof rltpHolderHost>[0]['transport'], diagnostics?: DiagnosticLog) =>
-    rltpHolderHost({ ceremony: 'card', idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle, ...(diagnostics ? { diagnostics } : {}) })
+    rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle, ...(diagnostics ? { diagnostics } : {}) })
 
   // ── the fault seam on A's wires ────────────────────────────────────────────────────────────────
   const ctx = { inUse: false }
@@ -593,7 +595,7 @@ async function runSeed(seed: number, standing: Standing) {
   /** `shower` shows a card, A scans it; returns A's new contact */
   const aScans = async (shower: Host) => {
     const before = new Set(contacts(A).map((c) => c.id))
-    const card = await shower.current()!.intent<{ qr: string }>('showCard', '', `show-${++k}`, {}).done
+    const card = await showOlderCard(shower.current()!)
     if (!card.ok) throw Error(`show ${JSON.stringify(card)}`)
     const done = await A.current()!.intent('confirmCard', '', `scan-${k}`, { card: decodeCardLink(card.value.qr), role: 'displayed' }).done
     if (!done.ok) throw Error(`scan ${JSON.stringify(done)}`)
@@ -604,7 +606,7 @@ async function runSeed(seed: number, standing: Standing) {
    *  show act journaled into the displayed cards) */
   const aShows = async () => {
     knownAtA = new Set(contacts(A).map((x) => x.id))
-    const shown = await A.current()!.intent<{ qr: string }>('showCard', '', `show-a-${++k}`, {}).done
+    const shown = await showOlderCard(A.current()!)
     if (!shown.ok) throw Error(`A show ${JSON.stringify(shown)}`)
     const card = decodeCardLink(shown.value.qr) as { challenge: { value: string } }
     const displayed = (await appA.get<Record<string, { nonce: string }>>('kv', KV.displayed)) ?? {}

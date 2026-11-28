@@ -14,6 +14,7 @@ import { expect, it, vi } from 'vitest'
 import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { REDELIVER_MS } from '../../src/adapters/rltp/transport'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
@@ -45,7 +46,7 @@ async function world() {
 
 /** the whole ceremony through the port; both mutual */
 async function meet(w: Awaited<ReturnType<typeof world>>) {
-  const shown = await w.B.port.trust.showCard().done
+  const shown = await showOlderCardOn(w.B)
   if (!shown.ok) throw new Error('show')
   const scanned = await w.A.port.trust.confirmCard(shown.value.qr).done
   if (!scanned.ok) throw new Error('scan')

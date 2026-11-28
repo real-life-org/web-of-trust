@@ -5,6 +5,7 @@ import type { TransportHandlers } from '../../src/adapters/rltp/transport'
 import { expect, it, vi } from 'vitest'
 import { DAY, isAck, pair } from './pair'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
+import { showOlderCard } from '../../harness/older-card'
 
 interface HolderProbe {
   readonly closed: boolean
@@ -94,7 +95,7 @@ it('R15-1b: receive queued before lock must be retained when holder.close reject
   const decrypt = crypto.subtle.decrypt.bind(crypto.subtle)
   let spy: ReturnType<typeof vi.spyOn> | undefined
   try {
-    const card = await p.A().intent<{ qr: string }>('showCard', '', 'r15-show', {}).done
+    const card = await showOlderCard(p.A())
     if (!card.ok) throw Error('show')
     await p.settle()
     spy = vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {

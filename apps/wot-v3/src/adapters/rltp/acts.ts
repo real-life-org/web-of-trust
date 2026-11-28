@@ -22,8 +22,6 @@ export interface ActContext {
    *  the relay of the per-encounter messaging identity, configuration known offline too; null without a
    *  carrier that has such wires (then the two codes are the only way, the link names no relay) */
   readonly relays: readonly { readonly kind: string; readonly address: string }[] | null
-  /** tests and the harness only (RltpPortDeps.ceremony 'card'): the shown code is the card of encounter-scan */
-  readonly legacyCard: boolean
   /** the app is in front now (a human act that opens a contact runs only then) */
   foreground(): boolean
   /** the device time now (an act run late, a recovery, reads its preconditions at this time) */
@@ -178,9 +176,6 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: async (h, i, o, ctx) => {
       const carrier = await ctx.offer(i.carrier)
       // the offer makes the relationship the ceremony opens a carried one (lib 0.17.0)
-      // tests and the harness: the card of encounter-scan, as the app showed it before (its carrier offer
-      // signs this side's delivery hint for C into the card, lib 0.8.0)
-      if (ctx.legacyCard) return h.show(carrier ? { ...o, carrier } : o)
       // the link on the app's own host: a camera scan opens the app (an app link), a page explains the code
       // to someone without it; the flow stays the registered URI
       return h.sharedConnectShow({ relays: (ctx.relays ?? []).map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', origin: LINK_ORIGIN, ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
@@ -189,6 +184,9 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       const link = ev(events, 'sharedconnect.shown')[0]
       // the code's instance is its enactment: the proposal that answers it names it (E9)
       if (link) return { qr: link.link, expiresAt: linkExpiry(link.link), card: link.id }
+      // the card of encounter-scan, shown by an earlier version of the app: a record of its show act left
+      // open there and past its limit is settled here from the library's journal (the app shows no such
+      // card any more)
       const shown = ev(events, 'encounter.shown')[0]
       if (!shown) return null
       const issued = (shown.card as { challenge?: { issuedAt?: unknown } }).challenge?.issuedAt

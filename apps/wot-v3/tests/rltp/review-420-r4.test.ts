@@ -5,6 +5,7 @@ import { leaseInUse } from '../../src/adapters/rltp/testing'
 import { expect, it, vi } from 'vitest'
 import { IDBFactory, IDBDatabase } from 'fake-indexeddb'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { showOlderCard, showOlderCardOn } from '../../harness/older-card'
 import { virtualClock, fakeEntropy } from '../../src/platform/fake'
 import { secret } from '../../src/port'
 import { openSession } from '../../src/adapters/rltp/session'
@@ -49,12 +50,12 @@ it('R2-2 counterprobe: a restore opening finishing after lock never publishes', 
 it('R3-2 counterprobe: transient submit error retries delivery without reopening', async () => {
   const clock=virtualClock(T0,'UTC'),carrier=memoryCarrier()
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:402})
-  const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
+  const card=await showOlderCardOn(B);if(!card.ok)throw Error('show')
   const tr=unconfiguredTransport()
   let fail=true
   const accepted:unknown[]=[]
   tr.submit=(out)=>{if(fail)throw Error('temporary');accepted.push(...out)}
-  const s=await openSession({ceremony:'card',ns:'sender',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(403),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
+  const s=await openSession({ns:'sender',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(403),transport:leaseInUse(tr, clock),anchorShort:'id',publish:()=>{},emit:()=>{}})
   try {
     await flush();await s.idle()
     const r=await s.intent('confirmCard','encounter','capture',{card:decodeCardLink(card.value.qr),role:'displayed'}).done
@@ -71,7 +72,7 @@ it('new activation lease keeps mail arriving while the recipient is locked', asy
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:412})
   const settle=async()=>{for(let i=0;i<5;i++){await carrier.settled();await A.port.session()?.idle();await B.port.session()?.idle()}}
   try {
-    const card=await B.port.trust.showCard().done;if(!card.ok)throw Error('show')
+    const card=await showOlderCardOn(B);if(!card.ok)throw Error('show')
     await B.port.runtime.lock('user')
     expect((await A.port.trust.confirmCard(card.value.qr).done).ok).toBe(true)
     await settle()
@@ -90,7 +91,7 @@ it('active settles an unknown act through the library journal; quiesce removes l
   const B=await loopbackDevice({carrier,clock,id:'B',name:'B',words:LOOPBACK_PHRASES[1],seed:422})
   const callbacks=new Set<(st:'active'|'background')=>void>()
   const lifecycle={onState:(cb:(st:'active'|'background')=>void)=>{callbacks.add(cb);return()=>{callbacks.delete(cb)}}}
-  const s=await openSession({ceremony:'card',ns:'active-test',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(423),transport:leaseInUse(carrier.endpoint('A'), clock),anchorShort:'id',publish:()=>{},emit:()=>{},lifecycle})
+  const s=await openSession({ns:'active-test',generation:1,idb:new IDBFactory(),rootIkm:new Uint8Array(64).fill(1),dek:new Uint8Array(32).fill(2),clock,entropy:fakeEntropy(423),transport:leaseInUse(carrier.endpoint('A'), clock),anchorShort:'id',publish:()=>{},emit:()=>{},lifecycle})
   const settle=async()=>{for(let i=0;i<5;i++){await carrier.settled();await s.idle();await B.port.session()?.idle()}await flush()}
   const orig=IDBDatabase.prototype.transaction
   let failing=false
@@ -99,7 +100,7 @@ it('active settles an unknown act through the library journal; quiesce removes l
     return orig.apply(this,args)
   })
   try {
-    const card=await s.intent<{qr:string}>('showCard','encounter','show',{}).done;if(!card.ok)throw Error('show')
+    const card=await showOlderCard(s);if(!card.ok)throw Error('show')
     await B.port.trust.confirmCard(card.value.qr).done;await settle()
     const d=s.models()!.decisions[0]!
     failing=true
@@ -133,7 +134,7 @@ it('a finished restore activates both the new session and its inbound transport'
     await A.port.runtime.setup.finishRestore()
     expect(A.port.session()?.ns).toBe(r.value.ns)
     expect(A.port.stores.profile.get()).toMatchObject({status:'ready',value:{name:'restored'}})
-    const card=await A.port.trust.showCard().done;if(!card.ok)throw Error('show')
+    const card=await showOlderCardOn(A);if(!card.ok)throw Error('show')
     await B.port.trust.confirmCard(card.value.qr).done
     for(let i=0;i<5;i++){await carrier.settled();await A.port.session()?.idle();await B.port.session()?.idle()}
     expect(A.port.stores.decisions.get()).toMatchObject({status:'ready',value:[{kind:'encounter-confirm'}]})

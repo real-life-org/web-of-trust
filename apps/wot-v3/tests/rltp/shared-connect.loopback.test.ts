@@ -26,9 +26,9 @@ async function world() {
   const clock = virtualClock(Date.now(), 'UTC')
   // each phone on a network of its own below the wire, switched by `online`
   const netA = phoneNet(med.net), netB = phoneNet(med.net), netC = phoneNet(med.net)
-  const A = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netA.net } }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31, ceremony: 'shared-connect' })
-  const B = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netB.net } }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37, ceremony: 'shared-connect' })
-  const C = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netC.net } }, id: 'C', name: 'Cem', words: LOOPBACK_PHRASES[2], clock, seed: 43, ceremony: 'shared-connect' })
+  const A = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netA.net } }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31 })
+  const B = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netB.net } }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37 })
+  const C = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netC.net } }, id: 'C', name: 'Cem', words: LOOPBACK_PHRASES[2], clock, seed: 43 })
   const online = (d: LoopbackDevice, on: boolean) => {
     ;(d === A ? netA : d === B ? netB : netC).setOnline(on)
     d.platform.network.set(on ? 'online' : 'offline')
@@ -286,7 +286,7 @@ describe('the connection ceremony over the VTI mediator (double)', () => {
       const w = await offline()
       const life = fakeLifecycle()
       const med = w.med
-      const D = await loopbackDevice({ carrier: { mediator: { did: med.did, net: phoneNet(med.net).net } }, id: 'D', name: 'Dee', words: LOOPBACK_PHRASES[3] ?? LOOPBACK_PHRASES[0], clock: w.clock, seed: 53, ceremony: 'shared-connect', lifecycle: life })
+      const D = await loopbackDevice({ carrier: { mediator: { did: med.did, net: phoneNet(med.net).net } }, id: 'D', name: 'Dee', words: LOOPBACK_PHRASES[3] ?? LOOPBACK_PHRASES[0], clock: w.clock, seed: 53, lifecycle: life })
       D.platform.network.set('offline')
       const L = await show(w)
       const p = await D.port.trust.confirmCard(L.qr, 'camera').done

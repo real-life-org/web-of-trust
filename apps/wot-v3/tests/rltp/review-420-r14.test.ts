@@ -8,6 +8,7 @@ import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import { unconfiguredTransport, type TransportHandlers } from '../../src/adapters/rltp/transport'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
 import { fakeEntropy, virtualClock } from '../../src/platform/fake'
+import { showOlderCard } from '../../harness/older-card'
 
 interface HolderProbe {
   readonly closed: boolean
@@ -96,7 +97,7 @@ it.each([false, true])('R14 stop failure=%s: a locked recipient must keep its ca
     } }) },
   }))
   try {
-    const card = await p.A().intent<{ qr: string }>('showCard', '', 'card', {}).done
+    const card = await showOlderCard(p.A())
     if (!card.ok) throw Error('show')
     fail = failStop
     await p.shutdownA()
@@ -162,7 +163,7 @@ it('R14 undo control: a failed construction waits for holder.close before releas
   hooks.created = 0
   const released = vi.fn()
   const closedDb = vi.spyOn(IDBDatabase.prototype, 'close')
-  const host = rltpHolderHost({ ceremony: 'card',
+  const host = rltpHolderHost({ 
     idb: new IDBFactory(),
     clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(14420),

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Conversation, DecisionCardItem, GroupDetail, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet as meetDevices, memoryCarrier } from '../../harness/loopback'
 import { graphInputOf } from '../../src/hooks/graph'
 import { graphModel } from '../../src/hooks/graph-model'
 
@@ -27,13 +27,8 @@ async function met() {
       await B.port.session()?.idle()
     }
   }
-  const shown = await B.port.trust.showCard().done
-  if (!shown.ok) throw new Error('show')
-  await A.port.trust.confirmCard(shown.value.qr).done
-  await settle()
-  const bId = value(B.port.stores.contacts)[0]!.id
-  await B.port.trust.counterVerify(bId).done
-  await settle()
+  // the two meet in the connection ceremony (the back-code: the in-memory carrier carries no ceremony)
+  const { aAtB: bId } = await meetDevices(A, B, settle)
   const aId = value(A.port.stores.contacts)[0]!.id
   return { carrier, clock, A, B, aId, bId, settle }
 }
@@ -135,15 +130,7 @@ describe('members who know each other apart from the invitation (Anton 22.11.)',
       }
     }
     const meet = async (x: typeof A, y: typeof A) => {
-      const shown = await y.port.trust.showCard().done
-      if (!shown.ok) throw new Error('show')
-      const scanned = await x.port.trust.confirmCard(shown.value.qr).done
-      if (!scanned.ok) throw new Error('scan')
-      await settle()
-      const open = value(y.port.stores.decisions).find((d) => d.kind === 'encounter-confirm')
-      if (!open || open.kind !== 'encounter-confirm') throw new Error('no confirmation')
-      await y.port.trust.counterVerify(open.contactId).done
-      await settle()
+      await meetDevices(x, y, settle)
     }
     await meet(A, B)
     await meet(A, C)

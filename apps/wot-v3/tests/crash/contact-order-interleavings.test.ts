@@ -35,7 +35,7 @@ import type * as AppDbModule from '../../src/adapters/rltp/app-db'
 import type { AppDb, AppWrite } from '../../src/adapters/rltp/app-db'
 import type { IntentRecord } from '../../src/adapters/rltp/journal'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, meet, memoryCarrier } from '../../harness/loopback'
 
 // ── seeded randomness ───────────────────────────────────────────────────────
 
@@ -277,13 +277,8 @@ async function world(run: Run, signal: AbortSignal) {
       if (run.activity === before) return
     }
   }
-  const shown = await B.port.trust.showCard().done
-  if (!shown.ok) throw Error('show')
-  await A.port.trust.confirmCard(shown.value.qr).done
-  await settle()
-  const bId = value(B.port.stores.contacts)[0]!.id
-  await B.port.trust.counterVerify(bId).done
-  await settle()
+  // the two meet in the connection ceremony (the back-code: the in-memory carrier carries no ceremony)
+  const { aAtB: bId } = await meet(A, B, settle)
   return { B, clock, bId, pending }
 }
 

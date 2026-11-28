@@ -9,6 +9,7 @@ import { fakeDevice, fakeEntropy, fakeIdentityPlatform, virtualClock } from '../
 import { webDatabases } from '../../src/platform/web/identity'
 import { createRltpPort } from '../../src/adapters/rltp'
 import { LOOPBACK_PHRASES, loopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 import { secret } from '../../src/port'
 
 const T0 = Date.parse('2026-10-20T10:00:00Z')
@@ -17,7 +18,7 @@ it.each([true])('R8-3: delete verification checks the real adapter database; sha
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const idb = new IDBFactory(), device = fakeDevice()
   const identity = fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(900) })
-  const A = createRltpPort({ ceremony: 'card',
+  const A = createRltpPort({ 
     identity: sharedInventory ? { ...identity, databases: webDatabases(idb) } : identity,
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })
@@ -35,7 +36,7 @@ it.each([true])('R8-3: delete verification checks the real adapter database; sha
     expect((await A.runtime.setup.initHolder(ns)).ok).toBe(true)
     expect((await A.runtime.setup.activate(ns)).ok).toBe(true)
     carrier.setOnline('A', false)
-    const card = await B.port.trust.showCard().done
+    const card = await showOlderCardOn(B)
     if (!card.ok) throw Error('show')
     expect((await A.trust.confirmCard(card.value.qr).done).ok).toBe(true)
     for (let i = 0; i < 12; i++) { await carrier.settled(); await A.session()?.idle() }

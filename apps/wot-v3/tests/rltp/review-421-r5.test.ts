@@ -7,6 +7,7 @@ import type { ContactId, Conversation, ConversationItem, Loadable, MessageItem, 
 import { secret } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
+import { showOlderCardOn } from '../../harness/older-card'
 
 const T0 = Date.parse('2026-10-15T13:30:00-07:00')
 const DAY = 86_400_000
@@ -35,7 +36,7 @@ async function world() {
 
 /** the whole ceremony through the port; both mutual */
 async function meet(w: Awaited<ReturnType<typeof world>>) {
-  const shown = await w.B.port.trust.showCard().done
+  const shown = await showOlderCardOn(w.B)
   if (!shown.ok) throw new Error('show')
   const scanned = await w.A.port.trust.confirmCard(shown.value.qr).done
   if (!scanned.ok) throw new Error('scan')
@@ -83,7 +84,7 @@ it('R5: terminal failed message must not be resubmitted from durable outbox', as
 })
 it('R5: failed refusal completion and unknown write recover without another unlock', async()=>{
  const w=await world();w.carrier.setOnline('B',false)
- const shown=await w.B.port.trust.showCard().done;if(!shown.ok)throw Error('show')
+ const shown=await showOlderCardOn(w.B);if(!shown.ok)throw Error('show')
  const scan=await w.A.port.trust.confirmCard(shown.value.qr).done;if(!scan.ok)throw Error('scan')
  const aId=scan.value.contactId as ContactId
  const orig=IDBDatabase.prototype.transaction;let n=0

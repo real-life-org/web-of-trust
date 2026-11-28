@@ -9,7 +9,7 @@ import { verify, type VerifyEvent, type VerifyState } from '../../src/flows/veri
 const FRESH = 'c-fresh' as ContactId
 const OLD = 'c-old' as ContactId
 const base = { run: 1, card: null, mutual: [] as string[] }
-const bundle = (aliases: Record<string, ContactId>): VerifyEvent => ({ type: 'bundle', verifications: { [OLD]: 'mutual' }, aliases, decisions: [] })
+const bundle = (aliases: Record<string, ContactId>): VerifyEvent => ({ type: 'bundle', verifications: { [OLD]: 'mutual' }, aliases })
 const step = (s: VerifyState, e: VerifyEvent) => verify.transition(s, e).state
 
 describe('the verify flow follows a contact joined into an earlier one', () => {
@@ -34,7 +34,7 @@ describe('the verify flow follows a contact joined into an earlier one', () => {
 
   it('a bundle without aliases (an older port) changes nothing', () => {
     const s = waiting[0] as VerifyState
-    expect(step(s, { type: 'bundle', verifications: { [FRESH]: 'mutual' }, decisions: [] })).toMatchObject({ name: 'success', contactId: FRESH, isNew: true })
+    expect(step(s, { type: 'bundle', verifications: { [FRESH]: 'mutual' } })).toMatchObject({ name: 'success', contactId: FRESH, isNew: true })
   })
 })
 
@@ -55,7 +55,7 @@ describe('the order of the bundle and the scan result does not matter (review 50
   })
 
   it('a bundle while waiting that no longer names the alias does not undo what the machine knows', () => {
-    const waitingFresh = step(step(committing, result(FRESH)), { type: 'bundle', verifications: { [OLD]: 'outgoing' }, aliases: { [FRESH]: OLD }, decisions: [] })
+    const waitingFresh = step(step(committing, result(FRESH)), { type: 'bundle', verifications: { [OLD]: 'outgoing' }, aliases: { [FRESH]: OLD } })
     expect(waitingFresh).toMatchObject({ name: 'waiting', contactId: FRESH })
     expect(step(waitingFresh, bundle({ [FRESH]: OLD }))).toMatchObject({ name: 'success', contactId: OLD })
   })
@@ -74,7 +74,7 @@ describe('the bundle snapshot survives every transition (review 509, #511)', () 
 
   it('a plain transition (no effect) keeps the snapshot as well', () => {
     const waiting = { ...base, name: 'waiting', contactId: FRESH, name2: 'Noah', waitLong: false } as unknown as VerifyState
-    const s1 = step(waiting, { type: 'bundle', verifications: {}, aliases: { [FRESH]: OLD }, decisions: [] })
+    const s1 = step(waiting, { type: 'bundle', verifications: {}, aliases: { [FRESH]: OLD } })
     const s2 = step(s1, { type: 'result', id: 'ver.wait', run: 1, result: { ok: true } } as unknown as VerifyEvent)
     expect(s2).toMatchObject({ name: 'waiting', waitLong: true, aliases: { [FRESH]: OLD } })
   })

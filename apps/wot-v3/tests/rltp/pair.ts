@@ -1,5 +1,7 @@
 // Two real holders (A, B) on a memory carrier with encrypted fake IndexedDB, for the custody tests
-// (Delivery 0.83 RLTP-DEL-6120 to 6135, lib 0.6.0). A can be shut down and reopened, with a fresh
+// (Delivery 0.83 RLTP-DEL-6120 to 6135, lib 0.6.0). They meet in encounter-scan: one shows the card of
+// an earlier version of the app, the other scans it with the current one (the relationship such a
+// meeting left stays carried). A can be shut down and reopened, with a fresh
 // host for a process end. `store` reads A's holder state read-only (codec 3).
 import { IDBFactory } from 'fake-indexeddb'
 import { rltpHolderHost } from '../../src/adapters/rltp/host'
@@ -12,6 +14,7 @@ import { createSealer } from '../../src/adapters/rltp/sealed'
 import { decodeCardLink } from '../../src/adapters/rltp/card-link'
 import type { HolderHandle } from '../../src/adapters/identity/host'
 import type { IntentRecord } from '../../src/adapters/rltp/journal'
+import { showOlderCard } from '../../harness/older-card'
 
 export const T0 = Date.parse('2026-10-20T10:00:00Z')
 export const DAY = 86_400_000
@@ -28,7 +31,7 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
   const keysB = { rootIkm: new Uint8Array(64).fill(51), dek: new Uint8Array(32).fill(52) }
   const life = new Set<(s: 'active' | 'background') => void>()
   let seed = 800
-  const make = (transport: Transport) => rltpHolderHost({ ceremony: 'card',
+  const make = (transport: Transport) => rltpHolderHost({ 
     idb, clock, entropy: fakeEntropy(seed++), transport,
     writer: { acquire: async () => () => {} },
     publish: () => {}, emit: () => {}, onCurrent: () => {},
@@ -88,15 +91,15 @@ export async function pair(wrap: (t: Transport) => Transport = (t) => t, wrapB: 
       A.activate?.(ah)
       await settle()
     },
-    /** A scans B's card: A's bundle goes to B */
+    /** A scans B's card (an earlier version's, harness/older-card.ts): A's bundle goes to B */
     async scan() {
-      const r = await B.current()!.intent<{ qr: string }>('showCard', '', 'show', {}).done
+      const r = await showOlderCard(B.current()!)
       if (!r.ok) throw Error('show')
       return A.current()!.intent('confirmCard', '', 'scan', { card: decodeCardLink(r.value.qr), role: 'displayed' }).done
     },
-    /** B scans A's card: B's bundle goes to A, A acknowledges it */
+    /** B scans A's card (an earlier version's): B's bundle goes to A, A acknowledges it */
     async scanned() {
-      const card = await A.current()!.intent<{ qr: string }>('showCard', '', 'show', {}).done
+      const card = await showOlderCard(A.current()!)
       if (!card.ok) throw Error('show')
       return B.current()!.intent('confirmCard', '', 'scan', { card: decodeCardLink(card.value.qr), role: 'displayed' }).done
     },
