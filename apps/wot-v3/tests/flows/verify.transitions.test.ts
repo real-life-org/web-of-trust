@@ -813,6 +813,47 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
     fb.send({ type: 'accept' })
     await fb.until('counterPending')
   }, 60_000)
+
+  it('review of #562: a counter-step refused because the request ended leaves the question: the shower gets a fresh code, the scanner the code screen', async () => {
+    for (const code of ['decision-expired', 'decision-gone'] as const) {
+      const refused = () => ({ ok: false, error: { kind: 'refused', code } }) as Result<unknown>
+      // the shower: confirmIncoming
+      {
+        const { devices, until } = await mediatorWorld()
+        const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+        const port = { ...B.port, trust: { ...B.port.trust, counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(refused() as never) }) } } as AppPort
+        const fb = flow(B, port)
+        const first = (await fb.until('ready')).card?.qr
+        expect((await A.port.trust.confirmCard(first ?? '').done).ok).toBe(true)
+        await until(() => fb.state().name === 'confirmIncoming', 'the takeover')
+        fb.send({ type: 'accept' })
+        await fb.until('ready')
+        expect(fb.rows(), code).toContain('confirmIncoming.result.expired')
+        expect(fb.state().card?.qr).not.toBe(first)
+      }
+      // the scanner of a sent card: confirmationRequired
+      {
+        const { carrier, devices } = await world()
+        const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+        carrier.setOnline('Al', false)
+        const shown = await B.port.trust.showCard().done
+        if (!shown.ok) throw new Error('show')
+        const scanned = await A.port.trust.confirmCard(shown.value.qr).done
+        if (!scanned.ok) throw new Error('scan')
+        const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
+        if (!sent.ok) throw new Error('sent')
+        const fb = flow(B, { ...B.port, trust: { ...B.port.trust, counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(refused() as never) }) } } as AppPort)
+        await fb.until('ready')
+        fb.scanner.source = () => sent.value.qr
+        fb.send({ type: 'scan' })
+        await fb.until('confirmationRequired')
+        fb.send({ type: 'accept' })
+        await fb.until('ready')
+        expect(fb.rows(), code).toContain('confirmationRequired.result.expired')
+        expect(fb.state()).toMatchObject({ name: 'ready', hint: 'nothing-open' })
+      }
+    }
+  }, 120_000)
 })
 
 

@@ -271,17 +271,19 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('capturing.result.again.met', 'result ver.capture', 'ready{hint: nothing-open}', 'free', '–', { guard: 'already captured, known contact, nothing open, no counter-step offered yet' }),
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
   row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal; a store in error is the error'),
-  row('capturing.back', 'back', 'ready', 'free', 'the capture goes on in the core; its result is in the conversation', { guard: 'always: the way out while the result or a store is awaited' }),
+  row('capturing.back', 'back', 'ready | showing', 'free', 'the capture goes on in the core; its result is in the conversation', { guard: 'always: the way out while the result or a store is awaited; with a valid card ready (ver.expire), without one a fresh card (ver.show)', effects: ['ver.expire | ver.show'] }),
   row('confirmationRequired.accept', 'accept', 'confirmationRequired{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
   row('confirmationRequired.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmationRequired.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay'),
   row('confirmationRequired.result.failed', 'result ver.counter', 'confirmationRequired', 'free', 'the decision stays open'),
+  row('confirmationRequired.result.expired', 'result ver.counter', 'ready{hint: nothing-open} | showing', 'free', '–', { guard: 'refused because the request ended or is gone (decision-expired, decision-gone): nothing is open to answer', effects: ['ver.expire | ver.show'] }),
   row('confirmationRequired.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation (E4: no decline here)'),
   row('confirmationRequired.leave', 'leave', 'exit(chat)', 'free', 'the decision stays open in the conversation'),
   row('confirmIncoming.accept', 'accept', 'confirmIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
   row('confirmIncoming.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmIncoming.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay', { guard: 'not mutual yet' }),
   row('confirmIncoming.result.failed', 'result ver.counter', 'confirmIncoming{failed}', 'free', 'the decision stays open'),
+  row('confirmIncoming.result.expired', 'result ver.counter', 'showing', 'free', '–', { guard: 'refused because the request ended or is gone (decision-expired, decision-gone): a fresh card', effects: ['ver.show'] }),
   row('confirmIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation'),
   row('confirmIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the decision is no longer open (decided on another device or in the conversation)', effects: ['ver.show'] }),
   row('ready.bundle.proposed', 'bundle', 'connectIncoming{card: null}', 'free', 'the decision stays open in the list', { guard: 'an open proposal answers the shown code: one code, one person' }),
@@ -371,6 +373,8 @@ const toReady = (s: S, row: string, hint: ReadyHint | null = null): Out =>
   s.card ? emit(s, { name: 'ready', hint }, row, (r) => [{ id: 'ver.expire', run: r, at: s.card?.expiresAt ?? 0 }]) : show(s, row)
 
 const SCAN_ERRORS: readonly string[] = ['card-invalid', 'card-self', 'already-scanned', 'code-expired', 'code-used']
+/** a counter-step refused because its request is over: nothing is open to answer any more */
+const requestEnded = (code: string | undefined): boolean => code === 'decision-expired' || code === 'decision-gone'
 const scanCode = (code: string | undefined): ScanErrorCode => (code && SCAN_ERRORS.includes(code) ? (code as ScanErrorCode) : 'failed')
 
 /** the contact an id stands for now, as the machine knows it from the last bundle: itself, or the
@@ -559,6 +563,7 @@ function step(s: S, e: E): Out {
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
+        if (!e.result.ok && requestEnded(e.result.code)) return toReady(s, 'confirmationRequired.result.expired', 'nothing-open')
         if (!e.result.ok) return goto(s, { ...pick(s), busy: false }, 'confirmationRequired.result.failed')
         if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmationRequired.result.ok')
@@ -570,6 +575,7 @@ function step(s: S, e: E): Out {
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
+        if (!e.result.ok && requestEnded(e.result.code)) return show(s, 'confirmIncoming.result.expired')
         if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')
         if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmIncoming.result.ok')

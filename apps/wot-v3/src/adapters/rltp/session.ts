@@ -1489,12 +1489,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
-      if (rec.createdAt + manualLimitMs < when()) {
-        const log = (await app.readAll()).log
-        await app.write(expireWrites(rec, log))
-        await sync().catch(() => undefined)
-        return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
-      }
+      // past the limit, too: the attempt asks the library's journal first and takes a committed result
+      // over with its writes; only an act it does not know expires (settleAtLimit, as the recovery)
       return execute<T>(rec, spec)
     })().finally(() => inflight.delete(key))
     const handle = { actId, done }
@@ -1516,12 +1512,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-      if (rec.createdAt + manualLimitMs < when()) {
-        const log = (await app.readAll()).log
-        await app.write(expireWrites(rec, log))
-        await sync().catch(() => undefined)
-        return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
-      }
+      // past the limit, too: the attempt asks the library's journal first and takes a committed result
+      // over with its writes; only an act it does not know expires (settleAtLimit, as the recovery)
       return execute<T>(rec, spec)
     })().finally(() => inflight.delete(key))
     const handle = { actId, done }
@@ -1717,7 +1709,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const challenge = (card.challenge ?? null) as { value?: unknown; issuedAt?: unknown } | null
     const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
     const self = !sent && typeof challenge?.value === 'string' && Object.hasOwn(encounters.own, challenge.value)
-    if (!sent && !self && typeof challenge?.issuedAt === 'string' && Date.parse(challenge.issuedAt) + CHALLENGE_MAX_AGE < now()) {
+    // the session's time: a card shown as expired stays so after the clock went back
+    if (!sent && !self && typeof challenge?.issuedAt === 'string' && Date.parse(challenge.issuedAt) + CHALLENGE_MAX_AGE < when()) {
       return { ok: false, error: { kind: 'refused', code: 'code-expired' } }
     }
     return { ok: true, value: { role: sent ? 'sent' : 'displayed', name: typeof card.name === 'string' ? card.name : null, knownContact: null, self } }
