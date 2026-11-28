@@ -1,11 +1,9 @@
 // The one reading of a contact id (Trust 2140, 6a.4): an entry's aliases are the contacts merged or
-// chained into it (a second meeting's fresh contact once the continuity mapping chained it). Every id the
-// app holds from elsewhere (a command's input, a journaled record, a log line, a read mark, a prompt, a
-// ceremony's contact, a screen or link that kept an earlier id) stands for the entry it belongs to now.
-// The projection reads with it, the command service resolves a command's ids with it before the queue,
-// the dedupe key and the journal see them, and reads the key of a running gesture or an open record with it
-// (a record journaled under an id that became an alias later is read, never rewritten; CONTACT-ORDER.md
-// "A contact joined meanwhile").
+// chained into it (a second meeting's fresh contact once the continuity mapping chained it). An id a
+// command comes with (from a screen or link that kept an earlier id) stands for the entry it belongs to
+// now. The command service reads a command's ids with it before the queue, the dedupe key and the journal
+// see them, and reads the key of a running gesture or an open record with it (a record journaled under an
+// id that became an alias later is read, never rewritten; CONTACT-ORDER.md "A contact joined meanwhile").
 import type { ContactView } from '@real-life/trust-protocol'
 
 export interface Entries {

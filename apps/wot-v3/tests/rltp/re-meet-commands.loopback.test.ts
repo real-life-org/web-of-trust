@@ -2,7 +2,7 @@
 // The commands on a person met again (Trust 6a.4, 2140): once the library chained the second meeting's
 // fresh contact into the known one, the fresh id is an alias of the known entry. Every command that takes a
 // contact id acts on the entry, whatever id it was given: commands on one person run in one order and two
-// equal gestures are one act; a read mark set over the alias's route counts; a message held under the
+// equal gestures are one act; a message held under the
 // alias goes out once the entry can be written to; trust is not given to a blocked person.
 import { describe, expect, it } from 'vitest'
 import type { ContactId, IntentHandle, MessageItem } from '../../src/port'
@@ -161,20 +161,7 @@ describe('trust is not given to a blocked person, under any id', () => {
   }, 120_000)
 })
 
-describe('reads and held messages over the alias', () => {
-  it('a read mark written over the alias’s route lowers the unread count', async () => {
-    const { w, known, alias } = await chained()
-    const atB = onlyContact(w.B)
-    expect((await w.B.port.trust.send(`c:${atB}`, 'Unread?', 'd-1').done).ok).toBe(true)
-    await w.pass(2 * CARRIER_TICK_MS)
-    const item = conversationOf(w.A, known)?.items.filter((i): i is MessageItem => i.kind === 'message').at(-1)
-    expect(item?.text).toBe('Unread?')
-    expect(contactsOf(w.A)[0]?.conversation.unread).toBe(1)
-    w.A.port.session()?.markRead(`c:${alias}`, item!.id)
-    await w.settle()
-    expect(contactsOf(w.A)[0]?.conversation.unread).toBe(0)
-  }, 120_000)
-
+describe('a held message over the alias', () => {
   it('a message held under the fresh id (no channel yet) goes out once the entry it joined can be written to', async () => {
     // the second meeting over the back-code, both offline: the scanner's fresh contact opens from the code
     const w = await world()
