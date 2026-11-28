@@ -10,24 +10,33 @@ import { verifyExecutor } from '../../src/hooks/verify'
 const KNOWN = 'c-known' as ContactId
 const FRESH = 'c-fresh' as ContactId
 
-describe('the same card read again is no meeting (review of #571)', () => {
+describe('a card read again is no meeting (review of #571)', () => {
   const capturing = { name: 'capturing', run: 7, card: null, mutual: [], preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as unknown as VerifyState
   const bundle = { type: 'bundle', verifications: { [KNOWN]: 'mutual' }, aliases: { [FRESH]: KNOWN }, decisions: [] } as never
-  const result = { type: 'result', id: 'ver.capture', run: 7, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: FRESH }, contactId: FRESH, follow: 'mutual', decision: null } } } as never
+  const result = (follow: string, decision: string | null = null) =>
+    ({ type: 'result', id: 'ver.capture', run: 7, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: FRESH }, contactId: FRESH, follow, decision } } }) as never
 
   it('its stored contact is an alias of a known one, the bundle first: the known contact, neither new nor recognized', () => {
-    const end = verifyTransition(verifyTransition(capturing, bundle).state, result).state
+    const end = verifyTransition(verifyTransition(capturing, bundle).state, result('mutual')).state
     expect(end).toMatchObject({ name: 'success', contactId: KNOWN, isNew: false, recognized: false })
   })
 
   it('the result first, then a bundle: still neither new nor recognized', () => {
-    const first = verifyTransition(capturing, result).state
+    const first = verifyTransition(capturing, result('mutual')).state
     expect(first).toMatchObject({ name: 'success', isNew: false, recognized: false })
     expect(verifyTransition(first, bundle).state).toMatchObject({ name: 'success', contactId: KNOWN, isNew: false, recognized: false })
   })
+
+  for (const [follow, decision] of [['confirm', 'p1'], ['counter', null], ['counter-pending', null]] as const) {
+    it(`over the detour (${follow}): the mutual bundle ends in a success that is not recognized`, () => {
+      const asked = verifyTransition(capturing, result(follow, decision)).state
+      expect(asked.name).toBe(follow === 'counter-pending' ? 'counterPending' : 'confirmationRequired')
+      expect(verifyTransition(asked, bundle).state).toMatchObject({ name: 'success', contactId: KNOWN, recognized: false })
+    })
+  }
 })
 
-describe('the request of a card read again (review of #571)', () => {
+describe('the request of a card read again is found as on main (review of #571, round 2)', () => {
   const ready = <T,>(value: T): Loadable<T> => ({ status: 'ready', value }) as Loadable<T>
   const store = <T,>(value: T) => ({ get: () => ready(value), subscribe: () => () => undefined })
   /** a port whose capture answers "already captured" for the fresh contact, an alias of the known one */
@@ -46,11 +55,7 @@ describe('the request of a card read again (review of #571)', () => {
     return r.value as { follow: string; decision: string | null; contactId: string }
   }
 
-  it('one open request of the person: it is the card’s, by its id', async () => {
-    expect(await capture(port([{ id: 'p1', contactId: KNOWN }]))).toMatchObject({ follow: 'confirm', decision: 'p1' })
-  })
-
-  it('two open requests of the person: none is chosen, the counter-step runs under the card’s own contact', async () => {
-    expect(await capture(port([{ id: 'p1', contactId: KNOWN }, { id: 'p2', contactId: KNOWN }]))).toMatchObject({ follow: 'counter', decision: null, contactId: FRESH })
+  it('an open request of the person is not taken for the card’s (it may be another meeting’s): the counter-step under the card’s own contact', async () => {
+    expect(await capture(port([{ id: 'pA', contactId: KNOWN }]))).toMatchObject({ follow: 'counter', decision: null, contactId: FRESH })
   })
 })

@@ -152,11 +152,18 @@ export function localDay(at: number, timeZone: string): string {
 /** running intents per target, for in-flight availability */
 function runningTargets(intents: readonly IntentRecord[]): Set<string> {
   const s = new Set<string>()
+  for (const r of intents) if (r.state === 'journaled' || r.state === 'running') s.add(`${r.command}|${r.target}`)
+  return s
+}
+
+/** the requests a running counter-step answers: the one it names, else the encounter requests of the
+ *  contact it was taken for, by that contact's id as the request names it (not read as an entry: a request
+ *  is a meeting's, the library names its contact) */
+function answering(intents: readonly IntentRecord[]): Set<string> {
+  const s = new Set<string>()
   for (const r of intents) {
-    if (r.state !== 'journaled' && r.state !== 'running') continue
-    s.add(`${r.command}|${r.target}`)
-    // a counter-step answers one request where it names it, else the contact's encounter request
-    if (r.command === 'counterVerify') s.add(typeof r.input?.promptId === 'string' ? `answers|${r.input.promptId}` : `counters|${r.target}`)
+    if ((r.state !== 'journaled' && r.state !== 'running') || r.command !== 'counterVerify') continue
+    s.add(typeof r.input?.promptId === 'string' ? `prompt|${r.input.promptId}` : `contact|${r.target}`)
   }
   return s
 }
@@ -174,7 +181,7 @@ function answeredCard(contact: ContactView | undefined, displayed: DisplayedCard
   return null
 }
 
-function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards, connections: readonly SharedConnectView[], now: number): Decision | null {
+function decisionOf(p: PromptView, running: Set<string>, answered: Set<string>, contacts: ReadonlyMap<string, ContactView>, displayed: DisplayedCards, connections: readonly SharedConnectView[], now: number): Decision | null {
   const base = {
     id: p.id as DecisionId,
     openedAt: p.openedAt,
@@ -182,7 +189,7 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     // in flight: its own answer, or a counter-step that names it, or (an encounter request) the contact's
     // counter-step without a request. Another request of the person stays open
     state:
-      running.has(`decide|${p.id}`) || running.has(`answers|${p.id}`) || (p.kind === 'encounter-confirm' && p.contactId !== undefined && running.has(`counters|c:${p.contactId}`))
+      running.has(`decide|${p.id}`) || answered.has(`prompt|${p.id}`) || (p.kind === 'encounter-confirm' && p.contactId !== undefined && answered.has(`contact|c:${p.contactId}`))
         ? ('in-flight' as const)
         : ('open' as const),
   }
@@ -423,7 +430,6 @@ function byEntry(raw: ProjectionInput, entry: Entries): ProjectionInput {
     reads,
     lines: raw.lines.map(line),
     intents: raw.intents.map(intent),
-    prompts: raw.prompts.map((p) => (p.contactId !== undefined && entry(p.contactId) !== p.contactId ? { ...p, contactId: entry(p.contactId) } : p)),
   }
 }
 
@@ -443,10 +449,11 @@ export function project(raw0: ProjectionInput): ReadModels {
   const relOf = (l: LogLine): string => filed?.get(l.id) ?? l.key
   const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => namedByCeremony(shownProfile(c, raw.shown[c.id]), raw.connections ?? [])) }
   const running = runningTargets(input.intents)
+  const answered = answering(raw0.intents)
   const decisions: Decision[] = []
   const byId = new Map(input.contacts.map((c) => [c.id, c] as const))
   for (const p of input.prompts) {
-    const d = decisionOf(p, running, byId, input.displayed, input.connections ?? [], input.now)
+    const d = decisionOf(p, running, answered, byId, input.displayed, input.connections ?? [], input.now)
     if (d) decisions.push(d)
   }
   const decisionById = new Map<string, Decision>(decisions.map((d) => [d.id, d]))
@@ -532,17 +539,15 @@ export function project(raw0: ProjectionInput): ReadModels {
 
   const contactDetails = new Map<string, ContactDetail>()
   const connections = input.connections ?? []
-  // the ends of the connection ceremonies per person: of the ceremony that opened a contact, read by the
-  // entry that contact stands for now (one pass over the ceremonies)
-  const endsOf = new Map<string, number[]>()
+  // the end of the connection ceremony that opened a contact, by that contact's own id (an entry's by the
+  // ceremony it names, a joined contact's by the ceremony that names it): one pass over each
   const ceremonyById = new Map(connections.map((v) => [v.id, v] as const))
-  const end = (id: string, at: number | null | undefined) => {
-    if (typeof at === 'number') endsOf.set(id, [...(endsOf.get(id) ?? []), at])
+  const endOf = new Map<string, number>()
+  for (const v of connections) if (v.contactId !== null && v.closedAt !== null && entry(v.contactId) !== v.contactId) endOf.set(v.contactId, v.closedAt)
+  for (const c of input.contacts) {
+    const at = c.sharedConnect ? ceremonyById.get(c.sharedConnect.enactmentId)?.closedAt : undefined
+    if (typeof at === 'number') endOf.set(c.id, at)
   }
-  // of a contact joined into another: the ceremony names it
-  for (const v of connections) if (v.contactId !== null && entry(v.contactId) !== v.contactId) end(entry(v.contactId), v.closedAt)
-  // of the entry itself: the ceremony its contact names
-  for (const c of input.contacts) if (c.sharedConnect) end(c.id, ceremonyById.get(c.sharedConnect.enactmentId)?.closedAt)
   const contacts: ContactListItem[] = input.contacts.map((c) => {
     const key: ConversationKey = `c:${c.id}`
     // a contact from a connection ceremony over a link, not in person: its class is 'link' (no trust)
@@ -585,13 +590,18 @@ export function project(raw0: ProjectionInput): ReadModels {
       unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
     }
-    // the meetings of the person: the encounter records of the entry and of every contact joined into it,
-    // and the ends of the connection ceremonies that opened it or a contact joined into it (a ceremony has
-    // no encounter record). The first meeting stays the first; the last is the newest
-    const met = [c.id, ...c.aliases].map((id) => input.encounters.met[id]).filter((m) => m !== undefined)
-    const ends = endsOf.get(c.id) ?? []
-    const firsts = [...met.map((m) => m.metAt), ...ends]
-    const lasts = [...met.map((m) => m.lastMetAt), ...ends]
+    // the meetings of the person: of the entry and of every contact joined into it, each by its encounter
+    // record, else by the end of the ceremony that opened it (a ceremony has no encounter record). The
+    // first meeting stays the first; the last is the newest
+    const firsts: number[] = []
+    const lasts: number[] = []
+    for (const id of [c.id, ...c.aliases]) {
+      const m = input.encounters.met[id]
+      const first = m ? m.metAt : endOf.get(id)
+      const last = m ? m.lastMetAt : endOf.get(id)
+      if (first !== undefined) firsts.push(first)
+      if (last !== undefined) lasts.push(last)
+    }
     const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
     contactDetails.set(c.id, {
       ...summary,

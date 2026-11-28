@@ -74,18 +74,6 @@ describe('rltp projection: an alias reads as its entry', () => {
     expect(m.reportable.get('bea2')).toBe(m.reportable.get('bea'))
   })
 
-  it('a decision that names the alias names the entry', () => {
-    const prompts = [
-      { id: 'p-1', kind: 'encounter-confirm', contactId: 'bea2', openedAt: T, expiresAt: T + 60_000 },
-      { id: 'p-2', kind: 'group-invite', contactId: 'bea2', groupName: 'Garten', openedAt: T, expiresAt: T + 60_000 },
-    ] as never
-    const m = project(input([], { prompts }))
-    expect(m.decisions.map((d) => [d.id, d.kind === 'encounter-confirm' ? d.contactId : d.kind === 'group-invite' ? d.inviterId : null])).toEqual([
-      ['p-1', 'bea'],
-      ['p-2', 'bea'],
-    ])
-  })
-
   it('an act running on the alias runs on the entry: trust in flight, a message being sent in its conversation', () => {
     const intents = [
       { actId: 'a1', command: 'giveTrust', target: 'c:bea2', policy: 'replay', state: 'running', input: { contactId: 'bea2' }, when: T, createdAt: T, attempts: 1 },
@@ -109,6 +97,25 @@ describe('rltp projection: an alias reads as its entry', () => {
       ['p-1', 'in-flight'],
       ['p-2', 'open'],
     ])
+  })
+
+  it('a counter-step without a request, taken for one contact: the requests of another contact stay open (the id is not read as the person)', () => {
+    const prompts = [
+      { id: 'p-a', kind: 'encounter-confirm', contactId: 'bea', openedAt: T, expiresAt: T + 60_000 },
+      { id: 'p-b', kind: 'encounter-confirm', contactId: 'bea2', openedAt: T, expiresAt: T + 60_000 },
+    ] as never
+    const intents = [{ actId: 'a1', command: 'counterVerify', target: 'c:bea2', policy: 'replay', state: 'running', input: { contactId: 'bea2' }, when: T, createdAt: T, attempts: 1 }] as never
+    const m = project(input([], { prompts, intents }))
+    expect(m.decisions.map((d) => [d.id, d.state])).toEqual([
+      ['p-a', 'open'],
+      ['p-b', 'in-flight'],
+    ])
+  })
+
+  it('an encounter record goes before the ceremony’s end, per contact, as without an alias', () => {
+    const encounters = { ...EMPTY_ENCOUNTERS, met: { bea: { metAt: T - 9000, lastMetAt: T - 8000 } } }
+    const m = project(input([], { encounters, contacts: [contact('bea', { sharedConnect: { enactmentId: 'e-1', channel: 'scan', theirChannel: 'displayed', met: true } })], connections: [connection('e-1', 'bea')] }))
+    expect([m.contactDetails.get('bea')?.metAt, m.contactDetails.get('bea')?.lastMetAt]).toEqual([T - 9000, T - 8000])
   })
 
   it('a quote stays within its relationship: a mid held only under the other contact gives none', () => {

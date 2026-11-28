@@ -33,12 +33,8 @@ function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending
   if (decisions.status === 'error') return { error: decisions.error }
   if (c.status === 'error') return { error: c.error }
   if (decisions.status === 'loading' || c.status === 'loading') return 'pending'
-  // the requests name the person (the entry the card's contact stands for now, a joined one included).
-  // One open request is the card's; with several (two meetings, their contacts joined) the person does not
-  // say which, and the card's own contact id does: the counter-step under it, which the library reads
-  const person = c.value?.id ?? contactId
-  const open = decisions.value.filter((d) => d.kind === 'encounter-confirm' && d.contactId === person)
-  if (open.length === 1 && open[0]) return { follow: 'confirm', decision: open[0].id }
+  const open = decisions.value.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId)
+  if (open) return { follow: 'confirm', decision: open.id }
   const v = c.value?.verification
   if (v === 'mutual') return { follow: 'mutual', decision: null }
   if (v === 'outgoing') return { follow: 'counter-pending', decision: null }
