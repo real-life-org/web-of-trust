@@ -270,7 +270,8 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('capturing.result.again.mutual', 'result ver.capture', 'success{isNew: false}', 'free', '–', { guard: 'already captured, mutual' }),
   row('capturing.result.again.met', 'result ver.capture', 'ready{hint: nothing-open}', 'free', '–', { guard: 'already captured, known contact, nothing open, no counter-step offered yet' }),
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
-  row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal'),
+  row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal; a store in error is the error'),
+  row('capturing.back', 'back', 'ready', 'free', 'the capture goes on in the core; its result is in the conversation', { guard: 'always: the way out while the result or a store is awaited' }),
   row('confirmationRequired.accept', 'accept', 'confirmationRequired{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
   row('confirmationRequired.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmationRequired.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay'),
@@ -321,7 +322,8 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connectIncoming.decline', 'decline', 'connectIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.decide'] }),
   row('connectIncoming.result.accepted', 'result ver.decide', 'connecting{shower}', 'free', 'the ceremony completes from the core’s snapshot', { guard: 'accepted, not complete yet' }),
   row('connectIncoming.result.declined', 'result ver.decide', 'showing', 'free', '–', { guard: 'declined: the code is spent', effects: ['ver.show'] }),
-  row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'accepted past the code’s end: nothing is issued, a fresh code', effects: ['ver.show'] }),
+  row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'answered past the code’s end or the request’s (code-expired, decision-expired): nothing is issued, a fresh code', effects: ['ver.show'] }),
+  row('connectIncoming.result.gone', 'result ver.decide', 'success | showing', 'free', '–', { guard: 'refused, and the last bundle holds the proposal no longer (decided elsewhere, ended): as connectIncoming.bundle.gone', effects: ['ver.show'] }),
   row('connectIncoming.result.failed', 'result ver.decide', 'connectIncoming{failed}', 'free', 'the decision stays open'),
   row('connectIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list'),
   row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open, the ceremony neither complete nor holding a contact (that is the success, connecting.bundle.complete)', effects: ['ver.show'] }),
@@ -533,6 +535,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'fallback.leave')
       return stay(s)
     case 'capturing':
+      if (e.type === 'back') return toReady(s, 'capturing.back')
       if (isResult(e, s.run, 'ver.capture')) {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'capturing.result.refused')
         const v = e.result.value as { outcome: EncounterOutcome; follow: CaptureFollow; decision: DecisionId | null; contactId: ContactId | null }
@@ -577,7 +580,9 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'connectIncoming': {
       if (isResult(e, s.run, 'ver.decide')) {
-        if (!e.result.ok && e.result.code === 'code-expired') return show(s, 'connectIncoming.result.expired')
+        if (!e.result.ok && (e.result.code === 'code-expired' || e.result.code === 'decision-expired')) return show(s, 'connectIncoming.result.expired')
+        // the request is no longer open by the last bundle (it came while the act ran): as when it goes then
+        if (!e.result.ok && s.connections?.[s.connection]?.decision !== s.decision) return proposalGone(s, 'connectIncoming.result.gone')
         if (!e.result.ok) return goto(s, { ...pickConnect(s), busy: null, failed: true }, 'connectIncoming.result.failed')
         if (s.busy === 'decline') return show(s, 'connectIncoming.result.declined')
         return connectionEnd(s, s.connection, s.name2) ?? goto(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'shower', waitLong: false }, 'connectIncoming.result.accepted')
@@ -588,13 +593,7 @@ function step(s: S, e: E): Out {
         return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice }])
       }
       if (e.type === 'notNow' || e.type === 'back' || e.type === 'leave') return exit(s, 'back', null, 'connectIncoming.notNow', s.decision)
-      if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) {
-        // decided elsewhere: a contact of this ceremony (accepted, open or complete) is the success; anything
-        // else leaves a spent code behind
-        const c = s.connections?.[s.connection]
-        if (c && (c.status === 'complete' || (c.status === 'open' && c.contactId))) return connectionEnd(s, s.connection, s.name2) ?? stay(s)
-        return show(s, 'connectIncoming.bundle.gone')
-      }
+      if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) return proposalGone(s, 'connectIncoming.bundle.gone')
       return stay(s)
     }
     case 'connecting': {
@@ -703,6 +702,14 @@ function step(s: S, e: E): Out {
     case 'exit':
       return stay(s)
   }
+}
+
+/** the proposal asked is no longer open: decided elsewhere, a contact of this ceremony (accepted, open or
+ *  complete) is the success; anything else leaves a spent code behind */
+function proposalGone(s: Extract<S, { name: 'connectIncoming' }>, row: string): Out {
+  const c = s.connections?.[s.connection]
+  if (c && (c.status === 'complete' || (c.status === 'open' && c.contactId))) return connectionEnd(s, s.connection, s.name2) ?? stay(s)
+  return show(s, row)
 }
 
 const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, name2: s.name2 })

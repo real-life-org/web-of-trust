@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { ACTS, type ActSpec } from '../../src/adapters/rltp/acts'
 import type { CommandName, Connection, Loadable, ReadStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
-import { LOOPBACK_PHRASES, loopbackDevice, type LoopbackDevice } from '../../harness/loopback'
+import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
 
 const value = <T>(s: ReadStore<Loadable<T>>): T => {
@@ -139,5 +139,95 @@ describe('the end of a link at the act (#556)', () => {
     expect(again).toMatchObject({ ok: true, value: { kind: 'proposed' } })
     await w.settle()
     expect(ceremonies(w.A)).toMatchObject([{ role: 'responder', status: 'open' }])
+  })
+})
+
+describe('the deadline at the act, review of #562', () => {
+  it('a clock set back after a later act does not open the code again: the first acceptance is refused', async () => {
+    const w = await world()
+    const shown = await w.B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    await w.settle()
+    expect((await w.A.port.trust.confirmCard(shown.value.qr, 'camera').done).ok).toBe(true)
+    await w.settle()
+    const [d] = value(w.B.port.stores.decisions)
+    const [atB] = ceremonies(w.B)
+    // past the code's end B commits another act, then the device clock goes back two seconds
+    w.clock.set(atB!.validUntil + 1000)
+    expect((await w.B.port.trust.setProfile({ name: 'Bea B.' }).done).ok).toBe(true)
+    await w.settle()
+    w.clock.rewind(2000)
+    expect(w.clock.now()).toBeLessThanOrEqual(atB!.validUntil)
+    const r = await w.B.port.trust.decide(d!.id, 'accept').done
+    expect(r).toEqual({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+    await w.settle()
+    expect(ceremonies(w.B)).toMatchObject([{ status: 'open', accepted: false }])
+  })
+
+  it('a proposal committed whose answer was lost, the profile changed, confirmed again after the end: the committed proposal, no conflict', async () => {
+    const w = await world()
+    const shown = await w.B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    await w.settle()
+    const spec = ACTS.confirmCard!
+    original.set('confirmCard', spec)
+    let lost = true
+    ACTS.confirmCard = {
+      ...spec,
+      run: async (...a) => {
+        const r = await spec.run(...a)
+        if (!lost) return r
+        lost = false
+        throw new Error('the process died after the commit')
+      },
+    }
+    const first = w.A.port.trust.confirmCard(shown.value.qr, 'camera')
+    expect((await first.done).ok).toBe(false)
+    expect((await w.A.port.trust.setProfile({ name: 'Albert' }).done).ok).toBe(true)
+    w.clock.set(shown.value.expiresAt + 1000)
+    const again = await w.A.port.intents.confirmIntent(first.actId).done
+    expect(again).toMatchObject({ ok: true, value: { kind: 'proposed' } })
+    await w.settle()
+    expect(ceremonies(w.A)).toMatchObject([{ role: 'responder', status: 'open' }])
+  })
+
+  it('the link\'s end is the fragment\'s `_exp`, as the library reads it: an `_exp` in the query does not extend it', async () => {
+    const w = await world()
+    const shown = await w.B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    await w.settle()
+    const [base, fragment] = shown.value.qr.split('#') as [string, string]
+    const link = `${base}?x=1&_exp=${Math.floor(shown.value.expiresAt / 1000) + 300}#${fragment}`
+    delay('confirmCard', () => w.clock.set(shown.value.expiresAt))
+    const r = await w.A.port.trust.confirmCard(link, 'camera').done
+    expect(r).toEqual({ ok: false, error: { kind: 'refused', code: 'code-expired' } })
+    await w.settle()
+    expect(ceremonies(w.A)).toEqual([])
+  })
+
+  it('the counter-step on an encounter request run after the request\'s end is refused: decision-expired', async () => {
+    const carrier = memoryCarrier()
+    const clock = virtualClock(Date.parse('2026-11-20T10:00:00Z'), 'UTC')
+    const A = await loopbackDevice({ carrier, clock, id: 'A', name: 'A', words: LOOPBACK_PHRASES[0], seed: 71 })
+    const B = await loopbackDevice({ carrier, clock, id: 'B', name: 'B', words: LOOPBACK_PHRASES[1], seed: 72 })
+    const settle = async () => {
+      for (let i = 0; i < 5; i++) {
+        await carrier.settled()
+        await A.port.session()?.idle()
+        await B.port.session()?.idle()
+      }
+    }
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    await A.port.trust.confirmCard(shown.value.qr).done
+    await settle()
+    const [d] = value(B.port.stores.decisions)
+    if (!d || d.kind !== 'encounter-confirm' || d.expiresAt === null) throw new Error('an encounter request with an end')
+    const end = d.expiresAt
+    const spec = ACTS.counterVerify!
+    original.set('counterVerify', spec)
+    ACTS.counterVerify = { ...spec, run: (h, i, o, ctx) => spec.run(h, i, o, { ...ctx, now: () => end }) }
+    const r = await B.port.trust.counterVerify(d.contactId).done
+    expect(r).toEqual({ ok: false, error: { kind: 'refused', code: 'decision-expired' } })
   })
 })

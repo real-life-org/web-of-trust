@@ -96,6 +96,19 @@ describe('the follow-up of a card captured before (#556)', () => {
     })
   }
 
+  it('a store in error decides nothing: the capture answers the store\'s error, never "nothing open" (review of #562)', async () => {
+    for (const broken of ['decisions', 'contact'] as const) {
+      const x = world()
+      const pending = verifyExecutor(x.port, x.platform, { current: null })({ id: 'ver.capture', run: 1, raw: 'CARD' })
+      x.capture()
+      const error = { status: 'error', error: { kind: 'infra', code: 'storage', retryable: true } }
+      x.decisions.set(broken === 'decisions' ? error : ready([], REV))
+      x.contact.set(broken === 'contact' ? error : ready(WORLDS[1].contact, REV))
+      expect(await pending, broken).toEqual({ ok: false, code: 'storage' })
+      expect(x.decisions.live() + x.contact.live()).toBe(0)
+    }
+  })
+
   it('the effect whose lifetime ended while a store loads answers cancelled and holds no subscription', async () => {
     const x = world()
     const life = new AbortController()

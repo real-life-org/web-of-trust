@@ -338,7 +338,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     appSeq++
     const next = project({
       revision: revision(deps.generation, Number(lastViews.commitSeq), appSeq),
-      now: now(),
+      // the session's time: a code or a request past its end is not offered again after the clock went back
+      now: when(),
       timeZone: clock.timeZone(),
       anchorShort: deps.anchorShort,
       contacts: lastViews.contacts,
@@ -1359,7 +1360,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
     legacyCard: deps.ceremony === 'card',
     foreground: () => foreground,
-    now,
+    // the session's time: a deadline read by an act never runs back with the device clock
+    now: when,
   }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {
@@ -1645,7 +1647,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const back = await backCodeOf(raw).catch((e: unknown) => ({ error: toAppError(e) }))
     if (back && 'error' in back) return { ok: false, error: back.error }
     if (back) return { ok: true, value: { role: 'back', name: typeof back.propose.payload?.reason === 'string' ? back.propose.payload.reason : null, knownContact: null, self: false } }
-    const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
+    const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(when() / 1000)).catch(() => null)
     if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
     let mine: SharedConnectView | undefined
     try {
@@ -1692,7 +1694,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const connection = back.id as ConnectionId
       const before = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
       if (!before) return { ok: true, value: { kind: 'no-match' } }
-      if (now() > proposalValidUntil(before.link)) return { ok: true, value: { kind: 'expired', connection } }
+      if (when() > proposalValidUntil(before.link)) return { ok: true, value: { kind: 'expired', connection } }
       const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
       if (!r.ok) return { ok: false, error: mapActError(r.code) }
       schedule(r.nextDueAt)

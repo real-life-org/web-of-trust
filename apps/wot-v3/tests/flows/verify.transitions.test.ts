@@ -1549,6 +1549,60 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     }
   })
 
+  it('review of #562: an answer refused because its request ended shows a fresh code, also when the bundle without the proposal came while it ran', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 161, ceremony: 'shared-connect' })
+    // [the refusal, whether the bundle without the proposal arrives while the act runs, the row]
+    const cases = [
+      ['decision-expired', false, 'connectIncoming.result.expired'],
+      ['decision-expired', true, 'connectIncoming.result.expired'],
+      ['decision-gone', true, 'connectIncoming.result.gone'],
+      ['not-possible-yet', true, 'connectIncoming.result.gone'],
+    ] as const
+    for (const [code, goneMeanwhile, rowId] of cases) {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const decisions = writableStore(A.port.stores.decisions.get())
+      let answer: (r: Result<unknown>) => void = () => undefined
+      const port: AppPort = { ...A.port, stores: { ...A.port.stores, decisions, connections }, trust: { ...A.port.trust, decide: () => ({ actId: 'x' as never, done: new Promise((r) => (answer = r)) as never }) } }
+      const fb = flow(A, port)
+      const shownCard = (await fb.until('ready')).card?.card ?? null
+      connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 2, 1)))
+      decisions.set(ready([{ id: 'd1' as DecisionId, kind: 'connect-confirm', connection: 'e1' as ConnectionId, name: 'Bea', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(99, 99, 99)))
+      await fb.until('connectIncoming')
+      fb.send({ type: 'accept' })
+      expect(fb.state()).toMatchObject({ name: 'connectIncoming', busy: 'accept' })
+      if (goneMeanwhile) {
+        connections.set(ready([conn({ status: 'open', role: 'inviter', decision: null })], revision(1, 3, 1)))
+        decisions.set(ready([] as never, revision(99, 100, 99)))
+        await new Promise((r) => setTimeout(r, 0))
+        expect(fb.state()).toMatchObject({ name: 'connectIncoming', busy: 'accept' })
+      }
+      answer({ ok: false, error: { kind: 'refused', code } as never })
+      await fb.until('ready')
+      expect(fb.rows(), `${code} ${goneMeanwhile}`).toContain(rowId)
+      expect(fb.rows()).not.toContain('connectIncoming.result.failed')
+    }
+  })
+
+  it('review of #562: a capture waiting for its result offers back: the flow returns to the code', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 171 })
+    const port: AppPort = {
+      ...A.port,
+      trust: {
+        ...A.port.trust,
+        previewCard: async () => ({ ok: true, value: { role: 'sent', name: 'Bea', knownContact: null, self: false } }),
+        confirmCard: () => ({ actId: 'x' as never, done: new Promise(() => undefined) as never }),
+      },
+    }
+    const fa = flow(A, port)
+    await fa.until('ready')
+    fa.scanner.source = () => 'SENT-CARD'
+    fa.send({ type: 'scan' })
+    await fa.until('capturing')
+    fa.send({ type: 'back' })
+    await fa.until('ready')
+    expect(fa.rows()).toContain('capturing.back')
+  })
+
   it('no "keep waiting" on the back-code of a link without a relay: no carrier brings an acceptance there', async () => {
     const { devices } = await world(2)
     const [A] = devices as [LoopbackDevice]

@@ -3,7 +3,7 @@
 // from the published stores (contacts, decisions): success only ever comes from there.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { AppPort, ContactId, EncounterOutcome, Result, Verification } from '../port'
+import type { AppError, AppPort, ContactId, EncounterOutcome, Result, Verification } from '../port'
 import type { Platform } from '../platform/ports'
 import type { EffectResult } from '../flows/machine'
 import { verify, verifyStart, type CaptureFollow, type VerifyEffect, type VerifyEvent, type VerifyState } from '../flows/verify'
@@ -61,21 +61,23 @@ export const verifyLifetime = (s: VerifyState): string => `${s.run}:${s.name}:${
 type Follow = { readonly follow: CaptureFollow; readonly decision: string | null }
 
 /** Where an already-captured card leaves the encounter, read from the published stores (N9); `pending`
- *  while the decisions or the contact's store has not published yet (loading): a store that loads is no
- *  answer, neither "nothing open" nor "not known" */
-function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending' {
+ *  while the decisions or the contact's store has not published yet (loading), the store's error while one
+ *  is in error: neither is an answer, neither "nothing open" nor "not known" */
+function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending' | { readonly error: AppError } {
   if (contactId === null) return { follow: 'none', decision: null }
   const decisions = port.stores.decisions.get()
   const c = port.stores.contact(contactId).get()
+  if (decisions.status === 'error') return { error: decisions.error }
+  if (c.status === 'error') return { error: c.error }
   if (decisions.status === 'loading' || c.status === 'loading') return 'pending'
-  const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId) : undefined
+  const open = decisions.value.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId)
   if (open) return { follow: 'confirm', decision: open.id }
-  const v = c.status === 'ready' ? c.value?.verification : undefined
+  const v = c.value?.verification
   if (v === 'mutual') return { follow: 'mutual', decision: null }
   if (v === 'outgoing') return { follow: 'counter-pending', decision: null }
   // declined (or the request is gone): the question comes again before the counter-step, as at the
   // first scan, while the port offers the counter-step
-  if (v === 'incoming' && c.status === 'ready' && c.value?.actions.counterVerify.ok) return { follow: 'counter', decision: null }
+  if (v === 'incoming' && c.value?.actions.counterVerify.ok) return { follow: 'counter', decision: null }
   // a known contact with nothing open and no counter-step offered (met: the other credential has not
   // arrived yet)
   if (v !== undefined) return { follow: 'met', decision: null }
@@ -85,7 +87,7 @@ function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending
 /** `followOf` once both stores published, for an effect whose lifetime is `signal`: while one loads, the
  *  next publication of either is awaited and the follow-up read again; null when the lifetime ended first.
  *  The stores are read and subscribed with no pause between, so no publication goes unseen */
-async function publishedFollow(port: AppPort, contactId: ContactId | null, signal: AbortSignal): Promise<Follow | null> {
+async function publishedFollow(port: AppPort, contactId: ContactId | null, signal: AbortSignal): Promise<Follow | { readonly error: AppError } | null> {
   for (;;) {
     if (signal.aborted) return null
     const f = followOf(port, contactId)
@@ -187,6 +189,8 @@ export function verifyExecutor(
         // the flow decides the follow-up only from stores that published (a loading one is no answer)
         const follow = await publishedFollow(port, contactId, signal)
         if (follow === null) return CANCELLED
+        // a store in error: the error, the flow's error screen (capturing.result.refused)
+        if ('error' in follow) return fromResult({ ok: false, error: follow.error })
         return { ok: true, value: { outcome, contactId, ...follow } }
       }
       case 'ver.sent':
