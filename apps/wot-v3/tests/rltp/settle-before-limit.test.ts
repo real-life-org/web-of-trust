@@ -115,3 +115,69 @@ describe('an encounter card shown as expired, the clock set back (review of #562
     expect(value(A.port.stores.contacts)).toEqual([])
   })
 })
+
+describe('a reading check does not raise the session\'s high mark (review of #562, round 3)', () => {
+  /** clock far ahead without a timer, one read, clock back: a fresh act still runs */
+  const farRead = async (read: (w: Awaited<ReturnType<typeof pair>>) => Promise<unknown>, prepare?: (w: Awaited<ReturnType<typeof pair>>) => Promise<void>) => {
+    const w = await pair()
+    await prepare?.(w)
+    w.jump(365 * DAY)
+    await read(w)
+    w.jump(-365 * DAY)
+    return w
+  }
+
+  it('previewing a link', async () => {
+    let qr = ''
+    const w = await farRead(
+      (x) => x.A.port.trust.previewCard(qr),
+      async (x) => {
+        const shown = await x.B.port.trust.showCard().done
+        if (!shown.ok) throw new Error('show')
+        qr = shown.value.qr
+      },
+    )
+    expect(await w.A.port.trust.setProfile({ name: 'Al again' }).done).toEqual({ ok: true, value: undefined })
+  })
+
+  it('reading a back-code whose link ended', async () => {
+    let back = ''
+    const w = await farRead(
+      async (x) => expect(await x.B.port.trust.readBackCode(back)).toMatchObject({ ok: true, value: { kind: 'expired' } }),
+      async (x) => {
+        for (const d of [x.A, x.B]) d.platform.network.set('offline')
+        const shown = await x.B.port.trust.showCard().done
+        if (!shown.ok) throw new Error('show')
+        const p = await x.A.port.trust.confirmCard(shown.value.qr, 'camera').done
+        if (!p.ok || p.value.kind !== 'proposed') throw new Error('propose')
+        const b = await x.A.port.trust.showBackCode(p.value.connection).done
+        if (!b.ok || b.value.kind !== 'shown') throw new Error('back ' + JSON.stringify(b))
+        back = b.value.qr
+      },
+    )
+    expect(await w.B.port.trust.setProfile({ name: 'Bea again' }).done).toEqual({ ok: true, value: undefined })
+  })
+
+  it('previewing an encounter card', async () => {
+    const carrier = memoryCarrier()
+    const { clock, jump } = jumpingClock()
+    const A = await loopbackDevice({ carrier, clock, id: 'A', name: 'A', words: LOOPBACK_PHRASES[0], seed: 93 })
+    const B = await loopbackDevice({ carrier, clock, id: 'B', name: 'B', words: LOOPBACK_PHRASES[1], seed: 94 })
+    const shown = await B.port.trust.showCard().done
+    if (!shown.ok) throw new Error('show')
+    jump(365 * DAY)
+    expect(await A.port.trust.previewCard(shown.value.qr)).toMatchObject({ ok: false })
+    jump(-365 * DAY)
+    expect(await A.port.trust.setProfile({ name: 'A again' }).done).toEqual({ ok: true, value: undefined })
+  })
+})
+
+describe('the same gesture again past the app\'s limit (review of #562, round 3)', () => {
+  it('a profile change committed, its answer lost, made again at 89.5 days: the committed result', async () => {
+    const w = await pair()
+    loseFirstAnswer('setProfile')
+    expect((await w.A.port.trust.setProfile({ name: 'Albert' }).done).ok).toBe(false)
+    w.jump(89.5 * DAY)
+    expect(await w.A.port.trust.setProfile({ name: 'Albert' }).done).toEqual({ ok: true, value: undefined })
+  })
+})

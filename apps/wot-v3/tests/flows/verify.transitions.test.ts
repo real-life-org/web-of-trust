@@ -1624,6 +1624,19 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     }
   })
 
+  it('review of #562: a bundle naming the contact mutual during the capture wins over the capture\'s result', async () => {
+    const { verifyTransition } = await import('../../src/flows/verify')
+    const capturing = { name: 'capturing', run: 3, card: null, mutual: [], preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as never
+    const during = verifyTransition(capturing, { type: 'bundle', verifications: { 'c-bea': 'mutual' }, decisions: [] }).state
+    const out = verifyTransition(during, { type: 'result', id: 'ver.capture', run: 3, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: 'c-bea' }, follow: 'counter-pending', decision: null, contactId: 'c-bea' } } } as never)
+    expect(out).toMatchObject({ state: { name: 'success', contactId: 'c-bea', isNew: false }, row: 'capturing.result.bundle.mutual' })
+    cover.mark(out.row!)
+    // the stores already read mutual, the bundle not delivered yet: the result's own row
+    const first = verifyTransition(capturing, { type: 'result', id: 'ver.capture', run: 3, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: 'c-bea' }, follow: 'mutual', decision: null, contactId: 'c-bea' } } } as never)
+    expect(first).toMatchObject({ state: { name: 'success', isNew: false }, row: 'capturing.result.again.mutual' })
+    cover.mark(first.row!)
+  })
+
   it('review of #562: a capture waiting for its result offers back: the flow returns to the code', async () => {
     const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 171 })
     const port: AppPort = {

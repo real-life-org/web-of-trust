@@ -267,7 +267,8 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('capturing.result.again.confirm', 'result ver.capture', 'confirmationRequired', 'free', 'open decision from prompts()', { guard: 'already captured, decision open' }),
   row('capturing.result.again.counter', 'result ver.capture', 'confirmationRequired{decision: null}', 'free', 'nothing open; the counter-step after the question', { guard: 'already captured, incoming, no open request, counter-step offered' }),
   row('capturing.result.again.pending', 'result ver.capture', 'counterPending', 'free', '–', { guard: 'already captured, own step issued' }),
-  row('capturing.result.again.mutual', 'result ver.capture', 'success{isNew: false}', 'free', '–', { guard: 'already captured, mutual (by the stores, or by the last bundle while the request still read open)' }),
+  row('capturing.result.again.mutual', 'result ver.capture', 'success{isNew: false}', 'free', '–', { guard: 'already captured, mutual' }),
+  row('capturing.result.bundle.mutual', 'result ver.capture', 'success', 'free', '–', { guard: 'any result for a contact the last bundle names mutual (a bundle during the capture is newer than the result): it wins over every other row of the result' }),
   row('capturing.result.again.met', 'result ver.capture', 'ready{hint: nothing-open}', 'free', '–', { guard: 'already captured, known contact, nothing open, no counter-step offered yet' }),
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
   row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal; a store in error is the error'),
@@ -544,11 +545,13 @@ function step(s: S, e: E): Out {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'capturing.result.refused')
         const v = e.result.value as { outcome: EncounterOutcome; follow: CaptureFollow; decision: DecisionId | null; contactId: ContactId | null }
         const name2 = s.preview.name
+        // the newer lage first: a contact the last bundle names mutual is the success, whatever the result
+        // read (a bundle during the capture is newer than the stores the result was read from)
+        const resultContact = v.outcome.kind === 'captured' ? v.outcome.contactId : v.contactId
+        if (resultContact && isMutual(s, resultContact)) return goto(s, { ...succeed(s, resultContact, name2), ...(v.outcome.kind === 'captured' ? {} : { isNew: false }) }, 'capturing.result.bundle.mutual')
         if (v.outcome.kind === 'captured') {
           return goto(s, { name: 'confirmationRequired', contactId: v.outcome.contactId, decision: v.outcome.decision, name2, busy: false }, 'capturing.result.captured')
         }
-        // a contact the last bundle names mutual is the success, whatever the stores said when the result was read
-        if ((v.follow === 'confirm' || v.follow === 'counter') && v.contactId && isMutual(s, v.contactId)) return goto(s, { ...succeed(s, v.contactId, name2), isNew: false }, 'capturing.result.again.mutual')
         if (v.follow === 'confirm' && v.contactId && v.decision) {
           return goto(s, { name: 'confirmationRequired', contactId: v.contactId, decision: v.decision, name2, busy: false }, 'capturing.result.again.confirm')
         }

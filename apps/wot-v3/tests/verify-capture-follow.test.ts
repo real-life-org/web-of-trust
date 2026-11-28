@@ -160,3 +160,40 @@ describe('a capture result for a contact the last bundle names mutual (CodeRabbi
     }
   })
 })
+
+describe('a capture result and a bundle in every order (review of #562, round 3)', () => {
+  it('a bundle that names the contact mutual wins over any later capture result; any other bundle changes nothing', async () => {
+    const { verifyTransition } = await import('../src/flows/verify')
+    type Outcome = { readonly name: string; readonly value: Record<string, unknown>; readonly contact: boolean }
+    const outcomes: Outcome[] = [
+      { name: 'captured', value: { outcome: { kind: 'captured', contactId: CONTACT, decision: DECISION }, follow: 'none', decision: null, contactId: null }, contact: true },
+      ...(['confirm', 'counter', 'counter-pending', 'mutual', 'met'] as const).map((follow) => ({
+        name: `again/${follow}`,
+        value: { outcome: { kind: 'already-captured', contactId: CONTACT }, follow, decision: follow === 'confirm' ? DECISION : null, contactId: CONTACT },
+        contact: true,
+      })),
+      { name: 'again/none', value: { outcome: { kind: 'already-captured', contactId: null }, follow: 'none', decision: null, contactId: null }, contact: false },
+    ]
+    const lagen = {
+      none: { verifications: {}, decisions: [] },
+      open: { verifications: { [CONTACT]: 'incoming' }, decisions: [{ id: DECISION, contactId: CONTACT, card: 'K-other', name: 'Bea' }] },
+      'counter-pending': { verifications: { [CONTACT]: 'outgoing' }, decisions: [] },
+      mutual: { verifications: { [CONTACT]: 'mutual' }, decisions: [] },
+    } as const
+    const capturing = { name: 'capturing', run: 7, card: null, mutual: [], preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as never
+    const result = (o: Outcome) => ({ type: 'result', id: 'ver.capture', run: 7, result: { ok: true, value: o.value } }) as never
+    const bundle = (l: keyof typeof lagen) => ({ type: 'bundle', ...lagen[l] }) as never
+    for (const o of outcomes) {
+      const alone = verifyTransition(capturing, result(o)).state as { name: string }
+      for (const l of Object.keys(lagen) as (keyof typeof lagen)[]) {
+        for (const when of ['before', 'after'] as const) {
+          const s1 = when === 'before' ? verifyTransition(capturing, bundle(l)).state : verifyTransition(capturing, result(o)).state
+          const end = (when === 'before' ? verifyTransition(s1, result(o)) : verifyTransition(s1, bundle(l))).state as { name: string; run: number }
+          const label = `${o.name}, bundle ${l} ${when}`
+          if (l === 'mutual' && o.contact && (when === 'before' || alone.name === 'confirmationRequired' || alone.name === 'counterPending' || alone.name === 'success')) expect(end.name, label).toBe('success')
+          else expect(end.name, label).toBe(alone.name)
+        }
+      }
+    }
+  })
+})
