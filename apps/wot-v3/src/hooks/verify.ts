@@ -188,7 +188,7 @@ export function verifyExecutor(
         const contactId = outcome.kind === 'already-captured' ? outcome.contactId : null
         // the flow decides the follow-up only from stores that published (a loading one is no answer)
         const follow = await publishedFollow(port, contactId, signal)
-        if (follow === null) return CANCELLED
+        if (follow === null) return { ok: false, code: 'cancelled' }
         // a store in error: the error, the flow's error screen (capturing.result.refused)
         if ('error' in follow) return fromResult({ ok: false, error: follow.error })
         return { ok: true, value: { outcome, contactId, ...follow } }
