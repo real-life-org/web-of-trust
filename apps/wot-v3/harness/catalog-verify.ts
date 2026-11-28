@@ -59,7 +59,7 @@ const S: Record<string, VerifyState> = {
   declined: { ...base, name: 'declined', name2: 'Noah Lindqvist', kept: false },
   'declined-kept': { ...base, name: 'declined', name2: 'Noah Lindqvist', kept: true },
   counterPending: { ...base, name: 'counterPending', contactId: noah, name2: 'Noah Lindqvist' },
-  success: { ...base, name: 'success', contactId: noah, name2: 'Noah Lindqvist', isNew: true },
+  success: { ...base, name: 'success', contactId: noah, name2: 'Noah Lindqvist', isNew: true, recognized: false },
 }
 
 export interface VerifyCatalogEntry {

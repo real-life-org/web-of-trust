@@ -302,7 +302,9 @@ export function project(state: WorldState, rev: Revision, timeZone: string): Bun
       lastMetAt: metAt,
       sharedGroups: null,
       sharedContacts: null,
-      actions: ACTIONS,
+      // the sim gives trust (port.ts `giveTrust`): offered as the real adapter offers it, not to a blocked
+      // contact and not twice
+      actions: { ...ACTIONS, giveTrust: summary.blocked ? { ok: false, reason: 'blocked' } : given ? { ok: false, reason: 'already-done' } : { ok: true } },
     })
     return { ...summary, conversation: summaries.get(key) ?? summaryOf(state, key, [], decisionById) }
   })

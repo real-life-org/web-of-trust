@@ -9,7 +9,7 @@ export interface EncounterCache {
   readonly own: Readonly<Record<string, { readonly qr: string; readonly issuedAt: number; readonly expiresAt: number }>>
   /** sent cards per contact until mutual (the optical return path) */
   readonly sent: Readonly<Record<string, { readonly qr: string }>>
-  /** first and last encounter per contact, from encounter.recorded / contact.chained */
+  /** first and last encounter per contact, from encounter.recorded (a contact joined into another keeps its own; the projection reads them through the entry's aliases) */
   readonly met: Readonly<Record<string, { readonly metAt: number; readonly lastMetAt: number }>>
   /** sent card anchor → contact, from own optical captures (a repeated capture reports no contact, N9) */
   readonly capturedBy?: Readonly<Record<string, string>>

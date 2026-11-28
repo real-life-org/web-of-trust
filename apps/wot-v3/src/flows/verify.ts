@@ -123,7 +123,9 @@ export type VerifyState =
   | (Base & { readonly name: 'declined'; readonly name2: string | null; readonly kept: boolean })
   | (Base & { readonly name: 'counterPending'; readonly contactId: ContactId; readonly name2: string | null })
   /** `connection`: the ceremony a success came from while it is still open (a later failure of it is shown) */
-  | (Base & { readonly name: 'success'; readonly contactId: ContactId; readonly name2: string | null; readonly isNew: boolean; readonly connection?: ConnectionId })
+  /** `isNew`: a contact this meeting made (confetti); `recognized`: a second meeting with a person known
+   *  before, its contact joined into the known one (Trust 6a.4). The same card read again is neither */
+  | (Base & { readonly name: 'success'; readonly contactId: ContactId; readonly name2: string | null; readonly isNew: boolean; readonly recognized: boolean; readonly connection?: ConnectionId })
   /** `deferred`: a confirmation answered "not now"; it stays open in the list and the conversation and
    *  does not come back as a sheet in this session (E6) */
   | (Base & { readonly name: 'exit'; readonly to: 'back' | 'chat'; readonly contactId: ContactId | null; readonly recognized: boolean; readonly deferred: DecisionId | null })
@@ -385,14 +387,14 @@ const mutual = (s: S, e: E, contactId: ContactId): boolean => e.type === 'bundle
  *  confetti) */
 const succeed = (s: S, contactId: ContactId, name2: string | null) => {
   const now = current(s, contactId)
-  return { name: 'success' as const, contactId: now, name2, isNew: now === contactId }
+  return { name: 'success' as const, contactId: now, name2, isNew: now === contactId, recognized: now !== contactId }
 }
 /** the success of a connection ceremony: its contact as it stands now; one the library already joined into
  *  a contact known before (`recognized`, a second meeting) is a re-encounter, as `succeed` says for a card.
  *  `connection`: the ceremony while it is still open */
 const connected = (s: S, c: ConnectionState, contactId: ContactId, name2: string | null, connection: ConnectionId | null) => {
   const at = succeed(s, contactId, name2)
-  return { ...at, isNew: at.isNew && !c.recognized, ...(connection ? { connection } : {}) }
+  return { ...at, isNew: at.isNew && !c.recognized, recognized: at.recognized || c.recognized, ...(connection ? { connection } : {}) }
 }
 
 export function verifyStart(): Out {
@@ -557,7 +559,7 @@ function step(s: S, e: E): Out {
           return goto(s, { name: 'confirmationRequired', contactId: v.contactId, decision: null, name2, busy: false }, 'capturing.result.again.counter')
         }
         if (v.follow === 'counter-pending' && v.contactId) return goto(s, { name: 'counterPending', contactId: v.contactId, name2 }, 'capturing.result.again.pending')
-        if (v.follow === 'mutual' && v.contactId) return goto(s, { name: 'success', contactId: v.contactId, name2, isNew: false }, 'capturing.result.again.mutual')
+        if (v.follow === 'mutual' && v.contactId) return goto(s, { name: 'success', contactId: v.contactId, name2, isNew: false, recognized: false }, 'capturing.result.again.mutual')
         if (v.follow === 'met') return toReady(s, 'capturing.result.again.met', 'nothing-open')
         return toReady(s, 'capturing.result.again.none', 'already-captured')
       }
@@ -710,7 +712,7 @@ function step(s: S, e: E): Out {
       // the second meeting of a known person: the library joins its fresh contact into the known one after
       // the ceremony (continuity, Trust 6a.4); the success turns to that contact, re-met, without a dialog
       const now = current(s, s.contactId)
-      if (e.type === 'bundle' && now !== s.contactId) return goto(s, { name: 'success', contactId: now, name2: s.name2, isNew: false, ...(s.connection ? { connection: s.connection } : {}) }, 'success.bundle.joined')
+      if (e.type === 'bundle' && now !== s.contactId) return goto(s, { name: 'success', contactId: now, name2: s.name2, isNew: false, recognized: true, ...(s.connection ? { connection: s.connection } : {}) }, 'success.bundle.joined')
       if (e.type === 'done' || e.type === 'back') return exit(s, 'chat', now, 'success.done')
       return stay(s)
     }

@@ -244,7 +244,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     },
     counterVerify(contactId) {
       return withSession((s) => {
-        const open = s.models()?.decisions.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId)
+        // the decisions name entries (projection): the id given read as its entry too
+        const open = s.models()?.decisions.find((d) => d.kind === 'encounter-confirm' && d.contactId === s.entryOf(contactId))
         const input = open ? { contactId, promptId: open.id } : { contactId }
         return s.intent('counterVerify', `c:${contactId}`, `counterVerify|${contactId}`, input)
       })
@@ -256,7 +257,14 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
         return s.intent('decide', id, `decide|${id}`, { promptId: id, choice, ...(contactId ? { contactId } : {}) })
       })
     },
-    giveTrust: (contactId) => withSession((s) => s.intent('giveTrust', `c:${contactId}`, `giveTrust|${contactId}`, { contactId })),
+    giveTrust: (contactId) =>
+      withSession((s) => {
+        // trust toward a blocked contact stays as it is (the block pauses; paper §7.1): the contact's
+        // availability, read by any of its ids, refuses it; nothing is journaled
+        const giveTrust = s.models()?.contactDetails.get(contactId)?.actions.giveTrust
+        if (giveTrust && !giveTrust.ok && giveTrust.reason === 'blocked') return handle({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
+        return s.intent('giveTrust', `c:${contactId}`, `giveTrust|${contactId}`, { contactId })
+      }),
     withdrawTrust: (contactId) => withSession((s) => s.intent('withdrawTrust', `c:${contactId}`, `withdrawTrust|${contactId}`, { contactId })),
     setPaused: (contactId, paused) => withSession((s) => s.intent('setPaused', `c:${contactId}`, `setPaused|${contactId}|${paused ? 'on' : 'off'}`, { contactId, paused })),
     setClass: (contactId, cls, setting) => withSession((s) => s.intent('setClass', `c:${contactId}`, `setClass|${contactId}|${cls}|${setting}`, { contactId, cls, setting })),

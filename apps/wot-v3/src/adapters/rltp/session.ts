@@ -25,6 +25,7 @@ import { createSharedConnectCarriage, type SharedConnectCarriage } from './share
 import { keysFromRootIkm } from './keys'
 import { answerLogin, type LoginKeys } from './login'
 import { idbHolderStore, type HolderStore } from './store-idb'
+import { entryDedupe, entryIds, entryInput, entryKey, type Entries } from './entries'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
@@ -79,6 +80,8 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** the entry a contact id stands for now (entries.ts): itself, or the entry it was joined into */
+  entryOf(contactId: string): string
   /** the inviter's camera read a back-code (shared-connect without a carrier, lib 0.22.0): the proposal of
    *  the own shown code it answers, as if a carrier had brought it; the confirmation opens */
   readBackCode(raw: string): Promise<Result<BackRead>>
@@ -298,6 +301,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
+  /** the one reading of a contact id (entries.ts), from the last bundle's contacts */
+  let entries: Entries = entryIds([])
   let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; relayed: Record<string, boolean | null>; groups: GroupView[]; pendingJoins: PendingJoinView[]; provenance: Record<string, Record<string, string[]>> } | null = null
   /** whether a messaging identity names a relay, by DID: the library's full resolution, a known answer kept */
   const relayedOf = relayCache()
@@ -408,6 +413,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile, connections, relayed, groups, pendingJoins, provenance }
+      entries = entryIds(contacts)
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
@@ -770,12 +776,22 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   // serial section, entered synchronously when the gesture is taken. The last gesture taken sets the
   // target state; a record left open is completed in the same order, also after the deadline.
   const sections = new Map<string, Promise<unknown>>()
+  /** a contact's target as its entry's (entries.ts): one person, one section and one queue, under any id */
+  const at = (target: string) => entryKey(entries, target)
+  /** two targets of one person, as the entries stand now (a record journaled under an id that became an
+   *  alias since is read so, never rewritten) */
+  const sameTarget = (a: string, b: string) => at(a) === at(b)
+  /** two dedupe keys of one gesture on one person, as the entries stand now */
+  const sameDedupe = (a: string, b: string) => entryDedupe(entries, a) === entryDedupe(entries, b)
   const section = <T>(target: string, fn: () => Promise<T>): Promise<T> => {
-    const p = (sections.get(target) ?? Promise.resolve()).then(fn)
+    const key = at(target)
+    // after the sections of every id of the person: one taken under an id before it became an alias too
+    const before = [...sections].filter(([k]) => sameTarget(k, key)).map(([, t]) => t)
+    const p = Promise.all(before).then(fn)
     const tail = p.catch(() => undefined)
-    sections.set(target, tail)
+    sections.set(key, tail)
     void tail.then(() => {
-      if (sections.get(target) === tail) sections.delete(target)
+      if (sections.get(key) === tail) sections.delete(key)
     })
     return p
   }
@@ -798,10 +814,25 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** a record's place in its contact's queue; a record written before 3.0.4 has no seq and comes first */
   const place = (r: IntentRecord) => r.seq ?? 0
   /** the open ordered records of a contact, in queue order */
-  const openOrdered = (all: Iterable<unknown>, target: string): IntentRecord[] =>
-    ([...all] as IntentRecord[]).filter((r) => r.target === target && ordered(r) && isOpen(r)).sort((a, b) => place(a) - place(b))
-  /** the open records whose order cannot be told: the same place (two without a seq, or a seq written twice) */
-  const undecidable = (open: readonly IntentRecord[]): IntentRecord[] => open.filter((r) => open.some((o) => o !== r && place(o) === place(r)))
+  /** the open ordered records of a person, under any of its ids (entries.ts): each id's queue in its order
+   *  (its seq), the queues of ids that became one person merged by the time their records were taken */
+  const openOrdered = (all: Iterable<unknown>, target: string): IntentRecord[] => {
+    const queues = new Map<string, IntentRecord[]>()
+    for (const r of all as Iterable<IntentRecord>) {
+      if (!sameTarget(r.target, target) || !ordered(r) || !isOpen(r)) continue
+      queues.set(r.target, [...(queues.get(r.target) ?? []), r])
+    }
+    const heads = [...queues.values()].map((q) => q.sort((a, b) => place(a) - place(b)))
+    const out: IntentRecord[] = []
+    while (heads.some((q) => q.length > 0)) {
+      const next = heads.filter((q) => q.length > 0).reduce((a, b) => (b[0]!.createdAt < a[0]!.createdAt ? b : a))
+      out.push(next.shift()!)
+    }
+    return out
+  }
+  /** the open records whose order cannot be told: the same place in one id's queue (two without a seq, or a
+   *  seq written twice) */
+  const undecidable = (open: readonly IntentRecord[]): IntentRecord[] => open.filter((r) => open.some((o) => o !== r && o.target === r.target && place(o) === place(r)))
   /** A journal with open ordered records of one contact whose order cannot be told was not written
    *  under the contract. The records are dropped as invalid and a diagnostic entry without content
    *  records it (CONTACT-ORDER.md "Invalid journal"). */
@@ -833,7 +864,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** failed attempts per contact in this opening since its last finished record: the backoff grows
    *  also where the failure could not be written (review 422 R7-1) */
   const tries = new Map<string, number>()
-  const planOrdered = (target: string) => {
+  const planOrdered = (raw: string) => {
+    const target = at(raw)
     if (stopped || planned.has(target)) return
     const n = (tries.get(target) ?? 0) + 1
     tries.set(target, n)
@@ -898,9 +930,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     try {
       await putIntent({ ...rec, state: 'done', input: null, attempts: rec.attempts + 1, outcome, finishedAt: now() })
       // a finished record resets the contact's backoff and its planned recovery (review 422 R8-2)
-      tries.delete(rec.target)
-      planned.get(rec.target)?.()
-      planned.delete(rec.target)
+      tries.delete(at(rec.target))
+      planned.get(at(rec.target))?.()
+      planned.delete(at(rec.target))
     } catch (e) {
       // the library's state stands; the next attempt finds the act in its journal and finishes
       if (toAppError(e).kind === 'locked') return stillOpen(LOCKED)
@@ -943,8 +975,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // the same gesture at the end of the queue (a failure, a restart): that record and its actId;
       // its act answers from the library's journal, never a second act (§3.4 step 1)
       const last = open.at(-1)
-      const same = last && last.dedupe === dedupe && sameInput(last.input, input) ? last : null
-      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policyFor?.(input) ?? spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq: (last ? place(last) : 0) + 1, attempts: 0 }
+      const same = last && last.dedupe !== undefined && sameDedupe(last.dedupe, dedupe) && sameInput(entryInput(entries, last.input ?? {}), input) ? last : null
+      // behind every open record of the person, whichever id's queue it stands in
+      const seq = Math.max(0, ...open.map(place)) + 1
+      rec = same ?? { actId, command: command as IntentRecord['command'], target, policy: spec.policyFor?.(input) ?? spec.policy, state: 'journaled', dedupe, input: structuredClone(input), when: when(), createdAt: now(), seq, attempts: 0 }
       // replaced whole: every older record this gesture covers; the rest stays ahead in the queue
       const superseded = open.filter((r) => r !== same && covers(lanes, r))
       ahead = open.filter((r) => r !== same && !superseded.includes(r))
@@ -968,10 +1002,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     return (await runOrdered<T>(rec, spec)).result
   }
   const orderedIntent = <T>(spec: ActSpec, command: string, target: string, dedupe: string, input: Readonly<Record<string, unknown>>): IntentHandle<T> => {
-    const last = lastTaken.get(target)
-    if (last?.dedupe === dedupe) {
+    // the last gesture taken for the person, under any of its ids
+    const lastKey = [...lastTaken.keys()].reverse().find((k) => sameTarget(k, target))
+    const last = lastKey === undefined ? undefined : lastTaken.get(lastKey)
+    if (last && sameDedupe(last.dedupe, dedupe)) {
       // the same gesture again with nothing between: it joins; other inputs under the key are refused (R9-3)
-      if (!sameInput(last.input, input)) return { actId: last.handle.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
+      if (!sameInput(entryInput(entries, last.input), input)) return { actId: last.handle.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
       return last.handle as IntentHandle<T>
     }
     const actId = entropy.uuid() as ActId
@@ -986,6 +1022,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (lastTaken.get(target)?.handle === handle) lastTaken.delete(target)
       })
     const handle: IntentHandle<T> = { actId, done, journaled }
+    // the person's last gesture, under the id it was taken with now
+    for (const k of [...lastTaken.keys()]) if (k !== target && sameTarget(k, target)) lastTaken.delete(k)
     lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
     return handle
   }
@@ -994,7 +1032,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  Asked for one record (`retryIntent`, #484), the answer is that record's: its attempt's result,
    *  `unknown-outcome` while it waits behind one that stayed open, `superseded` once it is no longer
    *  open (a newer gesture replaced it meanwhile). */
-  const recoverOrdered = (target: string, asked?: ActId): Promise<Result<unknown>> => {
+  const recoverOrdered = (raw: string, asked?: ActId): Promise<Result<unknown>> => {
+    const target = at(raw)
     if (recovering.has(target)) return Promise.resolve({ ok: false, error: { kind: 'unavailable', reason: 'in-flight' } })
     recovering.add(target)
     return section(target, async (): Promise<Result<unknown>> => {
@@ -1060,7 +1099,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  inputs and as taken, like the gesture itself (a changed text under the key is refused, R10-2) */
   const settle = (rec: IntentRecord, spec: ActSpec) => {
     if (!resumed) return
-    const key = rec.dedupe ?? `retry|${rec.actId}`
+    const key = rec.dedupe !== undefined ? entryDedupe(entries, rec.dedupe) : `retry|${rec.actId}`
     if (inflight.has(key)) return
     const h: IntentHandle<unknown> = {
       actId: rec.actId,
@@ -1372,12 +1411,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
 
   const intent = <T>(
     command: keyof typeof ACTS & string,
-    target: string,
-    dedupe: string,
-    input: Readonly<Record<string, unknown>>,
+    given: string,
+    givenDedupe: string,
+    givenInput: Readonly<Record<string, unknown>>,
     preview?: CardPreview,
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
+    // every contact id of the command read as its entry (entries.ts), before the queue, the dedupe key,
+    // the actId and the journal see it: a command on an alias is one on the person it stands for
+    const target = entryKey(entries, given)
+    const dedupe = entryDedupe(entries, givenDedupe)
+    const input = entryInput(entries, givenInput)
     const spec = ACTS[command as keyof typeof ACTS]
     if (spec?.ordered) return orderedIntent<T>(spec, command, target, dedupe, input)
     const running = inflight.get(dedupe)
@@ -1417,7 +1461,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
-        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
+        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe !== undefined && sameDedupe(r.dedupe, dedupe))
         // a message whose record expired with an unknown outcome is spent: sending again is a new act
         // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
         // new acts under their fixed key (R4-1)
@@ -1426,7 +1470,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]
           // the gesture with other inputs under the same key is refused, never the old inputs sent
-          if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          if (!sameInput(entryInput(entries, open.input ?? {}), input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
           // the same gesture is held by its open record
           taken(true)
           // an automatic release (a held draft) never runs an open record: the command service settles it
@@ -1443,7 +1487,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
           // only the same text to the same contact: other inputs under a used key are refused (R8-3)
-          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || line.contactId !== String(input.contactId))) {
+          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || entries(line.contactId) !== entries(String(input.contactId)))) {
             return { ok: false, error: { kind: 'refused', code: 'superseded' } }
           }
           if (line?.kind === 'message' && line.digest !== null) {
@@ -1511,7 +1555,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // superseded stays as it is
       if (rec && spec?.ordered) return (isOpen(rec) ? recoverOrdered(rec.target, actId) : Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } })) as Promise<Result<T>>
       // a replay of the same record already runs: join it
-      const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
+      const joined = rec?.dedupe ? inflight.get(entryDedupe(entries, rec.dedupe)) : undefined
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       if (rec.createdAt + manualLimitMs < when()) {
@@ -1611,10 +1655,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const sendHeld = (contacts: readonly ContactView[]) => {
     if (stopped) return
     const ready = new Set(contacts.filter((c) => c.canMessage && !c.blocked).map((c) => c.id))
+    const entry = entryIds(contacts)
     void app.readAll().then((snap) => {
       for (const v of snap.log.values()) {
         const l = v as LogLine
-        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
+        // held under an id that is an alias now: the entry it joined decides
+        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(entry(l.contactId)) || l.draftKey === null) continue
         intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) }, undefined, { auto: true })
       }
     })
@@ -1624,13 +1670,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     void queue(async () => {
       if (stopped) return false
       // the line of the item, so the mark uses the conversation's own order (R1-4)
+      // the conversation of an alias is its entry's (entries.ts): the mark is the entry's
+      const own = entryKey(entries, key)
       const line = await app.get<LogLine>('log', upTo)
-      if (!line || line.key !== key) return false
+      if (!line || entryKey(entries, line.key) !== own) return false
       const mark = orderKey(line)
       const reads = (await app.get<ReadMarks>('kv', KV.reads)) ?? {}
-      const cur = reads[key]
+      const cur = reads[own]
       if (cur && compareOrder(cur, mark) >= 0) return false
-      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [key]: mark } }])
+      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [own]: mark } }])
       return true
     })
       .then((changed) => (changed ? sync() : undefined))
@@ -1837,6 +1885,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    entryOf: (contactId: string) => entries(contactId),
     readBackCode,
     answerLogin: (raw, opts) => answerLogin(keys as LoginKeys, raw, { ...opts, now: when() }),
     markRead,

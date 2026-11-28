@@ -5,6 +5,7 @@
 import { useRef, useState } from 'react'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
+import { successOffer } from './success-offer'
 import { useI18n } from '../../i18n'
 import { useContact, useProfile } from '../../hooks'
 import { DialogTitle, Sheet, SheetContent } from '../../ui/primitives'
@@ -13,10 +14,7 @@ import { Confetti, MutualMoment, PrimaryAction, QuietAction, firstName } from '.
 export function MutualSheet({ contactId, name, onOpenChat, onClose }: { contactId: ContactId; name: string; onOpenChat: () => void; onClose: () => void }) {
   const { t, f } = useI18n()
   const profile = useProfile()
-  const contact = useContact(contactId)
-  const given = contact.status === 'ready' && contact.value?.trust.given === true
-  // a contact of another app: no conversation, no trust yet
-  const channel = contact.status !== 'ready' || contact.value?.channel !== false
+  const offer = successOffer(useContact(contactId))
   const [trust, setTrust] = useState(false)
   const content = useRef<HTMLDivElement | null>(null)
   const me = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : t.contacts.unnamed
@@ -37,9 +35,9 @@ export function MutualSheet({ contactId, name, onOpenChat, onClose }: { contactI
           <MutualMoment me={me} name={name} Title={DialogTitle} />
         </div>
         <div className="relative flex flex-col gap-1">
-          {!channel ? (
+          {offer === 'close' ? (
             <PrimaryAction label={t.common.close} onClick={onClose} />
-          ) : given ? (
+          ) : offer === 'chat' ? (
             <PrimaryAction label={t.verify.openChat} onClick={onOpenChat} />
           ) : (
             <>

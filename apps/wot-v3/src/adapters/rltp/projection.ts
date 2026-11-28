@@ -41,6 +41,7 @@ import type {
 import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type OrderKey, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
+import { entryIds, entryKey, type Entries } from './entries'
 
 export interface ProjectionInput {
   readonly revision: Revision
@@ -387,21 +388,11 @@ function namedByCeremony(c: ContactView, connections: readonly SharedConnectView
   return name ? { ...c, displayName: name } : c
 }
 
-/** The ids that stand for one contact (Trust 2140): an entry's aliases are the contacts merged or chained
- *  into it (a second meeting's fresh contact once the continuity mapping chained it, 6a.4). Every id the
- *  app holds from elsewhere (a ceremony's contact, a log line, an intent, a prompt, a screen or link that
- *  kept an earlier id) is read as the entry it stands for now, here and only here. */
-function entryIds(contacts: readonly ContactView[]): ((id: string) => string) & { readonly none: boolean } {
-  const of = new Map<string, string>()
-  for (const c of contacts) for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
-  return Object.assign((id: string) => of.get(id) ?? id, { none: of.size === 0 })
-}
-
 /** The input with every contact id it names read as the entry it stands for now (`entryIds`). */
-function byEntry(raw: ProjectionInput, entry: ReturnType<typeof entryIds>): ProjectionInput {
+function byEntry(raw: ProjectionInput, entry: Entries): ProjectionInput {
   // no alias: nothing to read differently, every record stays the one the app holds
   if (entry.none) return raw
-  const key = <K extends string>(k: K): K => (k.startsWith('c:') ? (`c:${entry(k.slice(2))}` as K) : k)
+  const key = <K extends string>(k: K): K => entryKey(entry, k)
   const line = (l: LogLine): LogLine => {
     if (key(l.key) === l.key && (l.kind !== 'message' || entry(l.contactId) === l.contactId)) return l
     return l.kind === 'message' ? { ...l, key: key(l.key), contactId: entry(l.contactId) } : { ...l, key: key(l.key) }
@@ -570,16 +561,20 @@ export function project(raw0: ProjectionInput): ReadModels {
       unblock: !c.blocked ? NO('already-done') : running.has(`unblock|${key}`) ? NO('in-flight') : OK,
       remove: NO('not-supported'),
     }
-    const met = input.encounters.met[c.id]
-    // a contact of a connection ceremony has no encounter record: the ceremony's end is the meeting
-    const ceremony = c.sharedConnect ? connections.find((v) => v.id === c.sharedConnect?.enactmentId) : undefined
+    // the meetings of the person: the encounter records of the entry and of every contact joined into it,
+    // and the ends of the connection ceremonies that opened it or a contact joined into it (a ceremony has
+    // no encounter record). The first meeting stays the first; the last is the newest
+    const met = [c.id, ...c.aliases].map((id) => input.encounters.met[id]).filter((m) => m !== undefined)
+    const ends = connections.filter((v) => v.status === 'complete' && v.contactId !== null && v.closedAt !== null && entry(v.contactId) === c.id).map((v) => v.closedAt as number)
+    const firsts = [...met.map((m) => m.metAt), ...ends]
+    const lasts = [...met.map((m) => m.lastMetAt), ...ends]
     const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
     contactDetails.set(c.id, {
       ...summary,
       classes: { anchorMapping: cls('anchorMapping'), profile: cls('profile'), star: cls('star'), groupStar: cls('groupStar'), sealedGroupStar: cls('sealedGroupStar') },
       introducedBy: (c.via ?? null) as ContactId | null,
-      metAt: met?.metAt ?? ceremony?.closedAt ?? null,
-      lastMetAt: met?.lastMetAt ?? ceremony?.closedAt ?? null,
+      metAt: firsts.length > 0 ? Math.min(...firsts) : null,
+      lastMetAt: lasts.length > 0 ? Math.max(...lasts) : null,
       // the contact's group star tested against this holder's groups (lib sharedGroups): the contact says
       // it is in them, which member of the group it is the star does not say; nothing of a blocked contact
       sharedGroups: c.blocked || c.sharedGroups === undefined ? null : (c.sharedGroups as readonly string[] as readonly GroupId[]),

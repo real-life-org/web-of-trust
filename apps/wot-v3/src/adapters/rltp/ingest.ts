@@ -104,9 +104,9 @@ export function applyEncounterEvents(
         break
       }
       case 'contact.chained': {
+        // a chaining is no meeting: the meetings are the records of the contacts joined (read through the
+        // entry's aliases, projection) and the ends of their ceremonies
         chained.add(e.contactId)
-        const m = met[e.contactId]
-        met[e.contactId] = { metAt: m?.metAt ?? now, lastMetAt: now }
         break
       }
       default:
