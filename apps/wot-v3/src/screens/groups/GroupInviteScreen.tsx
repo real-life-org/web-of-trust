@@ -54,7 +54,8 @@ export function GroupInviteScreen({ groupId, onBack }: { groupId: GroupId; onBac
           <ul className="m-0 flex list-none flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-card p-0">
             {open.map((c) => {
               const name = c.name ?? t.contacts.unnamed
-              const done = sent.includes(c.id)
+              // invited under this id or under one joined into the contact since (an alias)
+              const done = sent.includes(c.id) || c.aliases.some((a) => sent.includes(a))
               return (
                 <li key={c.id} className="flex min-w-0 items-center gap-3 px-3.5 py-2.5">
                   <PersonAvatar name={name} image={c.image} size={38} />

@@ -1662,13 +1662,15 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     void queue(async () => {
       if (stopped) return false
       // the line of the item, so the mark uses the conversation's own order (R1-4)
+      // the conversation of an alias is its entry's (the projection joins them): the mark is the entry's
+      const own = entryKey(entries, key)
       const line = await app.get<LogLine>('log', upTo)
-      if (!line || line.key !== key) return false
+      if (!line || entryKey(entries, line.key) !== own) return false
       const mark = orderKey(line)
       const reads = (await app.get<ReadMarks>('kv', KV.reads)) ?? {}
-      const cur = reads[key]
+      const cur = reads[own]
       if (cur && compareOrder(cur, mark) >= 0) return false
-      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [key]: mark } }])
+      await app.write([{ store: 'kv', key: KV.reads, value: { ...reads, [own]: mark } }])
       return true
     })
       .then((changed) => (changed ? sync() : undefined))

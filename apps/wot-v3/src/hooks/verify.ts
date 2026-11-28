@@ -224,7 +224,7 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   const connections = Object.fromEntries(
     all.value.map((c) => [
       c.id,
-      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, decision: c.decision },
+      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, decision: c.decision, recognized: c.recognized },
     ]),
   )
   return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections, inReach: carrierInReach(port) }
