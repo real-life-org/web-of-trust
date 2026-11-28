@@ -1394,7 +1394,11 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     void _offer
     return rest
   }
-  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(gesture(a)) === JSON.stringify(gesture(structuredClone(b)))
+  /** two inputs of one gesture: a contact id in them is compared as the entry it stands for now (entries.ts).
+   *  The inputs themselves are journaled and handed to the act as given: the library reads an alias itself,
+   *  and for some acts the id says more than the person (counterVerify: which meeting's record) */
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) =>
+    JSON.stringify(gesture(a === null ? a : entryInput(entries, a))) === JSON.stringify(gesture(structuredClone(entryInput(entries, b))))
 
   const intent = <T>(
     command: keyof typeof ACTS & string,
@@ -1404,19 +1408,19 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     preview?: CardPreview,
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
-    // every contact id of the command read as its entry (entries.ts), before the queue, the dedupe key,
-    // the actId and the journal see it: a command on an alias is one on the person it stands for
+    // the command's target and key read by the entry its contact id stands for (entries.ts), before the
+    // queue, the dedupe and the journal see them: a command on an alias is one on the person it stands for.
+    // Its input stays as given (sameInput)
     const target = entryKey(entries, given)
     const dedupe = entryDedupe(entries, givenDedupe, givenInput.contactId, ACTS[command as keyof typeof ACTS]?.keyContact)
-    const input = entryInput(entries, givenInput)
+    const input = givenInput
     const spec = ACTS[command as keyof typeof ACTS]
     if (spec?.ordered) return orderedIntent<T>(spec, command, target, dedupe, input)
     const runningKey = runningUnder(dedupe)
     const running = runningKey === undefined ? undefined : inflight.get(runningKey)
     if (runningKey !== undefined && running) {
       // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
-      // the stored inputs read as the entries stand now: a send taken under an id that became an alias since
-      if (inflightInput.has(runningKey) && !sameInput(entryInput(entries, inflightInput.get(runningKey) ?? {}), input)) {
+      if (inflightInput.has(runningKey) && !sameInput(inflightInput.get(runningKey) ?? null, input)) {
         return { actId: running.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
       }
       return running as IntentHandle<T>
@@ -1452,10 +1456,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // while its earlier act is being replayed): that record, its actId, never a second act
         if (deps.faults?.hold) await deps.faults.hold('journal:before', actId)
         const journal = [...(await app.readAll()).intents.values()] as IntentRecord[]
-        // both sides read as the entries stand now, in this turn: the gesture's own key and input were read
-        // when it was taken, and a join may have come while it waited here
+        // both sides read as the entries stand now, in this turn: the gesture's own key was read when it was
+        // taken, and a join may have come while it waited here
         const key = keyNow(dedupe, input)
-        const inputNow = entryInput(entries, input)
         const same = journal.filter((r) => r.dedupe !== undefined && keyNow(r.dedupe, r.input) === key)
         // a message whose record expired with an unknown outcome is spent: sending again is a new act
         // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
@@ -1465,7 +1468,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (open) {
           const openSpec = ACTS[open.command as keyof typeof ACTS]
           // the gesture with other inputs under the same key is refused, never the old inputs sent
-          if (!sameInput(entryInput(entries, open.input ?? {}), inputNow)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
+          if (!sameInput(open.input, input)) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
           // the same gesture is held by its open record
           taken(true)
           // an automatic release (a held draft) never runs an open record: the command service settles it

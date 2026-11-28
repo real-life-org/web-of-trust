@@ -244,8 +244,7 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
     },
     counterVerify(contactId) {
       return withSession((s) => {
-        // the decisions name entries (projection): the id given read as its entry too
-        const open = s.models()?.decisions.find((d) => d.kind === 'encounter-confirm' && d.contactId === s.entryOf(contactId))
+        const open = s.models()?.decisions.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId)
         const input = open ? { contactId, promptId: open.id } : { contactId }
         return s.intent('counterVerify', `c:${contactId}`, `counterVerify|${contactId}`, input)
       })

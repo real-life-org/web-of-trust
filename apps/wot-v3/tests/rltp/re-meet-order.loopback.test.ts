@@ -148,6 +148,42 @@ describe('an open record is found by the same gesture also when the join comes w
   }, 120_000)
 })
 
+describe('two confirmation requests of one person, counterVerify with the id the second came with (review of #567)', () => {
+  for (const when of ['before the join', 'after the join'] as const) {
+    it(`${when}: the second request closes, the first stays open`, async () => {
+      const w = await world('B')
+      /** a card of B scanned by A; the request it opens at B */
+      const scan = async (seen: ReadonlySet<string>) => {
+        const shown = await w.B.port.trust.showCard().done
+        if (!shown.ok) throw new Error('show')
+        expect((await w.A.port.trust.confirmCard(shown.value.qr).done).ok).toBe(true)
+        await w.settle()
+        const open = value(w.B.port.stores.decisions).find((d) => d.kind === 'encounter-confirm' && d.state === 'open' && !seen.has(d.id))
+        if (open?.kind !== 'encounter-confirm') throw new Error('no request at B')
+        return { id: open.id, contactId: open.contactId }
+      }
+      const first = await scan(new Set())
+      // a minute apart: the two records are told apart by their time
+      await w.pass(60_000)
+      const second = await scan(new Set([first.id]))
+      expect(second.contactId).not.toBe(first.contactId)
+      const open = () => value(w.B.port.stores.decisions).filter((d) => d.kind === 'encounter-confirm' && d.state === 'open').map((d) => d.id)
+      if (when === 'after the join') {
+        // the chaining: B's two contacts of A are one person, both requests name it, both still open
+        await w.pass(3 * 60_000)
+        expect(contactsOf(w.B)).toHaveLength(1)
+      } else {
+        expect(contactsOf(w.B)).toHaveLength(2)
+      }
+      expect(open().sort()).toEqual([first.id, second.id].sort())
+      // the dialog kept the id the second request came with
+      expect((await w.B.port.trust.counterVerify(second.contactId).done).ok).toBe(true)
+      await w.settle()
+      expect(open()).toEqual([first.id])
+    }, 120_000)
+  }
+})
+
 describe('a draft key that equals an alias stays a draft key (review round 3)', () => {
   it('a draft whose key equals the alias, sent under the alias and held, sent again under the known id: one message at B', async () => {
     const { w, fresh, known, chain } = await beforeChaining()
