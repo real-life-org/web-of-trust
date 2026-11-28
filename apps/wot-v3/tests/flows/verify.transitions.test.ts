@@ -101,6 +101,7 @@ const conn = (over: Partial<Connection> & Pick<Connection, 'status'>): Connectio
   role: 'responder',
   name: 'Bea',
   contactId: null,
+  recognized: false,
   met: true,
   failure: null,
   closedAt: null,
@@ -855,6 +856,36 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     expect(fa.rows().some((r) => r === 'scanner.end.complete' || r === 'scanner.accepted' || r === 'scanner.accepted.contact')).toBe(true)
     expect(fa.rows().some((r) => r === 'scanner.back' || r.startsWith('backing') || r.startsWith('backCode'))).toBe(false)
   }, 60_000)
+
+  it('two that met meet again: the success turns to the known contact once the library joined the new one, re-met, and leaves to it', async () => {
+    const { devices, until, settle, tick } = await mediatorWorld(2, 'shared-connect')
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const meetOnce = async () => {
+      const fa = flow(A)
+      const fb = flow(B)
+      await scanAndPropose(fa, fb)
+      await until(() => fb.state().name === 'connectIncoming', 'the proposal at the shower')
+      fb.send({ type: 'accept' })
+      await settle()
+      await until(() => fa.state().name === 'success' && fb.state().name === 'success', 'success on both')
+      return { fa, fb }
+    }
+    const first = await meetOnce()
+    const knownAtA = (first.fa.state() as Extract<VerifyState, { name: 'success' }>).contactId
+    const knownAtB = (first.fb.state() as Extract<VerifyState, { name: 'success' }>).contactId
+    first.fa.send({ type: 'done' })
+    first.fb.send({ type: 'done' })
+    for (let i = 0; i < 12; i++) await tick()
+    const { fa, fb } = await meetOnce()
+    expect(fa.state()).toMatchObject({ isNew: true })
+    expect(fa.state()).not.toMatchObject({ contactId: knownAtA })
+    // the continuity probe and mapping go back and forth as device time passes (Trust 6a.4)
+    await until(() => fa.rows().includes('success.bundle.joined') && fb.rows().includes('success.bundle.joined'), 'the join on both')
+    expect(fa.state()).toMatchObject({ name: 'success', contactId: knownAtA, name2: 'Bea', isNew: false })
+    expect(fb.state()).toMatchObject({ name: 'success', contactId: knownAtB, name2: 'Al', isNew: false })
+    fa.send({ type: 'done' })
+    expect(fa.state()).toMatchObject({ name: 'exit', to: 'chat', contactId: knownAtA })
+  }, 120_000)
 
   it('the shower declines: a fresh code there, "declined" at the scanner, then its own code again', async () => {
     const { devices, until } = await mediatorWorld(2, 'shared-connect')

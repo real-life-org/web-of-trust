@@ -38,7 +38,7 @@ import type {
   TrustClass,
   VisibilityEntry,
 } from '../../port'
-import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
+import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type OrderKey, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { isOpen, type IntentRecord } from './journal'
 
@@ -115,14 +115,17 @@ export function relayCache(resolve: (did: string) => Promise<boolean | null> = r
 }
 
 /** One ceremony as the port shows it: every fact from the core's view of it (shared-connect-holder.ts
- *  `sharedConnectView`), nothing from a screen */
-export function connectionOf(v: SharedConnectView, relayed: boolean | null): Connection {
+ *  `sharedConnectView`), nothing from a screen. `entry`: the entry an id stands for now (`entryIds`); the
+ *  ceremony's contact is read through it */
+export function connectionOf(v: SharedConnectView, relayed: boolean | null, entry: (id: string) => string = (id) => id): Connection {
+  const contactId = v.contactId === null ? null : entry(v.contactId)
   return {
     id: v.id as ConnectionId,
     role: v.role,
     status: v.status,
     name: v.name,
-    contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    contactId: (contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    recognized: contactId !== null && contactId !== v.contactId,
     met: v.met,
     failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null,
     closedAt: v.closedAt,
@@ -384,7 +387,56 @@ function namedByCeremony(c: ContactView, connections: readonly SharedConnectView
   return name ? { ...c, displayName: name } : c
 }
 
-export function project(raw: ProjectionInput): ReadModels {
+/** The ids that stand for one contact (Trust 2140): an entry's aliases are the contacts merged or chained
+ *  into it (a second meeting's fresh contact once the continuity mapping chained it, 6a.4). Every id the
+ *  app holds from elsewhere (a ceremony's contact, a log line, an intent, a prompt, a screen or link that
+ *  kept an earlier id) is read as the entry it stands for now, here and only here. */
+function entryIds(contacts: readonly ContactView[]): ((id: string) => string) & { readonly none: boolean } {
+  const of = new Map<string, string>()
+  for (const c of contacts) for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
+  return Object.assign((id: string) => of.get(id) ?? id, { none: of.size === 0 })
+}
+
+/** The input with every contact id it names read as the entry it stands for now (`entryIds`). */
+function byEntry(raw: ProjectionInput, entry: ReturnType<typeof entryIds>): ProjectionInput {
+  // no alias: nothing to read differently, every record stays the one the app holds
+  if (entry.none) return raw
+  const key = <K extends string>(k: K): K => (k.startsWith('c:') ? (`c:${entry(k.slice(2))}` as K) : k)
+  const line = (l: LogLine): LogLine => {
+    if (key(l.key) === l.key && (l.kind !== 'message' || entry(l.contactId) === l.contactId)) return l
+    return l.kind === 'message' ? { ...l, key: key(l.key), contactId: entry(l.contactId) } : { ...l, key: key(l.key) }
+  }
+  const intent = (r: IntentRecord): IntentRecord => {
+    const contactId = r.input && typeof r.input.contactId === 'string' ? r.input.contactId : null
+    if (key(r.target) === r.target && (contactId === null || entry(contactId) === contactId)) return r
+    return { ...r, target: key(r.target), ...(r.input && contactId !== null ? { input: { ...r.input, contactId: entry(contactId) } } : {}) }
+  }
+  // a read mark set in an alias's conversation counts for the entry's, the later of two holding
+  const reads: Record<string, OrderKey> = {}
+  for (const [k, mark] of Object.entries(raw.reads)) {
+    const held = reads[key(k)]
+    if (!held || compareOrder(mark, held) > 0) reads[key(k)] = mark
+  }
+  return {
+    ...raw,
+    reads,
+    lines: raw.lines.map(line),
+    intents: raw.intents.map(intent),
+    prompts: raw.prompts.map((p) => (p.contactId !== undefined && entry(p.contactId) !== p.contactId ? { ...p, contactId: entry(p.contactId) } : p)),
+  }
+}
+
+/** The maps read by a contact id, extended by every alias to the entry's value. */
+function withAliases<V>(map: Map<string, V>, contacts: readonly ContactView[], at: (id: string) => string = (id) => id): void {
+  for (const c of contacts) {
+    const v = map.get(at(c.id))
+    if (v !== undefined) for (const a of c.aliases) if (a !== c.id && !map.has(at(a))) map.set(at(a), v)
+  }
+}
+
+export function project(raw0: ProjectionInput): ReadModels {
+  const entry = entryIds(raw0.contacts)
+  const raw = byEntry(raw0, entry)
   const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => namedByCeremony(shownProfile(c, raw.shown[c.id]), raw.connections ?? [])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
@@ -583,6 +635,10 @@ export function project(raw: ProjectionInput): ReadModels {
       ...(r.state === 'needs-confirmation' && r.preview ? { confirm: { kind: 'card' as const, preview: r.preview } } : {}),
     }))
 
+  // an alias reads as its entry: its conversation, its details, its reportable messages
+  withAliases(conversations as Map<string, Conversation>, input.contacts, (id) => `c:${id}`)
+  withAliases(contactDetails, input.contacts)
+  withAliases(reportable as Map<string, readonly MessageItem[]>, input.contacts)
   const groups = groupsOf(input, running, names)
   return {
     revision: input.revision,
@@ -593,7 +649,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: connections.map((v) => connectionOf(v, input.relayed?.[v.id] ?? null)),
+    connections: connections.map((v) => connectionOf(v, input.relayed?.[v.id] ?? null, entry)),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

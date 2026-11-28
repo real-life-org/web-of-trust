@@ -181,8 +181,8 @@ export function PersonConfirmActions({ busy, onConfirm, onNotNow }: { busy?: boo
 
 /** The success moment (handshake UX 2.7, E7; look: artboard 2b): both avatars side by side with a
  *  double arrow and one sentence. The flow's `success` and the shell's sheet; the caller adds the
- *  confetti and the actions. */
-export function MutualMoment({ me, name, Title = 'h2' }: { me: string; name: string; Title?: ElementType }) {
+ *  confetti and the actions. `recognized`: a known person met again, the name and "recognized" instead. */
+export function MutualMoment({ me, name, Title = 'h2', recognized = false }: { me: string; name: string; Title?: ElementType; recognized?: boolean }) {
   const { t, f } = useI18n()
   return (
     <div role="status" className="flex flex-1 flex-col items-center justify-center pb-10 text-center">
@@ -193,7 +193,8 @@ export function MutualMoment({ me, name, Title = 'h2' }: { me: string; name: str
         </svg>
         <PersonAvatar name={name} size={96} />
       </div>
-      <Title className="m-0 mt-8 max-w-[16ch] text-2xl leading-tight font-bold tracking-[-0.01em] text-balance">{f(t.verify.successBody, { name: firstName(name) })}</Title>
+      <Title className="m-0 mt-8 max-w-[16ch] text-2xl leading-tight font-bold tracking-[-0.01em] text-balance">{recognized ? name : f(t.verify.successBody, { name: firstName(name) })}</Title>
+      {recognized ? <p className="m-0 mt-2 text-base text-muted-foreground">{t.verify.recognized}</p> : null}
     </div>
   )
 }

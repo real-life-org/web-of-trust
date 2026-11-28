@@ -2,7 +2,7 @@
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
-import { useBackInFlow, useConnections, useContact, useCopy, useFormat, usePlatform, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useConnections, useContact, useContacts, useCopy, useFormat, usePlatform, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
 import { useI18n } from '../../i18n'
@@ -64,6 +64,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const { clock } = usePlatform()
   const profile = useProfile()
   const connections = useConnections()
+  const contacts = useContacts()
   const copy = useCopy()
   const toast = useToast()
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
@@ -374,13 +375,15 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       )
     }
     case 'success': {
-      // artboard 2b: both avatars, one sentence, confetti (none under reduced motion)
-      const name = nameOf(s.name2)
+      // artboard 2b: both avatars, one sentence, confetti (none under reduced motion). A known person met
+      // again (the contact joined into one known before): the known contact's name, recognized, no confetti
+      const known = !s.isNew && contacts.status === 'ready' ? contacts.value.find((c) => c.id === s.contactId) : undefined
+      const name = known?.name ?? nameOf(s.name2)
       return (
         <div className="relative flex min-h-0 flex-1 flex-col">
           {s.isNew ? <Confetti /> : null}
           {page(
-            <MutualMoment me={myName || t.contacts.unnamed} name={name} />,
+            <MutualMoment me={myName || t.contacts.unnamed} name={name} recognized={!s.isNew} />,
             <SuccessActions contactId={s.contactId} name={name} onChat={() => send({ type: 'done' })} />,
             () => send({ type: 'done' }),
             'close',
