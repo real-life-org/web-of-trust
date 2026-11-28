@@ -162,6 +162,14 @@ describe('a capture result for a contact the last bundle names mutual (CodeRabbi
 })
 
 describe('a capture result and a bundle in every order (review of #562, round 3)', () => {
+  it('a mutual known before the capture started does not overrule the capture\'s newer result (round 4)', async () => {
+    const { verifyTransition } = await import('../src/flows/verify')
+    const ready = verifyTransition({ name: 'ready', run: 2, card: null, mutual: [], hint: null } as never, { type: 'bundle', verifications: { [CONTACT]: 'mutual' }, decisions: [] }).state
+    const capturing = { ...ready, name: 'capturing', run: 3, preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as never
+    const out = verifyTransition(capturing, { type: 'result', id: 'ver.capture', run: 3, result: { ok: true, value: { outcome: { kind: 'already-captured', contactId: CONTACT }, follow: 'counter-pending', decision: null, contactId: CONTACT } } } as never)
+    expect(out.state).toMatchObject({ name: 'counterPending', contactId: CONTACT })
+  })
+
   it('a bundle that names the contact mutual wins over any later capture result; any other bundle changes nothing', async () => {
     const { verifyTransition } = await import('../src/flows/verify')
     type Outcome = { readonly name: string; readonly value: Record<string, unknown>; readonly contact: boolean }
@@ -186,11 +194,20 @@ describe('a capture result and a bundle in every order (review of #562, round 3)
     for (const o of outcomes) {
       const alone = verifyTransition(capturing, result(o)).state as { name: string }
       for (const l of Object.keys(lagen) as (keyof typeof lagen)[]) {
-        for (const when of ['before', 'after'] as const) {
-          const s1 = when === 'before' ? verifyTransition(capturing, bundle(l)).state : verifyTransition(capturing, result(o)).state
-          const end = (when === 'before' ? verifyTransition(s1, result(o)) : verifyTransition(s1, bundle(l))).state as { name: string; run: number }
+        for (const when of ['beforeRun', 'before', 'after'] as const) {
+          let end: { name: string }
+          if (when === 'beforeRun') {
+            // the bundle came before this capture started (the code screen): its lage is carried into the
+            // run, and it is older than the result
+            const ready = verifyTransition({ name: 'ready', run: 6, card: null, mutual: [], hint: null } as never, bundle(l)).state
+            const started = { ...ready, name: 'capturing', run: 7, preview: { role: 'sent', name: 'Bea', knownContact: null, self: false }, origin: 'camera' } as never
+            end = verifyTransition(started, result(o)).state as { name: string }
+          } else {
+            const s1 = when === 'before' ? verifyTransition(capturing, bundle(l)).state : verifyTransition(capturing, result(o)).state
+            end = (when === 'before' ? verifyTransition(s1, result(o)) : verifyTransition(s1, bundle(l))).state as { name: string }
+          }
           const label = `${o.name}, bundle ${l} ${when}`
-          if (l === 'mutual' && o.contact && (when === 'before' || alone.name === 'confirmationRequired' || alone.name === 'counterPending' || alone.name === 'success')) expect(end.name, label).toBe('success')
+          if (l === 'mutual' && o.contact && (when === 'before' || (when === 'after' && (alone.name === 'confirmationRequired' || alone.name === 'counterPending' || alone.name === 'success')))) expect(end.name, label).toBe('success')
           else expect(end.name, label).toBe(alone.name)
         }
       }

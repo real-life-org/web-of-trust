@@ -1637,6 +1637,24 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     cover.mark(first.row!)
   })
 
+  it('review of #562, round 4: only a bundle during the act makes a refusal "gone"; the lage before the act does not', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 181, ceremony: 'shared-connect' })
+    // the connections of the bundle before the act do not name the ceremony's open request
+    const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+    const decisions = writableStore(A.port.stores.decisions.get())
+    let answer: (r: Result<unknown>) => void = () => undefined
+    const port: AppPort = { ...A.port, stores: { ...A.port.stores, decisions, connections }, trust: { ...A.port.trust, decide: () => ({ actId: 'x' as never, done: new Promise((r) => (answer = r)) as never }) } }
+    const fb = flow(A, port)
+    const shownCard = (await fb.until('ready')).card?.card ?? null
+    decisions.set(ready([{ id: 'd1' as DecisionId, kind: 'connect-confirm', connection: 'e1' as ConnectionId, name: 'Bea', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(99, 99, 99)))
+    await fb.until('connectIncoming')
+    fb.send({ type: 'accept' })
+    answer({ ok: false, error: { kind: 'refused', code: 'not-possible-yet' } as never })
+    await expect.poll(() => (fb.state() as { failed?: boolean }).failed).toBe(true)
+    expect(fb.state()).toMatchObject({ name: 'connectIncoming', busy: null, failed: true })
+    expect(fb.rows()).not.toContain('connectIncoming.result.gone')
+  })
+
   it('review of #562: a capture waiting for its result offers back: the flow returns to the code', async () => {
     const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 171 })
     const port: AppPort = {
