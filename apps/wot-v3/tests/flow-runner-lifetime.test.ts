@@ -131,3 +131,121 @@ describe('the flow runner: an effect runs only with the signal of the transition
     expect(list[1]?.signal.aborted).toBe(false)
   })
 })
+
+describe('the flow runner: a transition that ends a lifetime whose abort moves the state on at once', () => {
+  /** a machine whose `next` emits one effect per run, `to:<name>` moves by name within lifetimes of its own */
+  type S2 = { readonly name: string; readonly run: number }
+  type E2 = { readonly type: 'next' } | { readonly type: 'to'; readonly name: string }
+  type F2 = { readonly id: 'wait'; readonly run: number; readonly tag: string }
+  const m2: Machine<S2, E2, F2> = {
+    name: 'nested-test',
+    table: [],
+    sensitive: () => false,
+    transition: (s, e) => {
+      if (e.type === 'next') return { state: { name: s.name, run: s.run + 1 }, effects: [{ id: 'wait', run: s.run + 1, tag: `run${s.run + 1}` }], row: null }
+      if (e.type === 'to') return { state: { name: e.name, run: s.run }, effects: [{ id: 'wait', run: s.run, tag: e.name }], row: null }
+      return { state: s, effects: [], row: null }
+    },
+  }
+  const recorder = () => {
+    const list: { tag: string; signal: AbortSignal }[] = []
+    const onStart: ((f: F2, signal: AbortSignal) => void)[] = []
+    const exec = (f: F2, signal: AbortSignal) => {
+      list.push({ tag: f.tag, signal })
+      for (const h of onStart) h(f, signal)
+      return new Promise<{ ok: boolean }>(() => undefined)
+    }
+    return { list, exec, onStart }
+  }
+  const start = { state: { name: 'a', run: 1 }, effects: [{ id: 'wait' as const, run: 1, tag: 'run1' }], row: null }
+
+  it('the abort of run 1 moves to run 3 at once: only the effects of runs 1 and 3 start', async () => {
+    const { list, exec, onStart } = recorder()
+    const r = createFlowRunner(m2, start, exec)
+    onStart.push((f, signal) => {
+      if (f.tag === 'run1') signal.addEventListener('abort', () => r.send({ type: 'next' }), { once: true })
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    r.send({ type: 'next' })
+    expect(r.get().run).toBe(3)
+    expect(list.map((x) => x.tag)).toEqual(['run1', 'run3'])
+    expect(list.map((x) => x.signal.aborted)).toEqual([true, false])
+    expect(r.lifetimes()).toEqual(['3'])
+  })
+
+  it('over several stages (abort → run 3 → run 4): only runs 1 and 4 start', async () => {
+    const { list, exec, onStart } = recorder()
+    const r = createFlowRunner(m2, start, exec)
+    onStart.push((f, signal) => {
+      if (f.tag === 'run1') signal.addEventListener('abort', () => r.send({ type: 'next' }), { once: true })
+    })
+    r.subscribe(() => {
+      if (r.get().run === 3) r.send({ type: 'next' })
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    r.send({ type: 'next' })
+    expect(r.get().run).toBe(4)
+    expect(list.map((x) => x.tag)).toEqual(['run1', 'run4'])
+    expect(list[1]?.signal.aborted).toBe(false)
+    expect(r.lifetimes()).toEqual(['4'])
+  })
+
+  it('back into a lifetime of the same name (A → B → A, a lifetime of its own): the outer A starts nothing, the inner A with a live signal', async () => {
+    const { list, exec, onStart } = recorder()
+    const r = createFlowRunner(m2, { state: { name: 'start', run: 1 }, effects: [{ id: 'wait', run: 1, tag: 'start' }], row: null }, exec, null, { lifetime: (s) => s.name })
+    let step = 0
+    onStart.push((f, signal) => {
+      if (f.tag === 'start') signal.addEventListener('abort', () => {
+        step++
+        r.send({ type: 'to', name: 'B' })
+        r.send({ type: 'to', name: 'A' })
+      }, { once: true })
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    r.send({ type: 'to', name: 'A' })
+    expect(step).toBe(1)
+    expect(r.get().name).toBe('A')
+    // started: the first, B (ended by the inner A), the inner A; never the outer A
+    expect(list.map((x) => x.tag)).toEqual(['start', 'B', 'A'])
+    expect(list.map((x) => x.signal.aborted)).toEqual([true, true, false])
+    expect(r.lifetimes()).toEqual(['A'])
+  })
+
+  it('dispose from an abort listener: nothing starts, nothing stays', async () => {
+    const { list, exec, onStart } = recorder()
+    const r = createFlowRunner(m2, start, exec)
+    onStart.push((f, signal) => {
+      if (f.tag === 'run1') signal.addEventListener('abort', () => r.dispose(), { once: true })
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    r.send({ type: 'next' })
+    expect(list.map((x) => x.tag)).toEqual(['run1'])
+    expect(r.lifetimes()).toEqual([])
+  })
+
+  it('an abort listener and a subscriber both move on in the same transition: only the last run starts', async () => {
+    const { list, exec, onStart } = recorder()
+    const r = createFlowRunner(m2, start, exec)
+    onStart.push((f, signal) => {
+      if (f.tag === 'run1') signal.addEventListener('abort', () => r.send({ type: 'next' }), { once: true })
+    })
+    r.subscribe(() => {
+      if (r.get().run === 2) r.send({ type: 'next' })
+      if (r.get().run === 3) r.send({ type: 'next' })
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    r.send({ type: 'next' })
+    expect(list.map((x) => x.tag)).toEqual(['run1', `run${r.get().run}`])
+    expect(list[1]?.signal.aborted).toBe(false)
+    expect(r.lifetimes()).toEqual([String(r.get().run)])
+    // a later transition ends only what started
+    r.send({ type: 'next' })
+    expect(list[1]?.signal.aborted).toBe(true)
+    expect(r.lifetimes()).toEqual([String(r.get().run)])
+  })
+})

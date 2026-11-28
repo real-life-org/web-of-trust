@@ -22,6 +22,8 @@ export interface FlowRunner<S, E> {
   send(event: E): void
   /** rows taken so far (transition tests check table coverage with it) */
   readonly rows: readonly string[]
+  /** tests: the lifetimes that hold a signal now (one with effects started or about to start) */
+  lifetimes(): readonly string[]
   /** resolves when no effect is running */
   idle(): Promise<void>
   dispose(): void
@@ -117,14 +119,15 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     if (step.row) rows.push(step.row)
     const key = lifetimeOf(step.state)
     const changed = step.state !== state
+    // bound to this transition before any foreign code runs: an abort listener of an ending lifetime and a
+    // subscriber may both move the state on at once, and the lifetime that then ends must be this one's
+    const signal = step.effects.length > 0 ? signalOf(key) : null
     if (changed) {
       state = step.state
       // effects of a lifetime the new state left end now, before its own effects start
       endOthers(key)
+      notify()
     }
-    // bound to this transition before anyone is told of it (a subscriber may move the state on at once)
-    const signal = step.effects.length > 0 ? signalOf(key) : null
-    if (changed) notify()
     if (signal) run(step.effects, signal)
   }
 
@@ -152,6 +155,7 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
       if (!disposed) apply(event)
     },
     rows,
+    lifetimes: () => [...lifetimes.keys()],
     idle: async () => {
       // effects may chain: wait until a microtask passes with nothing running
       for (;;) {
