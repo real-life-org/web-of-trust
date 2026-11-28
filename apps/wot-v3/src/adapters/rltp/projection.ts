@@ -38,7 +38,7 @@ import type {
   TrustClass,
   VisibilityEntry,
 } from '../../port'
-import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type OrderKey, type ReadMarks } from './app-data'
+import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
 import { proposalValidUntil } from './acts'
 import { isOpen, type IntentRecord } from './journal'
@@ -419,15 +419,8 @@ function byEntry(raw: ProjectionInput, entry: Entries): ProjectionInput {
     if (key(r.target) === r.target && (contactId === null || entry(contactId) === contactId)) return r
     return { ...r, target: key(r.target), ...(r.input && contactId !== null ? { input: { ...r.input, contactId: entry(contactId) } } : {}) }
   }
-  // a read mark set in an alias's conversation counts for the entry's, the later of two holding
-  const reads: Record<string, OrderKey> = {}
-  for (const [k, mark] of Object.entries(raw.reads)) {
-    const held = reads[key(k)]
-    if (!held || compareOrder(mark, held) > 0) reads[key(k)] = mark
-  }
   return {
     ...raw,
-    reads,
     lines: raw.lines.map(line),
     intents: raw.intents.map(intent),
   }
@@ -503,7 +496,10 @@ export function project(raw0: ProjectionInput): ReadModels {
       for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(`${relOf(l)}|${l.mid}`, l)
       reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names, relOf)))
     }
-    const mark = input.reads[key]
+    // a line is read by the mark of the conversation it was filed under: a mark set in one contact's
+    // conversation before it was joined says nothing of the other's lines (session.markRead sets every
+    // key of the person once the joined conversation is read)
+    const markOf = (l: LogLine) => input.reads[relOf(l)]
     const items: ConversationItem[] = []
     let day: string | null = null
     let openDecisions = 0
@@ -523,6 +519,7 @@ export function project(raw0: ProjectionInput): ReadModels {
         ...(l.groupName && !contact?.blocked ? { groupName: l.groupName } : {}), at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
       } else {
         items.push(messageItem(l, byMid, names, relOf))
+        const mark = markOf(l)
         if (l.dir === 'in' && (!mark || compareOrder(orderKey(l), mark) > 0)) unread++
       }
     }

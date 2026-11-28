@@ -58,12 +58,17 @@ describe('rltp projection: an alias reads as its entry', () => {
     expect(own?.items.find((i) => i.kind === 'message' && i.text === 'second')).toMatchObject({ author: { kind: 'contact', contactId: 'bea' } })
   })
 
-  it('a read mark set in the alias’s conversation counts for the entry’s; the later of two marks holds', () => {
+  it('a line is read by the mark of the conversation it was filed under: a mark of one contact says nothing of the other’s lines', () => {
     const lines = [msg('first', T, 'bea'), msg('second', T + 1, 'bea2'), msg('third', T + 2, 'bea')]
     const unread = (reads: ProjectionInput['reads']) => project(input(lines, { reads })).contacts[0]?.conversation.unread
-    expect(unread({ 'c:bea2': { at: T + 1, rank: 2, tie: 'mid-second' } })).toBe(1)
-    expect(unread({ 'c:bea': { at: T, rank: 2, tie: 'mid-first' }, 'c:bea2': { at: T + 2, rank: 2, tie: 'mid-third' } })).toBe(0)
-    expect(unread({ 'c:bea': { at: T + 2, rank: 2, tie: 'mid-third' }, 'c:bea2': { at: T, rank: 2, tie: 'mid-first' } })).toBe(0)
+    // only the alias's conversation was read before the join: the entry's two lines stay unread, also the
+    // earlier one (review of #571: a later mark of the fresh conversation hid an unread message)
+    expect(unread({ 'c:bea2': { at: T + 1, rank: 2, tie: 'mid-second' } })).toBe(2)
+    expect(unread({ 'c:bea2': { at: T + 2, rank: 2, tie: 'mid-third' } })).toBe(2)
+    // only the entry's: the alias's line stays unread
+    expect(unread({ 'c:bea': { at: T + 2, rank: 2, tie: 'mid-third' } })).toBe(1)
+    // the joined conversation read (session.markRead sets every key of the person): nothing unread
+    expect(unread({ 'c:bea': { at: T + 2, rank: 2, tie: 'mid-third' }, 'c:bea2': { at: T + 2, rank: 2, tie: 'mid-third' } })).toBe(0)
   })
 
   it('the details and the reportable messages read by the alias are the entry’s', () => {

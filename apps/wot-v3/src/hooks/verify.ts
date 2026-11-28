@@ -35,12 +35,15 @@ function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending
   if (decisions.status === 'loading' || c.status === 'loading') return 'pending'
   const open = decisions.value.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId)
   if (open) return { follow: 'confirm', decision: open.id }
-  const v = c.value?.verification
+  // the card's own contact as it stands: one joined into another since (the details read are the other's)
+  // has nothing open of its own to follow
+  const own = c.value?.id === contactId ? c.value : null
+  const v = own?.verification
   if (v === 'mutual') return { follow: 'mutual', decision: null }
   if (v === 'outgoing') return { follow: 'counter-pending', decision: null }
   // declined (or the request is gone): the question comes again before the counter-step, as at the
   // first scan, while the port offers the counter-step
-  if (v === 'incoming' && c.value?.actions.counterVerify.ok) return { follow: 'counter', decision: null }
+  if (v === 'incoming' && own?.actions.counterVerify.ok) return { follow: 'counter', decision: null }
   // a known contact with nothing open and no counter-step offered (met: the other credential has not
   // arrived yet)
   if (v !== undefined) return { follow: 'met', decision: null }

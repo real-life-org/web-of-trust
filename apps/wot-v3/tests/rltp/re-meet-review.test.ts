@@ -36,7 +36,7 @@ describe('a card read again is no meeting (review of #571)', () => {
   }
 })
 
-describe('the request of a card read again is found as on main (review of #571, round 2)', () => {
+describe('the follow-up of a card read again whose contact was joined (review of #571, rounds 2 and 3)', () => {
   const ready = <T,>(value: T): Loadable<T> => ({ status: 'ready', value }) as Loadable<T>
   const store = <T,>(value: T) => ({ get: () => ready(value), subscribe: () => () => undefined })
   /** a port whose capture answers "already captured" for the fresh contact, an alias of the known one */
@@ -55,7 +55,7 @@ describe('the request of a card read again is found as on main (review of #571, 
     return r.value as { follow: string; decision: string | null; contactId: string }
   }
 
-  it('an open request of the person is not taken for the card’s (it may be another meeting’s): the counter-step under the card’s own contact', async () => {
-    expect(await capture(port([{ id: 'pA', contactId: KNOWN }]))).toMatchObject({ follow: 'counter', decision: null, contactId: FRESH })
+  it('the card’s contact was joined into another: an open request and the details of that other contact are not the card’s, nothing is offered under it (as on main)', async () => {
+    expect(await capture(port([{ id: 'pA', contactId: KNOWN }]))).toMatchObject({ follow: 'none', decision: null, contactId: FRESH })
   })
 })
