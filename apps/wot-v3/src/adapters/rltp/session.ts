@@ -68,7 +68,8 @@ export interface RltpFaults {
   /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests) */
   probe?: ((point: 'dedupe:before' | 'dedupe:after', actId: string) => Promise<void> | void) | null
   /** hold points of the re-meeting tests: an unordered gesture before its journal is read and written
-   *  (`journal:before`), and any act after its journal, right before its library effect (`act:before`) */
+   *  (`journal:before`), and any act after its journal, right before its library effect (`act:before`).
+   *  Without a hook no turn passes at these points: the order of everything else stays as it is */
   hold?: ((point: 'journal:before' | 'act:before', actId: string) => Promise<void> | void) | null
 }
 
@@ -889,7 +890,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return stillOpen(UNKNOWN)
     }
     const input = rec.input ?? {}
-    await deps.faults?.hold?.('act:before', rec.actId)
+    if (deps.faults?.hold) await deps.faults.hold('act:before', rec.actId)
     let r: ActOutcome
     try {
       r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }, actContext))
@@ -1260,7 +1261,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
-    await deps.faults?.hold?.('act:before', rec.actId)
+    if (deps.faults?.hold) await deps.faults.hold('act:before', rec.actId)
     if (deps.faults?.killAt === 'after-journal') {
       // the process dies here: nothing after this point runs, the record stays `running`
       deps.faults.killAt = null
@@ -1449,7 +1450,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
-        await deps.faults?.hold?.('journal:before', actId)
+        if (deps.faults?.hold) await deps.faults.hold('journal:before', actId)
         const journal = [...(await app.readAll()).intents.values()] as IntentRecord[]
         // both sides read as the entries stand now, in this turn: the gesture's own key and input were read
         // when it was taken, and a join may have come while it waited here

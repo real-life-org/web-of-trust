@@ -146,6 +146,28 @@ describe('a message sent again under the known id while its send under the fresh
   }, 120_000)
 })
 
+describe('nothing is sent to a blocked person, under any id (review: CodeRabbit)', () => {
+  it('blocked: a send under the known id and under the alias is refused and not kept; nothing goes out when the block is lifted', async () => {
+    const { w, known, alias } = await chained()
+    expect((await act(w.A, 'block', known).done).ok).toBe(true)
+    await w.settle()
+    for (const [id, draft] of [[known, 'd-known'], [alias, 'd-alias']] as const) {
+      const h = w.A.port.trust.send(`c:${id}`, 'Not for you', draft)
+      expect(await h.done, id === known ? 'known id' : 'alias').toMatchObject({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
+    }
+    await w.settle()
+    await w.pass(4 * CARRIER_TICK_MS)
+    expect(w.A.port.stores.intents.get().filter((i) => i.command === 'send')).toEqual([])
+    const notForYou = (d: LoopbackDevice, id: ContactId) => (conversationOf(d, id)?.items ?? []).filter((i): i is MessageItem => i.kind === 'message' && i.text === 'Not for you')
+    // nothing is kept either: no held message that would go out once the block is lifted
+    for (const id of [known, alias]) expect(notForYou(w.A, id), id === known ? 'known id' : 'alias').toEqual([])
+    expect((await act(w.A, 'unblock', known).done).ok).toBe(true)
+    await w.settle()
+    await w.pass(4 * CARRIER_TICK_MS)
+    expect(notForYou(w.B, onlyContact(w.B))).toEqual([])
+  }, 120_000)
+})
+
 describe('trust is not given to a blocked person, under any id', () => {
   it('blocked, then met again: giving trust under the known id and under the alias is refused, nothing given', async () => {
     const { w, known, alias } = await chained()
