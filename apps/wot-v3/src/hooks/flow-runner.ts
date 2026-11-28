@@ -88,16 +88,14 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
     }
   }
 
-  const ended = (() => {
-    const c = new AbortController()
-    c.abort()
-    return c.signal
-  })()
-  /** `key`: the lifetime the effects were asked in; one the state already left gets an aborted signal */
-  const run = (effects: readonly F[], key: string = lifetimeOf(state)) => {
+  /** `signal`: the lifetime of the transition that asked for the effects, bound before anyone was told of
+   *  it. An effect starts only while that lifetime runs: one overtaken meanwhile (a subscriber or an earlier
+   *  effect of the same transition moved the state on, the flow ended) does not start at all, and no effect
+   *  ever holds the signal of a later lifetime */
+  const run = (effects: readonly F[], signal: AbortSignal) => {
     for (const effect of effects) {
+      if (disposed || signal.aborted) return
       running++
-      const signal = key === lifetimeOf(state) ? signalOf(key) : ended
       exec(effect, signal)
         // the flows carry passphrases and words: an unexpected throw enters the machine as the fixed
         // code 'bug' without its text, which could hold a revealed value (architecture §5)
@@ -117,13 +115,17 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
   const apply = (event: E | ResultEvent) => {
     const step = machine.transition(state, event)
     if (step.row) rows.push(step.row)
-    if (step.state !== state) {
+    const key = lifetimeOf(step.state)
+    const changed = step.state !== state
+    if (changed) {
       state = step.state
       // effects of a lifetime the new state left end now, before its own effects start
-      endOthers(lifetimeOf(state))
-      notify()
+      endOthers(key)
     }
-    run(step.effects)
+    // bound to this transition before anyone is told of it (a subscriber may move the state on at once)
+    const signal = step.effects.length > 0 ? signalOf(key) : null
+    if (changed) notify()
+    if (signal) run(step.effects, signal)
   }
 
   protect()
@@ -132,10 +134,10 @@ export function createFlowRunner<S extends { readonly name: string; readonly run
   // not open twice.
   if (first.effects.length > 0) {
     running++
-    const firstKey = lifetimeOf(first.state)
+    const firstSignal = signalOf(lifetimeOf(first.state))
     queueMicrotask(() => {
       running--
-      if (!disposed) run(first.effects, firstKey)
+      if (!disposed) run(first.effects, firstSignal)
       settle()
     })
   }

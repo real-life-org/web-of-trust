@@ -6,8 +6,8 @@ import { createFlowRunner } from '../src/hooks/flow-runner'
 import type { Machine } from '../src/flows/machine'
 
 type S = { readonly name: 'a' | 'b' | 'c'; readonly run: number }
-type E = { readonly type: 'next' } | { readonly type: 'rename' }
-type F = { readonly id: 'wait'; readonly run: number }
+type E = { readonly type: 'next' } | { readonly type: 'rename' } | { readonly type: 'twice' }
+type F = { readonly id: 'wait' | 'other'; readonly run: number }
 
 const machine: Machine<S, E, F> = {
   name: 'lifetime-test',
@@ -16,6 +16,9 @@ const machine: Machine<S, E, F> = {
   transition: (s, e) => {
     if (e.type === 'next') return { state: { name: 'b', run: s.run + 1 }, effects: [{ id: 'wait', run: s.run + 1 }], row: null }
     if (e.type === 'rename') return { state: { name: 'c', run: s.run }, effects: [], row: null }
+    if (e.type === 'twice') return { state: { name: 'b', run: s.run + 1 }, effects: [{ id: 'wait', run: s.run + 1 }, { id: 'other', run: s.run + 1 }], row: null }
+    // a result of the current run moves on to the next one, up to run 4
+    if ((e as { type: string }).type === 'result' && (e as unknown as { run: number }).run === s.run && s.run < 4) return { state: { name: 'b', run: s.run + 1 }, effects: [{ id: 'wait', run: s.run + 1 }], row: null }
     return { state: s, effects: [], row: null }
   },
 }
@@ -51,5 +54,80 @@ describe('the flow runner and the lifetime of effects', () => {
     expect(signals[0]?.aborted).toBe(false)
     r.send({ type: 'rename' })
     expect(signals[0]?.aborted).toBe(true)
+  })
+})
+
+describe('the flow runner: an effect runs only with the signal of the transition that asked for it', () => {
+  /** every started effect: its run and its signal */
+  const started = () => {
+    const list: { run: number; id: string; signal: AbortSignal }[] = []
+    const exec = (f: F, signal: AbortSignal) => {
+      list.push({ run: f.run, id: f.id, signal })
+      return new Promise<{ ok: boolean }>(() => undefined)
+    }
+    return { list, exec }
+  }
+  const at = (run: number) => ({ state: { name: 'a' as const, run }, effects: [], row: null })
+
+  it('a subscriber that moves on synchronously while it is told: the overtaken effect does not start, none holds a later signal', () => {
+    const { list, exec } = started()
+    const r = createFlowRunner(machine, at(1), exec)
+    r.subscribe(() => {
+      if (r.get().run === 2) r.send({ type: 'next' })
+    })
+    r.send({ type: 'next' })
+    expect(r.get().run).toBe(3)
+    expect(list.map((x) => x.run)).toEqual([3])
+    expect(list.every((x) => !x.signal.aborted)).toBe(true)
+  })
+
+  it('several stages in one notification (run 2 → 3 → 4): only the last one\'s effect starts', () => {
+    const { list, exec } = started()
+    const r = createFlowRunner(machine, at(1), exec)
+    r.subscribe(() => {
+      if (r.get().run < 4) r.send({ type: 'next' })
+    })
+    r.send({ type: 'next' })
+    expect(r.get().run).toBe(4)
+    expect(list.map((x) => x.run)).toEqual([4])
+    expect(list[0]?.signal.aborted).toBe(false)
+  })
+
+  it('dispose from a subscriber: no effect starts', () => {
+    const { list, exec } = started()
+    const r = createFlowRunner(machine, at(1), exec)
+    r.subscribe(() => r.dispose())
+    r.send({ type: 'next' })
+    expect(list).toEqual([])
+  })
+
+  it('an effect whose result at once moves the state on: each runs with its own run\'s signal, the earlier ones end', async () => {
+    const list: { run: number; signal: AbortSignal }[] = []
+    const exec = (f: F, signal: AbortSignal) => {
+      list.push({ run: f.run, signal })
+      return Promise.resolve({ ok: true })
+    }
+    const r = createFlowRunner(machine, at(1), exec)
+    r.send({ type: 'next' })
+    await r.idle()
+    expect(r.get().run).toBe(4)
+    expect(list.map((x) => x.run)).toEqual([2, 3, 4])
+    expect(list.map((x) => x.signal.aborted)).toEqual([true, true, false])
+  })
+
+  it('several effects of one transition, the first moves the state on while it starts: the others do not start', () => {
+    const list: { run: number; id: string; signal: AbortSignal }[] = []
+    let r: ReturnType<typeof createFlowRunner<S, E, F>> | null = null
+    const exec = (f: F, signal: AbortSignal) => {
+      list.push({ run: f.run, id: f.id, signal })
+      if (f.id === 'wait' && f.run === 2) r?.send({ type: 'next' })
+      return new Promise<{ ok: boolean }>(() => undefined)
+    }
+    r = createFlowRunner(machine, at(1), exec)
+    r.send({ type: 'twice' })
+    expect(r.get().run).toBe(3)
+    expect(list.map((x) => `${x.id}@${x.run}`)).toEqual(['wait@2', 'wait@3'])
+    expect(list[0]?.signal.aborted).toBe(true)
+    expect(list[1]?.signal.aborted).toBe(false)
   })
 })
