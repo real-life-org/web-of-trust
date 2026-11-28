@@ -175,7 +175,9 @@ export type VerifyEffect =
   | ({ readonly id: 'ver.capture'; readonly raw: string } & Effect)
   | ({ readonly id: 'ver.wait'; readonly ms: number } & Effect)
   | ({ readonly id: 'ver.sent'; readonly contactId: ContactId } & Effect)
-  | ({ readonly id: 'ver.counter'; readonly contactId: ContactId } & Effect)
+  /** `decision`: the request the screen shows; exactly it is accepted. Null: none is shown, the counter-step
+   *  of the contact */
+  | ({ readonly id: 'ver.counter'; readonly contactId: ContactId; readonly decision: DecisionId | null } & Effect)
   /** an accept past the answered code's end is not issued: the act refuses it (`code-expired`) */
   | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline' } & Effect)
   | ({ readonly id: 'ver.back'; readonly connection: ConnectionId } & Effect)
@@ -570,7 +572,7 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'confirmationRequired':
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
-      if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
+      if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId, decision: s.decision }])
       if (isResult(e, s.run, 'ver.counter')) {
         if (!e.result.ok && requestEnded(e.result.code)) return toReady(s, 'confirmationRequired.result.expired', 'nothing-open')
         if (!e.result.ok) return goto(s, { ...pick(s), busy: false }, 'confirmationRequired.result.failed')
@@ -582,7 +584,7 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'confirmIncoming':
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
-      if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
+      if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId, decision: s.decision }])
       if (isResult(e, s.run, 'ver.counter')) {
         if (!e.result.ok && requestEnded(e.result.code)) return show(s, 'confirmIncoming.result.expired')
         if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')

@@ -51,7 +51,7 @@ export type IncomingEvent =
   | { readonly type: 'confirm' }
   | { readonly type: 'notNow' }
 
-export type IncomingEffect = ({ readonly id: 'inc.counter'; readonly decision: DecisionId; readonly contactId: ContactId | null } & Effect) | ({ readonly id: 'inc.expire'; readonly at: number } & Effect)
+export type IncomingEffect = ({ readonly id: 'inc.counter'; readonly decision: DecisionId } & Effect) | ({ readonly id: 'inc.expire'; readonly at: number } & Effect)
 
 export const INCOMING_STATES = ['idle', 'asking'] as const satisfies readonly IncomingState['name'][]
 
@@ -162,7 +162,7 @@ export function incomingTransition(s: S, e: E): Out {
       }
       if (e.type === 'confirm') {
         const run = s.run + 1
-        return { state: { ...s, run, busy: true, failed: false, timerAt: null }, effects: [{ id: 'inc.counter', run, decision: s.head.id, contactId: s.head.contactId }], row: 'asking.confirm' }
+        return { state: { ...s, run, busy: true, failed: false, timerAt: null }, effects: [{ id: 'inc.counter', run, decision: s.head.id }], row: 'asking.confirm' }
       }
       if (e.type === 'notNow') return judge({ ...base(s), deferred: [...s.deferred, s.head.id] }, null, 'asking.notNow')
       if (e.type === 'defer') {

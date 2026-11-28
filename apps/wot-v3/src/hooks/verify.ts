@@ -159,7 +159,8 @@ export function verifyExecutor(
       case 'ver.sent':
         return fromResult(await port.trust.sentCardFor(e.contactId))
       case 'ver.counter':
-        return fromResult(await port.trust.counterVerify(e.contactId).done)
+        // the request the screen shows is accepted by its id; without one, the contact's counter-step
+        return fromResult(e.decision !== null ? await port.trust.decide(e.decision, 'accept').done : await port.trust.counterVerify(e.contactId).done)
       case 'ver.decide':
         // the end of the code a proposal answers is read by the act, at its own time (`code-expired`)
         return fromResult(await port.trust.decide(e.decision, e.choice).done)

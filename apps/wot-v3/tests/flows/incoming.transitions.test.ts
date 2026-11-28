@@ -172,11 +172,11 @@ describe('incoming confirmations over the mediator (real devices)', () => {
 describe('incoming transitions over a scripted executor', () => {
   const entry = (id: string, openedAt: number, validUntil = 10_000): IncomingEntry => ({ id: id as DecisionId, contactId: `c-${id}` as ContactId, name: id, openedAt, validUntil })
   function scripted() {
-    const counters: { contactId: string; resolve: (r: EffectResult) => void }[] = []
+    const counters: { decision: string; resolve: (r: EffectResult) => void }[] = []
     const timers: { at: number; resolve: (r: EffectResult) => void }[] = []
     const exec = (e: IncomingEffect): Promise<EffectResult> =>
       new Promise((resolve) => {
-        if (e.id === 'inc.counter') counters.push({ contactId: e.contactId ?? '', resolve })
+        if (e.id === 'inc.counter') counters.push({ decision: e.decision, resolve })
         else timers.push({ at: e.at, resolve })
       })
     const r: FlowRunner<IncomingState, IncomingEvent> = cover.track(createFlowRunner(incoming, incomingStart(0), exec))
@@ -297,7 +297,7 @@ describe('the expiry timer of the queue ends with its lifetime', () => {
     return { clock, pending, advance: (ms: number) => c.advance(ms) }
   }
   /** a port whose counter-step never answers: only the queue's own timer is under test */
-  const port = { trust: { counterVerify: () => ({ actId: 'x', done: new Promise(() => undefined) }), decide: () => ({ actId: 'x', done: new Promise(() => undefined) }) } } as unknown as AppPort
+  const port = { trust: { decide: () => ({ actId: 'x', done: new Promise(() => undefined) }) } } as unknown as AppPort
   const queue = () => {
     const { clock, pending, advance } = countingClock()
     const r = createFlowRunner(incoming, incomingStart(T0), incomingExecutor(port, { clock: clock as never }))
@@ -441,7 +441,7 @@ describe('incoming proposals over the mediator (real devices, the connection cer
     expect(entries).toMatchObject([{ contactId: null, name: 'Al', validUntil: first.expiresAt + 60_000 }])
     // the code the flow shows right now is the flow's own to ask for
     expect(incomingEntries(B.port, first.card)).toEqual([])
-    const done = await incomingExecutor(B.port, B.platform)({ id: 'inc.counter', run: 1, decision: entries![0]!.id, contactId: null })
+    const done = await incomingExecutor(B.port, B.platform)({ id: 'inc.counter', run: 1, decision: entries![0]!.id })
     expect(done.ok).toBe(true)
     await settle()
     clock.advance(CARRIER_TICK_MS)

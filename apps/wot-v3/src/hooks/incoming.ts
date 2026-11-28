@@ -39,8 +39,10 @@ export function incomingExecutor(port: AppPort, platform: Pick<Platform, 'clock'
   return async (e: IncomingEffect, signal: AbortSignal = new AbortController().signal): Promise<EffectResult> => {
     switch (e.id) {
       case 'inc.counter':
+        // the request the sheet shows, by its id: exactly it is accepted. Its contact would not say which
+        // request once two of one person are open (two meetings, their contacts joined)
         // (a proposal is asked only before its code's end: the queue's expiry takes it away then)
-        return fromResult(e.contactId === null ? await port.trust.decide(e.decision, 'accept').done : await port.trust.counterVerify(e.contactId).done)
+        return fromResult(await port.trust.decide(e.decision, 'accept').done)
       case 'inc.expire': {
         const r = await untilTime(platform.clock, e.at, signal)
         return r.ok ? { ok: true, value: { now: platform.clock.now() } } : r
