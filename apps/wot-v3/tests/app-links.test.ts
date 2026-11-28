@@ -38,12 +38,9 @@ describe('verified App Links (#489)', () => {
     expect(isCardLink('https://link.trustoverip.org/t#_from=did:peer:2.x&_id=y')).toBe(true)
   })
 
-  it('the VTI link host is registered unverified: trigger links another app shows reach the app once the person allows its links', () => {
-    const at = manifest.indexOf('android:host="link.trustoverip.org"')
-    expect(at).toBeGreaterThan(0)
-    const filter = manifest.slice(manifest.lastIndexOf('<intent-filter', at), manifest.indexOf('</intent-filter>', at))
-    expect(filter).not.toContain('autoVerify')
-    expect(filter).toContain('android:path="/t"')
+  it('no filter names a host we cannot verify: on Android 11 and lower one failing host leaves every link unverified', () => {
+    for (const m of manifest.matchAll(/android:host="([^"]+)"/g)) expect(m[1]).toBe('web-of-trust.de')
+    // trigger links on the VTI link host still open the connection when scanned (isCardLink above)
     // the landing serves the page a browser lands on for our own links
     expect(existsSync(here('../landing/public/t/index.html'))).toBe(true)
   })
@@ -73,8 +70,23 @@ describe('verified App Links (#489)', () => {
     // <team id>.<bundle id>: the team that signs the release (Tillmann's account, IOS_TEAM_ID)
     expect(detail!.appIDs).toEqual([`R8QCRG95T6.${bundleId}`])
     // exactly the paths isCardLink accepts and the Android filter names; /c/<anything> is no card link
-    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/', '/t', '/t/'])
+    expect(detail!.components.map((c) => c['/'])).toEqual(['/c', '/c/', '/t', '/t/', '/a', '/a/'])
     expect(isCardLink('https://web-of-trust.de/c/other#1:ABC')).toBe(false)
     expect(entitlements).toContain('<string>applinks:web-of-trust.de</string>')
+  })
+})
+
+describe('login requests of web apps (experimental)', () => {
+  it('the verified intent filter takes https://web-of-trust.de/a and /a/, and the landing has a page for them', () => {
+    const filter = manifest.slice(manifest.indexOf('android:autoVerify="true"'), manifest.indexOf('</intent-filter>', manifest.indexOf('android:autoVerify="true"')))
+    expect(filter).toContain('android:path="/a"')
+    expect(filter).toContain('android:path="/a/"')
+    expect(existsSync(here('../landing/public/a/index.html'))).toBe(true)
+  })
+  it('a login link is a deep link of the app; a path that only starts with /a is not', () => {
+    expect(isCardLink('https://web-of-trust.de/a#openid%3A%2F%2F%3Fx')).toBe(true)
+    expect(isCardLink('https://web-of-trust.de/a/#openid%3A%2F%2F%3Fx')).toBe(true)
+    expect(isCardLink('https://web-of-trust.de/a')).toBe(false)
+    expect(isCardLink('https://web-of-trust.de/about#x')).toBe(false)
   })
 })

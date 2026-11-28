@@ -9,6 +9,7 @@ import type { AppPort, BackRead, BackShow, CardPreview, Connection, ConnectionId
 import { ready, revision, secret, writableStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import type { FakeScanner } from '../../src/platform/fake'
+import { loginLink } from '../../src/lib/login-request'
 import { BACK_AFTER_MS, verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
 import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
 import { bundleEvent, flowTimers, timerKey, verifyExecutor } from '../../src/hooks/verify'
@@ -310,6 +311,25 @@ describe('verify transitions', () => {
     await fa.until('confirm')
     fa.send({ type: 'notThem' })
     await fa.until('ready')
+  })
+
+  it('a login request of a web app (experimental): scanned or typed, the flow hands it to the login page and stores nothing', async () => {
+    const { devices } = await world(1)
+    const [A] = devices as [LoopbackDevice]
+    const login = loginLink(`openid://?${new URLSearchParams({ response_type: 'id_token', response_mode: 'direct_post', scope: 'openid', id_token_type: 'subject_signed', client_id: 'https://beispiel.org', response_uri: 'https://beispiel.org/antwort', nonce: 'n', state: 's' }).toString()}`)
+    const fa = flow(A)
+    await fa.until('ready')
+    fa.scanner.source = () => login
+    fa.send({ type: 'scan' })
+    await fa.until('exit')
+    expect(fa.state()).toMatchObject({ name: 'exit', to: 'login', raw: login })
+    const fm = flow(A)
+    await fm.until('ready')
+    fm.send({ type: 'manual' })
+    fm.send({ type: 'text', text: `  ${login}  ` })
+    fm.send({ type: 'submit' })
+    await fm.until('exit')
+    expect(fm.state()).toMatchObject({ name: 'exit', to: 'login', raw: login })
   })
 
   it('a card link the app was opened with (#489): ready takes it as a step of its own, origin url; the camera says camera, typing says manual', async () => {

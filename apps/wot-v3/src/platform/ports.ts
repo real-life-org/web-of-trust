@@ -176,6 +176,12 @@ export interface MailPort {
 }
 /** Links into the app (§5.3). The port hands a URL over once and keeps no copy; on the web the
  *  fragment is removed from the address bar after the hand-over. */
+/** Opens an address in the browser (the same-device return of a login into a web app, experimental):
+ *  on the web a new tab, in the native shell the system's browser. 'unavailable' when nothing can open it. */
+export interface BrowserPort {
+  open(url: string): Promise<'opened' | 'unavailable'>
+}
+
 export interface DeepLinkPort {
   /** the URL the app was opened with (cold start), once; null afterwards and when there is none */
   initial(): Promise<string | null>
@@ -302,6 +308,7 @@ export interface Platform {
   readonly network: NetworkPort
   readonly deepLinks: DeepLinkPort
   readonly liveUpdate: LiveUpdatePort
+  readonly browser: BrowserPort
 }
 
 /** Prefs key of the background lock delay in ms (§5, §9 question 8); BACKGROUND_LOCK_DEFAULT_MS when unset */

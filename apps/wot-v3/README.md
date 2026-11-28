@@ -216,6 +216,16 @@ found and removed), `ScreenProtection`
 settings page, the per-app language on Android 13+). Card links `https://web-of-trust.de/c` open the
 app; they are verified App Links only once the landing serves `assetlinks.json`.
 
+Login into web apps (experimental): `https://web-of-trust.de/a#<openid:// request>` (an App Link, a
+Universal Link, the landing's `/a` page without the app) and the bare `openid://` request read by the
+verify page's scanner open a page that names the web app by its address, says that the identifier the
+web app sees does not stay valid, and answers a SIOPv2-shaped request (`src/lib/login-request.ts`,
+`src/flows/login.ts`, `src/adapters/rltp/login.ts`). The identity per origin comes from the library's
+`KeyProvider.loginIdentity` (0.21, deviation D6, trust-protocol#211); it is replaced at identity stage 3.
+A same-device request returns to the browser through the platform's `BrowserPort`. Prototype and its
+reviews: port-experimente `src/lab/anmeldung/`. In the harness, `window.__wotDevice.openLink(url)` opens
+the app with a link.
+
 Biometric storage (`BiometricStore.java`): entry files (`android.util.AtomicFile`, no-backup files),
 their Keystore keys and the Gen-2 entry behind one lock for the process; the plugin only calls
 `has`, `checkUnlock`, `unlock`, `store` and `remove`. Its contract:

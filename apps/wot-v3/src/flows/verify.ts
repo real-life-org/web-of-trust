@@ -5,6 +5,7 @@
 
 import type { BackRead, BackShow, CardPreview, CardRef, Connection, ConnectionId, ContactId, DecisionId, EncounterOutcome, RefusalCode, Verification } from '../port'
 import { isResult, stay, type CancelPolicy, type Effect, type Machine, type ResultEvent, type Row, type Step } from './machine'
+import { isLoginRequest } from '../lib/login-request'
 
 /** The own displayed card while it is valid. */
 export interface ShownCard {
@@ -126,6 +127,8 @@ export type VerifyState =
   /** `deferred`: a confirmation answered "not now"; it stays open in the list and the conversation and
    *  does not come back as a sheet in this session (E6) */
   | (Base & { readonly name: 'exit'; readonly to: 'back' | 'chat'; readonly contactId: ContactId | null; readonly recognized: boolean; readonly deferred: DecisionId | null })
+  /** a login request of a web app was read (experimental, flows/login.ts): the login page takes it */
+  | (Base & { readonly name: 'exit'; readonly to: 'login'; readonly raw: string; readonly contactId: null; readonly recognized: false; readonly deferred: null })
 
 export type VerifyEvent =
   | { readonly type: 'scan' }
@@ -224,6 +227,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('cameraExplain.continue', 'continue', 'scanning', 'free', '–', { effects: ['cam.scan'] }),
   row('cameraExplain.back', 'back', 'ready', 'free', '–'),
   row('scanning.result.ok', 'result cam.scan', 'previewing', 'free', '–', { guard: 'a code', effects: ['ver.preview'] }),
+  row('scanning.result.login', 'result cam.scan', 'exit(login)', 'free', 'nothing stored', { guard: 'a login request of a web app (experimental)' }),
   row('scanning.result.cancelled', 'result cam.scan', 'ready', 'free', '–', { guard: 'cancelled' }),
   row('scanning.result.denied', 'result cam.scan', 'cameraDenied', 'free', '–', { guard: 'permission denied' }),
   row('scanning.result.error', 'result cam.scan', 'cameraUnavailable', 'free', '–', { guard: 'camera error' }),
@@ -235,6 +239,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('cameraUnavailable.back', 'back', 'ready', 'free', '–'),
   row('manualEntry.text', 'text', 'manualEntry{text}', 'free', '–'),
   row('manualEntry.submit', 'submit', 'previewing', 'free', '–', { guard: 'text not empty', effects: ['ver.preview'] }),
+  row('manualEntry.submit.login', 'submit', 'exit(login)', 'free', 'nothing stored', { guard: 'a login request of a web app (experimental)' }),
   row('manualEntry.back', 'back', 'ready', 'free', '–'),
   row('previewing.result.ok', 'result ver.preview', 'confirm{preview}', 'free', 'pure, nothing stored', { guard: 'a displayed card, not the own code' }),
   // a sent card is taken over without a question: the capture (RLTP-ENC-5710) issues nothing, the one
@@ -359,6 +364,7 @@ function emit(s: S, next: Next, row: string, make: (run: number) => readonly Ver
 const show = (s: S, row: string): Out => emit(s, { name: 'showing', error: false, card: null }, row, (r) => [{ id: 'ver.show', run: r }])
 const exit = (s: S, to: 'back' | 'chat', contactId: ContactId | null, row: string, deferred: DecisionId | null = null, recognized = false): Out =>
   goto(s, { name: 'exit', to, contactId, recognized, deferred }, row)
+const toLogin = (s: S, raw: string, row: string): Out => goto(s, { name: 'exit', to: 'login', raw, contactId: null, recognized: false, deferred: null }, row)
 /** back to ready: the card is shown again if it is still valid (the expiry timer restarts) */
 const toReady = (s: S, row: string, hint: ReadyHint | null = null): Out =>
   s.card ? emit(s, { name: 'ready', hint }, row, (r) => [{ id: 'ver.expire', run: r, at: s.card?.expiresAt ?? 0 }]) : show(s, row)
@@ -441,6 +447,7 @@ function step(s: S, e: E): Out {
     case 'scanning':
       if (isResult(e, s.run, 'cam.scan')) {
         const v = e.result.value as { kind?: string; text?: string } | undefined
+        if (v?.kind === 'ok' && v.text && isLoginRequest(v.text)) return toLogin(s, v.text, 'scanning.result.login')
         if (v?.kind === 'ok' && v.text) return emit(s, { name: 'previewing', raw: v.text, origin: 'camera' }, 'scanning.result.ok', (r) => [{ id: 'ver.preview', run: r, raw: v.text ?? '' }])
         if (v?.kind === 'cancelled') return toReady(s, 'scanning.result.cancelled')
         if (v?.kind === 'permission-denied') return goto(s, { name: 'cameraDenied' }, 'scanning.result.denied')
@@ -461,6 +468,7 @@ function step(s: S, e: E): Out {
       if (e.type === 'text') return goto(s, { name: 'manualEntry', text: e.text }, 'manualEntry.text')
       if (e.type === 'submit' && s.text.trim() !== '') {
         const raw = s.text.trim()
+        if (isLoginRequest(raw)) return toLogin(s, raw, 'manualEntry.submit.login')
         return emit(s, { name: 'previewing', raw, origin: 'manual' }, 'manualEntry.submit', (r) => [{ id: 'ver.preview', run: r, raw }])
       }
       if (e.type === 'back') return toReady(s, 'manualEntry.back')

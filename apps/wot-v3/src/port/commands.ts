@@ -190,7 +190,16 @@ export interface TrustCommands {
 
   // later, gated by capabilities
   introduce(requesterId: ContactId, targetId: ContactId): IntentHandle<void>
+
+  // Login into a web app (EXPERIMENTAL, library deviation D6): sign the answer to a SIOPv2-shaped
+  // request with the identity toward this web app and post it to the web app; `name`: the own name
+  // goes along. Not an intent: nothing is stored, a lost answer is answered again by the person.
+  answerLogin(raw: string, opts: { name?: string | null; picture?: string | null }): Promise<Result<LoginOutcome>>
 }
+
+/** What the web app answered: logged in on the device that showed the code (`done`), or, for a
+ *  same-device request, an address on the web app's origin the app opens in the browser (`return`). */
+export type LoginOutcome = { readonly kind: 'done' } | { readonly kind: 'return'; readonly url: string }
 
 /** Intent recovery, separate from document retry. Acts only on journal entries. */
 export interface IntentCommands {

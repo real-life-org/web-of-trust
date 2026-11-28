@@ -1,7 +1,7 @@
 // Fake platform for Vitest and the harness (architecture §5): virtual clock, deterministic
 // entropy, fixed language, in-memory prefs. Never part of a store build (scripts/check-build.mjs).
 
-import type { ClockPort, DeepLinkPort, EntropyPort, Language, LanguagePort, LifecyclePort, LiveUpdatePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
+import type { BrowserPort, ClockPort, DeepLinkPort, EntropyPort, Language, LanguagePort, LifecyclePort, LiveUpdatePort, MailPort, NetworkPort, Platform, PrefsPort, ScannerPort, SharePort } from '../ports'
 import { fakeClipboard, fakeDevice, fakeDevicePrefs, fakeScreen, type FakeDevice, type FakeScreen } from './identity'
 
 export * from './identity'
@@ -154,6 +154,24 @@ export function fakeScanner(): FakeScanner {
 }
 
 /** Mail app as a test double: drafts are recorded; `available` false is a device without mail app. */
+export interface FakeBrowser extends BrowserPort {
+  available: boolean
+  readonly opened: string[]
+}
+
+export function fakeBrowser(): FakeBrowser {
+  const b: FakeBrowser = {
+    available: true,
+    opened: [],
+    async open(url) {
+      if (!b.available) return 'unavailable'
+      b.opened.push(url)
+      return 'opened'
+    },
+  }
+  return b
+}
+
 export interface FakeMail extends MailPort {
   available: boolean
   readonly drafts: { to: string; subject: string; body: string }[]
@@ -308,7 +326,7 @@ export function createFakePlatform(opts: {
   /** the simulated device whose prefs and clipboard the platform uses (identity flows) */
   device?: FakeDevice
   scanner?: FakeScanner
-}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare; lifecycle: FakeLifecycle; network: FakeNetwork; deepLinks: FakeDeepLinks } {
+}): Platform & { scanner: FakeScanner; screen: FakeScreen; mail: FakeMail; share: FakeShare; lifecycle: FakeLifecycle; network: FakeNetwork; deepLinks: FakeDeepLinks; browser: FakeBrowser } {
   const device = opts.device ?? fakeDevice()
   return {
     clock: opts.clock,
@@ -324,5 +342,6 @@ export function createFakePlatform(opts: {
     network: fakeNetwork(),
     deepLinks: fakeDeepLinks(),
     liveUpdate: fakeLiveUpdate(),
+    browser: fakeBrowser(),
   }
 }
