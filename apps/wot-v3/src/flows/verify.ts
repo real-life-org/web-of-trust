@@ -108,7 +108,7 @@ export type VerifyState =
   | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   /** a proposal answers the shown code (a connection ceremony): the shower accepts or declines; a
    *  decline tells the other side and spends the code */
-  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean; readonly goneMeanwhile?: boolean })
+  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
   /** the ceremony runs: the scanner waits for the shower's answer, the shower for the last documents.
    *  What the scanner does next is decided by `scannerStep` from the ceremony's state in the last bundle */
   | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean; readonly phase?: ScannerPhase; readonly kept?: boolean; readonly due?: boolean })
@@ -328,7 +328,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connectIncoming.result.accepted', 'result ver.decide', 'connecting{shower}', 'free', 'the ceremony completes from the core’s snapshot', { guard: 'accepted, not complete yet' }),
   row('connectIncoming.result.declined', 'result ver.decide', 'showing', 'free', '–', { guard: 'declined: the code is spent', effects: ['ver.show'] }),
   row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'answered past the code’s end or the request’s (code-expired, decision-expired): nothing is issued, a fresh code', effects: ['ver.show'] }),
-  row('connectIncoming.result.gone', 'result ver.decide', 'success | showing', 'free', '–', { guard: 'refused, and a bundle during the act no longer held the proposal (decided elsewhere, ended): as connectIncoming.bundle.gone', effects: ['ver.show'] }),
+  row('connectIncoming.result.gone', 'result ver.decide', 'success | showing', 'free', '–', { guard: 'refused, and the last bundle\'s ceremony holds the request no longer (decided elsewhere, ended; our own answer running is no end): as connectIncoming.bundle.gone', effects: ['ver.show'] }),
   row('connectIncoming.result.failed', 'result ver.decide', 'connectIncoming{failed}', 'free', 'the decision stays open'),
   row('connectIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list'),
   row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open, the ceremony neither complete nor holding a contact (that is the success, connecting.bundle.complete)', effects: ['ver.show'] }),
@@ -597,14 +597,14 @@ function step(s: S, e: E): Out {
       if (isResult(e, s.run, 'ver.decide')) {
         if (!e.result.ok && (e.result.code === 'code-expired' || e.result.code === 'decision-expired')) return show(s, 'connectIncoming.result.expired')
         // the request is no longer open by the last bundle (it came while the act ran): as when it goes then
-        if (!e.result.ok && s.goneMeanwhile) return proposalGone(s, 'connectIncoming.result.gone')
+        // where the request stands now, by the last bundle's ceremony: its open request is another one or none.
+        // Our own answer running (in-flight) keeps the request; a ceremony the bundle does not name says nothing
+        const now = s.connections?.[s.connection]
+        if (!e.result.ok && now && now.decision !== s.decision) return proposalGone(s, 'connectIncoming.result.gone')
         if (!e.result.ok) return goto(s, { ...pickConnect(s), busy: null, failed: true }, 'connectIncoming.result.failed')
         if (s.busy === 'decline') return show(s, 'connectIncoming.result.declined')
         return connectionEnd(s, s.connection, s.name2) ?? goto(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'shower', waitLong: false }, 'connectIncoming.result.accepted')
       }
-      // a bundle during the act that no longer holds the proposal: kept for the act's result (the lage before
-      // the act does not count)
-      if (s.busy && e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) return s.goneMeanwhile ? stay(s) : { state: { ...s, goneMeanwhile: true }, effects: [], row: null }
       if (s.busy) return stay(s)
       if (e.type === 'accept' || e.type === 'decline') {
         const choice = e.type

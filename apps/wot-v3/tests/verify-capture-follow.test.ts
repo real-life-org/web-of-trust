@@ -214,3 +214,54 @@ describe('a capture result and a bundle in every order (review of #562, round 3)
     }
   })
 })
+
+describe('the answer to a proposal and the bundles while it runs (#565)', () => {
+  type Lage = 'open' | 'in-flight' | 'gone' | 'gone-contact'
+  /** a port whose stores say where the request stands: open, our own answer running, gone (no contact), gone with the contact */
+  const portAt = (lage: Lage) =>
+    ({
+      stores: {
+        contacts: writableStore(ready([], REV)),
+        decisions: writableStore(
+          ready(lage === 'open' || lage === 'in-flight' ? [{ id: DECISION, kind: 'connect-confirm', connection: 'e1', name: 'Bea', state: lage, openedAt: 0, expiresAt: null, answers: { card: 'K', validUntil: Number.MAX_SAFE_INTEGER } }] : [], REV),
+        ),
+        connections: writableStore(
+          ready([{ id: 'e1', role: 'inviter', status: 'open', name: 'Bea', contactId: lage === 'gone-contact' ? CONTACT : null, met: true, failure: null, closedAt: null, camera: true, accepted: lage === 'gone-contact', backShown: false, relayed: true, theirDid: null, expiresAt: Number.MAX_SAFE_INTEGER, validUntil: Number.MAX_SAFE_INTEGER, decision: lage === 'open' || lage === 'in-flight' ? DECISION : null }], REV),
+        ),
+        connectivity: writableStore({ network: 'online', carrier: 'connected' }),
+      },
+    }) as unknown as AppPort
+
+  it('in every order of the bundles and the refused result: the request still open is asked again with the error, a gone one ends', async () => {
+    const { bundleEvent } = await import('../src/hooks/verify')
+    const { verifyTransition } = await import('../src/flows/verify')
+    const busy = { name: 'connectIncoming', run: 5, card: null, mutual: [], connections: bundle0(), connection: 'e1', decision: DECISION, name2: 'Bea', busy: 'accept', failed: false } as never
+    function bundle0() {
+      return (bundleEvent(portAt('open')) as { connections: unknown }).connections
+    }
+    const refused = { type: 'result', id: 'ver.decide', run: 5, result: { ok: false, code: 'not-possible-yet' } } as never
+    // [the bundles that arrive while the act runs, the lage they end with, the expected end]
+    const cases: [readonly Lage[], string][] = [
+      [['in-flight'], 'failed'],
+      [['in-flight', 'open'], 'failed'],
+      [['gone'], 'showing'],
+      [['in-flight', 'gone'], 'showing'],
+      [['gone-contact'], 'success'],
+      [['gone', 'open'], 'failed'],
+      [['gone', 'in-flight', 'open'], 'failed'],
+    ]
+    for (const [bundles, expected] of cases) {
+      let s = busy
+      for (const l of bundles) s = verifyTransition(s, bundleEvent(portAt(l))!).state as never
+      const end = verifyTransition(s, refused).state as { name: string; busy?: unknown; failed?: boolean }
+      const label = bundles.join(' → ')
+      if (expected === 'failed') expect(end, label).toMatchObject({ name: 'connectIncoming', busy: null, failed: true })
+      else expect(end.name, label).toBe(expected)
+    }
+    // the result first, then the bundles: the open request stays answerable, a gone one leaves it
+    const failedFirst = verifyTransition(busy, refused).state
+    expect(failedFirst).toMatchObject({ name: 'connectIncoming', busy: null, failed: true })
+    expect(verifyTransition(failedFirst, bundleEvent(portAt('open'))!).state).toMatchObject({ name: 'connectIncoming', failed: true })
+    expect((verifyTransition(failedFirst, bundleEvent(portAt('gone'))!).state as { name: string }).name).toBe('showing')
+  })
+})
