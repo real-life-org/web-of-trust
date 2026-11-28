@@ -498,6 +498,20 @@ regression of #463 (`card-link-qr-463.json`). The distribution over random cards
 Real cards with a name of 12 characters: displayed always version 14, sent version 15 and in a small
 tail 16 (#463). A numeric QR segment instead of base32 (card link form 4, follow-up) holds about one
 version more per card and would bring the sent card back to version 16.
+
+**Drawn code.** `QrCode` draws every code at error correction level L: each one is shown on a screen,
+never printed or covered, so the reserve of M buys nothing there. The bounds above are measured at M;
+the drawn version is never larger (the regression of #463 is version 13 at L). On a phone the code
+takes the page's side gutter as well, its own quiet zone of four modules being the margin: 358 px of
+code on a screen of 360 points, at most 378 px. The codes of shared-connect (mediator.web-of-trust.de,
+names of 2 to 40 characters):
+
+| | link | back-code |
+|---|---|---|
+| characters | 674–772 | 751–809 |
+| QR version (L) | 18–19 | 19–20 |
+| modules with the quiet zone | 97–101 | 101–105 |
+| CSS px per module at 360 / 412 points | 3.69–3.54 / 3.90–3.74 | 3.54–3.41 / 3.74–3.60 |
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 
