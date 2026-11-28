@@ -65,8 +65,9 @@ export interface RltpFaults {
   /** after-journal: the process dies after an intent is journaled as running, before its act;
    *  before-take: after inbox messages are written to the history, before takeMessages */
   killAt: 'after-journal' | 'before-take' | null
-  /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests) */
-  probe?: ((point: 'dedupe:before' | 'dedupe:after', actId: string) => Promise<void> | void) | null
+  /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests), and one
+   *  before an unordered act runs (after its journal) */
+  probe?: ((point: 'dedupe:before' | 'dedupe:after' | 'act:before', actId: string) => Promise<void> | void) | null
 }
 
 export interface Session {
@@ -1022,8 +1023,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (lastTaken.get(target)?.handle === handle) lastTaken.delete(target)
       })
     const handle: IntentHandle<T> = { actId, done, journaled }
-    // the person's last gesture, under the id it was taken with now
-    for (const k of [...lastTaken.keys()]) if (k !== target && sameTarget(k, target)) lastTaken.delete(k)
+    // the person's last gesture, under the id it was taken with now; the map's order is the take order (a
+    // replaced key goes to the end), so the newest gesture of a person is found under any of its ids
+    for (const k of [...lastTaken.keys()]) if (sameTarget(k, target)) lastTaken.delete(k)
     lastTaken.set(target, { dedupe, input: structuredClone(input), handle: handle as IntentHandle<unknown> })
     return handle
   }
@@ -1277,6 +1279,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
+    await deps.faults?.probe?.('act:before', rec.actId)
     if (deps.faults?.killAt === 'after-journal') {
       // the process dies here: nothing after this point runs, the record stays `running`
       deps.faults.killAt = null
@@ -1427,7 +1430,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const running = inflight.get(dedupe)
     if (running) {
       // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
-      if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
+      // the stored inputs read as the entries stand now: a send taken under an id that became an alias since
+      if (inflightInput.has(dedupe) && !sameInput(entryInput(entries, inflightInput.get(dedupe) ?? {}), input)) {
         return { actId: running.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
       }
       return running as IntentHandle<T>
