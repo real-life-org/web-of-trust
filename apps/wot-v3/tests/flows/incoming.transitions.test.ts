@@ -297,7 +297,7 @@ describe('the expiry timer of the queue ends with its lifetime', () => {
     return { clock, pending, advance: (ms: number) => c.advance(ms) }
   }
   /** a port whose counter-step never answers: only the queue's own timer is under test */
-  const port = { trust: { decide: () => ({ actId: 'x', done: new Promise(() => undefined) }), decide: () => ({ actId: 'x', done: new Promise(() => undefined) }) } } as unknown as AppPort
+  const port = { trust: { decide: () => ({ actId: 'x', done: new Promise(() => undefined) }) } } as unknown as AppPort
   const queue = () => {
     const { clock, pending, advance } = countingClock()
     const r = createFlowRunner(incoming, incomingStart(T0), incomingExecutor(port, { clock: clock as never }))
