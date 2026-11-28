@@ -258,7 +258,8 @@ function OlderCard({ world, id }: { world: PairWorld; id: string }) {
   const [state, setState] = useState<'idle' | 'shown' | 'failed'>('idle')
   const show = async () => {
     const d = world.devices.get(id)
-    const r = d ? await showOlderCardOn(d) : null
+    // no session (locked) throws: the same as a refused show
+    const r = d ? await showOlderCardOn(d).catch(() => null) : null
     if (r?.ok) world.optics.set(id, r.value.qr)
     setState(r?.ok ? 'shown' : 'failed')
   }

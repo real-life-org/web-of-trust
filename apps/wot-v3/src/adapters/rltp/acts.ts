@@ -185,7 +185,8 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       // the code's instance is its enactment: the proposal that answers it names it (E9)
       if (link) return { qr: link.link, expiresAt: linkExpiry(link.link), card: link.id }
       // the card of encounter-scan, shown by an earlier version of the app: a record of its show act left
-      // open there is settled here from the library's journal (the app shows no such card any more)
+      // open there and past its limit is settled here from the library's journal (the app shows no such
+      // card any more)
       const shown = ev(events, 'encounter.shown')[0]
       if (!shown) return null
       const issued = (shown.card as { challenge?: { issuedAt?: unknown } }).challenge?.issuedAt

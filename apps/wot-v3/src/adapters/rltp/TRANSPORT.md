@@ -235,7 +235,8 @@ instant, or at the next opening or show.
 A shows, B scans, B's bundle travels over the mediator, A confirms, the confirmation travels back. The
 app shows no such card any more (its one ceremony is shared-connect, below); a card an earlier version
 showed, still open after the update (`displayed`), gets its instance at the opening, and an earlier
-version's show act left open is finished from the library's journal.
+version's show act left open past its limit is finished from the library's journal (one within its limit
+expires at the opening, as every show act does).
 
 - *Opening* (1250). A card displayed with an offer for `C` gets an instance of its own as soon as the
   show act finished (`lease.display`), and again at every opening, for as long as the holder resolves

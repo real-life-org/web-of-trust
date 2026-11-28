@@ -1085,7 +1085,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const writes: AppWrite[] = [{ store: 'kv', key: KV.encounters, value: { ...cache, own, sent, met, capturedBy } satisfies EncounterCache }]
     // a card shown with a carrier offer: its N moves from the act input (dropped with `done`) to the
     // displayed cards, in this transaction (TRANSPORT.md "The displayed card's instance"). Only an earlier
-    // version of the app showed such cards; its open show act settles here from the library's journal
+    // version of the app showed such cards; its show act left open past its limit settles here from the
+    // library's journal
     const offer = input.carrier as { c?: unknown; nonce?: unknown } | undefined
     const shown = events.find((e) => e.type === 'encounter.shown')
     if (rec.command === 'showCard' && shown?.type === 'encounter.shown' && typeof offer?.c === 'string' && typeof offer.nonce === 'string') {

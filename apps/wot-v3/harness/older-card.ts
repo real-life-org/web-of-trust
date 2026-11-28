@@ -47,8 +47,8 @@ export function showOlderCard(session: Session): Promise<Result<OlderCard>> {
   return session.intent<OlderCard>('showCard', 'encounter', `showCard|older|${++n}`, { [OLDER]: true }).done
 }
 
-/** the same, for a loopback device or a port whose session is open */
-export function showOlderCardOn(d: { readonly port: { session(): Session | null } }): Promise<Result<OlderCard>> {
+/** the same, for a loopback device or a port whose session is open (rejects without one) */
+export async function showOlderCardOn(d: { readonly port: { session(): Session | null } }): Promise<Result<OlderCard>> {
   const s = d.port.session()
   if (!s) throw new Error('older card: no session')
   return showOlderCard(s)
