@@ -14,13 +14,16 @@ export const value = <T>(s: ReadStore<Loadable<T>>): T => {
 }
 
 /** two phones over the mediator double; `card` names the phone that shows the card of encounter-scan */
-export async function world(card: 'A' | 'B' | null = null) {
+/** `card`: the phone that shows the card of encounter-scan; `third`: a third phone (Cem), a person of its own */
+export async function world(card: 'A' | 'B' | null = null, third = false) {
   const med = mediatorDouble()
   const clock = virtualClock(Date.now(), 'UTC')
   const netA = phoneNet(med.net), netB = phoneNet(med.net)
   const ceremony = (id: 'A' | 'B') => (card === id ? ('card' as const) : ('shared-connect' as const))
   const A = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netA.net } }, id: 'A', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 31, ceremony: ceremony('A') })
   const B = await loopbackDevice({ carrier: { mediator: { did: med.did, net: netB.net } }, id: 'B', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 37, ceremony: ceremony('B') })
+  const netC = third ? phoneNet(med.net) : null
+  const C = netC ? await loopbackDevice({ carrier: { mediator: { did: med.did, net: netC.net } }, id: 'C', name: 'Cem', words: LOOPBACK_PHRASES[2], clock, seed: 43, ceremony: 'shared-connect' }) : null
   const online = (on: boolean) => {
     netA.setOnline(on)
     netB.setOnline(on)
@@ -34,8 +37,9 @@ export async function world(card: 'A' | 'B' | null = null) {
       await med.settled()
       await A.port.session()?.idle()
       await B.port.session()?.idle()
+      await C?.port.session()?.idle()
       await new Promise((r) => setTimeout(r, 0))
-      const busy = (A.port.session()?.transportBusy() ?? 0) + (B.port.session()?.transportBusy() ?? 0)
+      const busy = (A.port.session()?.transportBusy() ?? 0) + (B.port.session()?.transportBusy() ?? 0) + (C?.port.session()?.transportBusy() ?? 0)
       const now = JSON.stringify([A.port.session()?.models()?.revision, B.port.session()?.models()?.revision, A.port.stores.connectivity.get(), B.port.stores.connectivity.get()])
       calm = busy === 0 && now === last ? calm + 1 : 0
       last = now
@@ -57,11 +61,12 @@ export async function world(card: 'A' | 'B' | null = null) {
       for (let i = 0; i < 40; i++) {
         await med.settled()
         await B.port.session()?.idle()
+        await C?.port.session()?.idle()
         await new Promise((r) => setTimeout(r, 0))
       }
     }
   }
-  return { A, B, online, settle, pass, passHeld }
+  return { A, B, C, clock, online, settle, pass, passHeld }
 }
 export type World = Awaited<ReturnType<typeof world>>
 export type Known = { bAtA: ContactId; aAtB: ContactId }

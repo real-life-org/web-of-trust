@@ -2,8 +2,8 @@
 // The commands on a person met again (Trust 6a.4, 2140): once the library chained the second meeting's
 // fresh contact into the known one, the fresh id is an alias of the known entry. Every command that takes a
 // contact id acts on the entry, whatever id it was given: commands on one person run in one order and two
-// equal gestures are one act, also when the chaining comes between taking a command (under the fresh id,
-// journaled so) and running it; a read mark set over the alias's route counts; a message held under the
+// equal gestures are one act; a command taken for the fresh contact and run only after the chaining follows
+// CONTACT-ORDER.md "A contact joined meanwhile" (re-meet-order.loopback.test.ts); a read mark set over the alias's route counts; a message held under the
 // alias goes out once the entry can be written to; trust is not given to a blocked person; the first
 // meeting stays the first.
 import { describe, expect, it } from 'vitest'
@@ -74,7 +74,7 @@ describe('commands on one person under its alias and its known id run in one ord
         }, 120_000)
       }
     }
-    it(`chained between: ${g1} taken under the fresh id before the chaining, held; ${g2}(known id) after it: the last gesture taken holds`, async () => {
+    it(`chained between: ${g1} taken under the fresh id before the chaining, held; ${g2}(known id) after it: the person ends blocked`, async () => {
       const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
       const fresh = secondCeremony(w.A)?.contactId as ContactId
       expect(contactsOf(w.A).map((c) => c.id)).toContain(fresh)
@@ -95,7 +95,9 @@ describe('commands on one person under its alias and its known id run in one ord
       await Promise.all([h1.done, h2.done])
       await w.settle()
       await w.pass(4 * CARRIER_TICK_MS)
-      expect(blocked(w.A, known), `${g1}(fresh) then ${g2}(known)`).toBe(g2 === 'block')
+      // taken for the fresh contact before the join: an unblock lifts nothing of the person, a block
+      // restricts and runs behind what was taken for the person meanwhile (CONTACT-ORDER.md)
+      expect(blocked(w.A, known), `${g1}(fresh) then ${g2}(known)`).toBe(true)
     }, 120_000)
   }
 
@@ -109,7 +111,7 @@ describe('commands on one person under its alias and its known id run in one ord
     expect(blocked(w.A, known)).toBe(true)
   }, 120_000)
 
-  it('a block taken under the fresh id before the chaining and one under the known id after it are one act', async () => {
+  it('a block taken under the fresh id before the chaining and one under the known id after it: each its own act, the person ends blocked', async () => {
     const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
     const fresh = secondCeremony(w.A)?.contactId as ContactId
     const hold = holdFirst(w.A)
@@ -118,15 +120,17 @@ describe('commands on one person under its alias and its known id run in one ord
     await w.passHeld(3 * 60_000)
     const known = onlyContact(w.A)
     const h2 = act(w.A, 'block', known)
-    expect(h2.actId).toBe(h1.actId)
+    // the first was for the fresh contact as it stood, the second is the person's
+    expect(h2.actId).not.toBe(h1.actId)
     hold.release()
-    await Promise.all([h1.done, h2.done])
+    expect((await h1.done).ok).toBe(true)
+    expect((await h2.done).ok).toBe(true)
     await w.settle()
     expect(blocked(w.A, known)).toBe(true)
   }, 120_000)
 })
 
-describe('the last gesture taken, in take order, across the ids of one person (review: CodeRabbit)', () => {
+describe('a gesture after the chaining is the person’s own, never joined to an older one taken for the fresh contact (review: CodeRabbit)', () => {
   it('block(known), block(fresh), unblock(known) pending; the chaining; block(known): a new gesture, not the older block under the fresh id; the person ends blocked', async () => {
     const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
     const fresh = secondCeremony(w.A)?.contactId as ContactId
@@ -164,7 +168,7 @@ describe('a message sent again under the known id while its send under the fresh
     let release: () => void = () => undefined
     const gate = new Promise<void>((r) => (release = r))
     let held = false
-    w.A.faults.probe = async (p) => {
+    w.A.faults.hold = async (p) => {
       if (p !== 'act:before' || held) return
       held = true
       await gate
@@ -177,7 +181,7 @@ describe('a message sent again under the known id while its send under the fresh
     const h2 = w.A.port.trust.send(`c:${known}`, 'Once', 'd-once')
     expect(h2.actId).toBe(h1.actId)
     release()
-    w.A.faults.probe = null
+    w.A.faults.hold = null
     expect((await h1.done).ok).toBe(true)
     expect((await h2.done).ok).toBe(true)
     await w.settle()
