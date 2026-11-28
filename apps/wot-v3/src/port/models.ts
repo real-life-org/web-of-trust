@@ -245,8 +245,12 @@ export interface Connection {
   readonly status: 'open' | 'complete' | 'declined' | 'failed'
   /** the other side's name as its code or its proposal states it, unverified */
   readonly name: string | null
-  /** the contact the complete ceremony opened; null before, and for a counterpart whose app gives no channel */
+  /** the contact the complete ceremony opened, as it stands now (a contact it was joined into); null
+   *  before, and for a counterpart whose app gives no channel */
   readonly contactId: ContactId | null
+  /** the ceremony's contact was joined into a contact this device knew before: a second meeting with a
+   *  known person, recognized after the ceremony (Trust 6a.4) */
+  readonly recognized: boolean
   /** both sides read the code in one place */
   readonly met: boolean
   /** how the other side ended a failed ceremony: the code and the message of its error, as sent (its

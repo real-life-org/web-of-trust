@@ -35,7 +35,7 @@ export interface ProposalRef {
 }
 
 /** where a connection ceremony stands, from the last published bundle */
-export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'validUntil' | 'decision'>
+export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'validUntil' | 'decision' | 'recognized'>
 
 /** `connect-failed`: the other side ended the connection ceremony with an error (its code is in the diagnostics) */
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used' | 'no-card' | 'code-too-long'> | 'failed' | 'connect-failed'
@@ -123,7 +123,9 @@ export type VerifyState =
   | (Base & { readonly name: 'declined'; readonly name2: string | null; readonly kept: boolean })
   | (Base & { readonly name: 'counterPending'; readonly contactId: ContactId; readonly name2: string | null })
   /** `connection`: the ceremony a success came from while it is still open (a later failure of it is shown) */
-  | (Base & { readonly name: 'success'; readonly contactId: ContactId; readonly name2: string | null; readonly isNew: boolean; readonly connection?: ConnectionId })
+  /** `isNew`: a contact this meeting made (confetti); `recognized`: a second meeting with a person known
+   *  before, its contact joined into the known one (Trust 6a.4). The same card read again is neither */
+  | (Base & { readonly name: 'success'; readonly contactId: ContactId; readonly name2: string | null; readonly isNew: boolean; readonly recognized: boolean; readonly connection?: ConnectionId })
   /** `deferred`: a confirmation answered "not now"; it stays open in the list and the conversation and
    *  does not come back as a sheet in this session (E6) */
   | (Base & { readonly name: 'exit'; readonly to: 'back' | 'chat'; readonly contactId: ContactId | null; readonly recognized: boolean; readonly deferred: DecisionId | null })
@@ -303,6 +305,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('backing.leave', 'leave', 'exit(chat | back)', 'free', 'the ceremony goes on in the core', { guard: 'always: the way out while the code is made' }),
   row('readingBack.back', 'back', 'ready', 'free', 'the confirmation stays in the list once it is there'),
   row('connecting.carrier.lost', 'bundle', 'backing', 'free', '–', { guard: 'waiting for the acceptance by the camera, no carrier in reach any more, "keep waiting" not chosen', effects: ['ver.back'] }),
+  row('success.bundle.joined', 'bundle', 'success{contactId: the known contact, isNew: false}', 'free', '–', { guard: "the success's contact was joined into a contact known before (Trust 6a.4); no dialog" }),
   row('success.bundle.failed', 'bundle', 'scanError{connect-failed | connect-failed-kept}', 'free', 'the contact stays', { guard: 'the open ceremony of an early success failed' }),
   row('readingBack.result.unknown', 'result ver.readBack', 'readingBack{connection}', 'free', 'no answer either way', { guard: 'taken or read again, the ceremony in no bundle yet' }),
   row('backing.result.notShown', 'result ver.back', 'scannerStep(bundle)', 'free', 'the act ran nothing', { guard: 'closed or accepted: the bundle that says so ends the code' }),
@@ -384,7 +387,14 @@ const mutual = (s: S, e: E, contactId: ContactId): boolean => e.type === 'bundle
  *  confetti) */
 const succeed = (s: S, contactId: ContactId, name2: string | null) => {
   const now = current(s, contactId)
-  return { name: 'success' as const, contactId: now, name2, isNew: now === contactId }
+  return { name: 'success' as const, contactId: now, name2, isNew: now === contactId, recognized: now !== contactId }
+}
+/** the success of a connection ceremony: its contact as it stands now; one the library already joined into
+ *  a contact known before (`recognized`, a second meeting) is a re-encounter, as `succeed` says for a card.
+ *  `connection`: the ceremony while it is still open */
+const connected = (s: S, c: ConnectionState, contactId: ContactId, name2: string | null, connection: ConnectionId | null) => {
+  const at = succeed(s, contactId, name2)
+  return { ...at, isNew: at.isNew && !c.recognized, recognized: at.recognized || c.recognized, ...(connection ? { connection } : {}) }
 }
 
 export function verifyStart(): Out {
@@ -549,7 +559,7 @@ function step(s: S, e: E): Out {
           return goto(s, { name: 'confirmationRequired', contactId: v.contactId, decision: null, name2, busy: false }, 'capturing.result.again.counter')
         }
         if (v.follow === 'counter-pending' && v.contactId) return goto(s, { name: 'counterPending', contactId: v.contactId, name2 }, 'capturing.result.again.pending')
-        if (v.follow === 'mutual' && v.contactId) return goto(s, { name: 'success', contactId: v.contactId, name2, isNew: false }, 'capturing.result.again.mutual')
+        if (v.follow === 'mutual' && v.contactId) return goto(s, { name: 'success', contactId: v.contactId, name2, isNew: false, recognized: false }, 'capturing.result.again.mutual')
         if (v.follow === 'met') return toReady(s, 'capturing.result.again.met', 'nothing-open')
         return toReady(s, 'capturing.result.again.none', 'already-captured')
       }
@@ -699,7 +709,11 @@ function step(s: S, e: E): Out {
       // an early success (the ceremony still open) shows a later failure of the same ceremony; the contact stays
       const c = s.connection ? s.connections?.[s.connection] : undefined
       if (e.type === 'bundle' && c?.status === 'failed') return goto(s, { name: 'scanError', code: c.contactId ? 'connect-failed-kept' : 'connect-failed' }, 'success.bundle.failed')
-      if (e.type === 'done' || e.type === 'back') return exit(s, 'chat', s.contactId, 'success.done')
+      // the second meeting of a known person: the library joins its fresh contact into the known one after
+      // the ceremony (continuity, Trust 6a.4); the success turns to that contact, re-met, without a dialog
+      const now = current(s, s.contactId)
+      if (e.type === 'bundle' && now !== s.contactId) return goto(s, { name: 'success', contactId: now, name2: s.name2, isNew: false, recognized: true, ...(s.connection ? { connection: s.connection } : {}) }, 'success.bundle.joined')
+      if (e.type === 'done' || e.type === 'back') return exit(s, 'chat', now, 'success.done')
       return stay(s)
     }
     case 'exit':
@@ -723,7 +737,7 @@ function readBack(s: S, connection: ConnectionId): Out {
     return s.name === 'readingBack' && s.connection === connection ? stay(s) : goto(s, { name: 'readingBack', connection }, 'readingBack.result.unknown')
   }
   if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, validUntil: c.validUntil, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
-  if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, { name: 'success', contactId: c.contactId, name2: c.name, isNew: true, ...(c.status === 'open' ? { connection } : {}) }, 'readingBack.result.contact')
+  if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, connected(s, c, c.contactId, c.name, c.status === 'open' ? connection : null), 'readingBack.result.contact')
   // ended with an error after the acceptance opened the contact here: said so, the contact stays
   if (c?.status === 'failed' && c.contactId) return goto(s, { name: 'scanError', code: 'connect-failed-kept' }, 'readingBack.result.failed')
   return toReady(s, 'readingBack.result.ok')
@@ -743,14 +757,13 @@ function scannerStep(s: S, connection: ConnectionId, cause: 'entry' | 'due' | 'b
   const name2 = c?.name ?? (s.name === 'connecting' || s.name === 'backing' || s.name === 'backCode' ? s.name2 : null)
   // `entryRow`: the ceremony waited for arrived; its own row stands for the step it takes
   const at = (r: string) => entryRow ?? r
-  const open = c?.status === 'open' ? { connection } : {}
   if (c && c.status !== 'open') {
-    if (c.status === 'complete') return c.contactId ? goto(s, { name: 'success', contactId: c.contactId, name2, isNew: true }, at('scanner.end.complete')) : exit(s, 'back', null, at('scanner.end.foreign'))
+    if (c.status === 'complete') return c.contactId ? goto(s, connected(s, c, c.contactId, name2, null), at('scanner.end.complete')) : exit(s, 'back', null, at('scanner.end.foreign'))
     if (c.status === 'declined') return goto(s, { name: 'declined', name2, kept: c.contactId !== null }, at('scanner.end.declined'))
     return goto(s, { name: 'scanError', code: c.contactId ? 'connect-failed-kept' : 'connect-failed' }, at('scanner.end.failed'))
   }
   if (c?.accepted) {
-    if (c.contactId) return goto(s, { name: 'success', contactId: c.contactId, name2, isNew: true, ...open }, at('scanner.accepted.contact'))
+    if (c.contactId) return goto(s, connected(s, c, c.contactId, name2, c.status === 'open' ? connection : null), at('scanner.accepted.contact'))
     // a phase of its own, a new run: the wait's timer ends with it
     return emit(s, { name: 'connecting', connection, name2, role: 'scanner', waitLong: false, phase: 'accepted' }, at('scanner.accepted'), () => [])
   }
@@ -777,8 +790,8 @@ function proposedHere(s: S, e: Extract<E, { type: 'bundle' }>, row: string): Out
 function connectionEnd(s: S, connection: ConnectionId, name2: string | null): Out | null {
   const c = s.connections?.[connection]
   if (!c) return null
-  if (c.status === 'open') return c.contactId ? goto(s, { name: 'success', contactId: c.contactId, name2, isNew: true, connection }, 'connecting.bundle.complete') : null
-  if (c.status === 'complete') return c.contactId ? goto(s, { name: 'success', contactId: c.contactId, name2, isNew: true }, 'connecting.bundle.complete') : exit(s, 'back', null, 'connecting.bundle.foreign')
+  if (c.status === 'open') return c.contactId ? goto(s, connected(s, c, c.contactId, name2, connection), 'connecting.bundle.complete') : null
+  if (c.status === 'complete') return c.contactId ? goto(s, connected(s, c, c.contactId, name2, null), 'connecting.bundle.complete') : exit(s, 'back', null, 'connecting.bundle.foreign')
   if (c.status === 'declined') return goto(s, { name: 'declined', name2, kept: c.contactId !== null }, 'connecting.bundle.declined')
   return goto(s, { name: 'scanError', code: c.contactId ? 'connect-failed-kept' : 'connect-failed' }, 'connecting.bundle.failed')
 }

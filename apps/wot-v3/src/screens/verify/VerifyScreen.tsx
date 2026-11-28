@@ -2,9 +2,10 @@
 // Composition only: the state comes from useVerify, texts from i18n, pieces from ui/components.
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
-import { useBackInFlow, useConnections, useContact, useCopy, useFormat, usePlatform, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
+import { useBackInFlow, useConnections, useContact, useContacts, useCopy, useFormat, usePlatform, useProfile, useVerify, type VerifyEvent, type VerifyState } from '../../hooks'
 import type { ContactId } from '../../port'
 import { TrustSheet } from '../contacts/TrustSheet'
+import { successOffer } from './success-offer'
 import { useI18n } from '../../i18n'
 import { Button, DialogDescription, DialogTitle, Sheet, SheetContent, useToast } from '../../ui/primitives'
 import {
@@ -64,6 +65,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
   const { clock } = usePlatform()
   const profile = useProfile()
   const connections = useConnections()
+  const contacts = useContacts()
   const copy = useCopy()
   const toast = useToast()
   const myName = profile.status === 'ready' ? (profile.value.name ?? t.contacts.unnamed) : ''
@@ -374,13 +376,15 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       )
     }
     case 'success': {
-      // artboard 2b: both avatars, one sentence, confetti (none under reduced motion)
-      const name = nameOf(s.name2)
+      // artboard 2b: both avatars, one sentence, confetti for a new contact (none under reduced motion). A
+      // known person met again (the contact joined into one known before): the known contact's name, recognized
+      const known = s.recognized && contacts.status === 'ready' ? contacts.value.find((c) => c.id === s.contactId) : undefined
+      const name = known?.name ?? nameOf(s.name2)
       return (
         <div className="relative flex min-h-0 flex-1 flex-col">
           {s.isNew ? <Confetti /> : null}
           {page(
-            <MutualMoment me={myName || t.contacts.unnamed} name={name} />,
+            <MutualMoment me={myName || t.contacts.unnamed} name={name} recognized={s.recognized} />,
             <SuccessActions contactId={s.contactId} name={name} onChat={() => send({ type: 'done' })} />,
             () => send({ type: 'done' }),
             'close',
@@ -398,17 +402,14 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
  *  then on to the chat; or the chat quietly. Trust already given: only the chat. */
 function SuccessActions({ contactId, name, onChat }: { contactId: ContactId; name: string; onChat: () => void }) {
   const { t, f } = useI18n()
-  const contact = useContact(contactId)
-  const given = contact.status === 'ready' && contact.value?.trust.given === true
-  // a contact of another app (the connection ceremony without a card): no conversation, no trust yet
-  const channel = contact.status !== 'ready' || contact.value?.channel !== false
+  const offer = successOffer(useContact(contactId))
   const [sheet, setSheet] = useState(false)
   const focus = useRef<HTMLElement | null>(null)
   return (
     <>
-      {!channel ? (
+      {offer === 'close' ? (
         <PrimaryAction label={t.common.close} onClick={onChat} />
-      ) : given ? (
+      ) : offer === 'chat' ? (
         <PrimaryAction label={t.verify.openChat} onClick={onChat} />
       ) : (
         <>

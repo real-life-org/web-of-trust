@@ -80,6 +80,9 @@ export interface ActSpec {
    *  only when its lanes cover the older one's whole; otherwise the older one runs first (review 483,
    *  rounds 1 to 3). Default: the command's name. */
   lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
+  /** where the command's dedupe key (`command|<part>|…`, index.ts) holds `input.contactId`: the command
+   *  knows which part of its key is a contact. None: its key names no contact (a draft, a prompt, a code). */
+  readonly keyContact?: number
 }
 
 /** why the back-code act does not run for this ceremony now; null when it may */
@@ -242,6 +245,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   counterVerify: {
     policy: 'replay',
+    keyContact: 1,
     run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
   },
@@ -252,13 +256,28 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   giveTrust: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: () => ['anchorMapping'],
-    run: (h, i, o) => h.trust(str(i, 'contactId'), o),
+    // trust toward a blocked contact stays as it is (the block pauses; paper §7.1): read here, right before
+    // the act and behind every gesture taken before it, never from a screen. A committed act answers from
+    // the library's journal first
+    run: (h, i, o) =>
+      parts(h, o.when, [
+        [
+          o.actId,
+          async () => {
+            const id = str(i, 'contactId')
+            const contact = (await h.contacts()).find((c) => c.id === id || c.aliases.includes(id))
+            return contact?.blocked ? { ok: false, code: 'blocked' } : h.trust(id, o)
+          },
+        ],
+      ]),
     outcome: () => undefined,
   },
   withdrawTrust: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: () => ['anchorMapping'],
     run: (h, i, o) => h.untrust(str(i, 'contactId'), o),
     outcome: () => undefined,
@@ -266,6 +285,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   setPaused: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: () => ['star', 'groupStar'],
     run: (h, i, o) => h.pauseTrust(str(i, 'contactId'), i.paused === true, o),
     outcome: () => undefined,
@@ -273,6 +293,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   setClass: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: (i) => [str(i, 'cls')],
     run: (h, i, o) => h.setClass(str(i, 'contactId'), str(i, 'cls') as never, str(i, 'setting') as never, o),
     outcome: () => undefined,
@@ -290,6 +311,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   block: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
@@ -301,6 +323,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   unblock: {
     policy: 'replay',
     ordered: true,
+    keyContact: 1,
     lanes: () => ['block', 'star', 'groupStar'],
     run: (h, i, o) =>
       parts(h, o.when, [
@@ -341,6 +364,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   invite: {
     policy: 'replay',
+    keyContact: 2,
     run: (h, i, o) => h.invite(str(i, 'groupId'), str(i, 'contactId'), o),
     outcome: () => undefined,
   },

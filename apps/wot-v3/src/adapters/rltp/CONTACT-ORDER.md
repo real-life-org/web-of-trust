@@ -92,6 +92,35 @@ section behind the running one.
 | finish write fails | stays open | recovery planned; the act answers from the library's journal, no second act |
 | gate closed (lock) | unchanged | the next opening completes the queue after its resume (`replayOpen`) |
 
+## A contact joined meanwhile
+
+After a second meeting the library keeps a fresh contact for a while and then joins it into the
+contact known before (the chaining, Trust 6a.4; a merge, 2140): the known contact stays the entry,
+the fresh id becomes one of its aliases. The library joins restrictively: the entry is blocked
+where one of the two was (Message Tasks RLTP-MSG-6030), a class is `off` where one held `off`
+(Trust 2160).
+
+**Taken once the ids are one person.** `session.intent` reads every contact id of a command as its
+entry (`entries.ts`) before the section, the dedupe key, the actId and the journal see it. A command
+under an alias is the entry's command, in the entry's one queue; everything above holds unchanged.
+
+`giveTrust` reads the block of its contact inside the act (`acts.ts`), behind every gesture taken
+before it: trust toward a blocked contact is refused (`contact-blocked`) when it runs, not when the
+screen offered it.
+
+**Keys.** A command knows where its dedupe key holds a contact (`acts.ts` `keyContact`; `send`,
+`decide` and the codes name none). Only that part is read as its entry, at the acceptance, when a
+running gesture or an open record is looked for (`keyNow`, `runningUnder`: found under any id of the
+person), and when a journaled key is read. A draft key or a group id that equals a contact id stays
+what it is.
+
+**Open across the join: not covered.** A record taken for the fresh contact before the join and run
+only after it (held, a failure, a restart) stays in the fresh contact's queue, and its act reaches
+the person through the library's reading of the alias. It is not ordered against the entry's queue:
+an `unblock` taken for the fresh contact can run after a `block` of the known one and lift it. The
+same holds for a gesture on the known contact that waits while the fresh one is restricted and
+joined. What these records should do is issue #566.
+
 ## Timers
 
 A planned recovery is a timer of the opening (`LIFECYCLE.md`, register): the end of the opening
@@ -125,4 +154,5 @@ failures and a dedupe read held across a reopening, `review-422-r5`/`-r6` the in
 (records without `seq`), `review-422-r8` (#428) the timers at lock, after a failed opening and a
 timer of an ended opening that fires anyway, plus a `gc-only` probe that the locked opening's holder
 is collectible before its planned recovery was due. `tests/rltp/trust.loopback.test.ts` holds the
-trust acts in the queue (review 483 B1, rounds 1 to 3).
+trust acts in the queue (review 483 B1, rounds 1 to 3). `tests/rltp/re-meet-commands.loopback.test.ts` and
+`re-meet-order.loopback.test.ts` hold the commands on a person met again, once its ids are one.

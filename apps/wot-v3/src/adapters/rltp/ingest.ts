@@ -104,9 +104,9 @@ export function applyEncounterEvents(
         break
       }
       case 'contact.chained': {
+        // a chaining is no meeting: the meetings are the records of the contacts joined (read through the
+        // entry's aliases, projection) and the ends of their ceremonies
         chained.add(e.contactId)
-        const m = met[e.contactId]
-        met[e.contactId] = { metAt: m?.metAt ?? now, lastMetAt: now }
         break
       }
       default:
@@ -137,6 +137,18 @@ export function ingest(input: IngestInput): IngestOutput {
     if (p.kind === 'encounter-confirm' && p.contactId !== undefined && p.expiresAt !== undefined) counter[p.contactId] = { until: p.expiresAt }
   }
   const present = new Set(input.contacts.map((c) => c.id))
+  // what was kept for a contact that was joined into another is the entry's from then on: the window that
+  // ends later, the sent card where the entry holds none
+  for (const c of input.contacts) {
+    for (const a of c.aliases) {
+      const w = counter[a]
+      if (w && w.until > (counter[c.id]?.until ?? -Infinity)) counter[c.id] = w
+      delete counter[a]
+      const card = sent[a]
+      if (card && !sent[c.id]) sent[c.id] = card
+      delete sent[a]
+    }
+  }
   for (const c of input.contacts) if (c.verification === 'outgoing' || c.verification === 'mutual') delete counter[c.id]
   for (const k of Object.keys(counter)) if (!present.has(k)) delete counter[k]
   const lines: LogLine[] = []

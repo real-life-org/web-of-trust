@@ -6,7 +6,7 @@ import type { ContactId, ConversationItem, ConversationKey, Decision, DecisionId
 import { clipText, useContact, useContacts, useConversation, useAnswerInvite, useDecisions, useDecline, useDraft, useFormat, useNav } from '../../hooks'
 import { useI18n, type I18n } from '../../i18n'
 import { deliveryWord } from './delivery-word'
-import { firstUnreadId } from './first-unread'
+import { firstUnreadId, summaryOfKey } from './first-unread'
 import {
   CenteredNote,
   ChatHeader,
@@ -101,7 +101,7 @@ export function ConversationScreen({ conversationKey }: { conversationKey: Conve
 
   const messages = c.items
   if (anchor === undefined) {
-    const summary = contacts.status === 'ready' ? contacts.value.find((x) => `c:${x.id}` === conversationKey)?.conversation : undefined
+    const summary = contacts.status === 'ready' ? summaryOfKey(contacts.value, conversationKey) : undefined
     setAnchor(summary ? firstUnreadId(messages, summary.unread) : null)
   }
   const latest = (() => {
