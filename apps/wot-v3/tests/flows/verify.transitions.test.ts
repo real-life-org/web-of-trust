@@ -642,7 +642,8 @@ describe('verify transitions over a port double', () => {
     fb3.scanner.source = () => sent.value.qr
     fb3.send({ type: 'scan' })
     await fb3.until('success')
-    expect(fb3.state()).toMatchObject({ isNew: false })
+    // the same card read again: not new, and no second meeting either (nothing was joined)
+    expect(fb3.state()).toMatchObject({ isNew: false, recognized: false })
   })
 
   it('mutual seen before the act result: committing goes to success; a bundle while the fallback loads goes to success', async () => {
@@ -877,12 +878,12 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     first.fb.send({ type: 'done' })
     for (let i = 0; i < 12; i++) await tick()
     const { fa, fb } = await meetOnce()
-    expect(fa.state()).toMatchObject({ isNew: true })
+    expect(fa.state()).toMatchObject({ isNew: true, recognized: false })
     expect(fa.state()).not.toMatchObject({ contactId: knownAtA })
     // the continuity probe and mapping go back and forth as device time passes (Trust 6a.4)
     await until(() => fa.rows().includes('success.bundle.joined') && fb.rows().includes('success.bundle.joined'), 'the join on both')
-    expect(fa.state()).toMatchObject({ name: 'success', contactId: knownAtA, name2: 'Bea', isNew: false })
-    expect(fb.state()).toMatchObject({ name: 'success', contactId: knownAtB, name2: 'Al', isNew: false })
+    expect(fa.state()).toMatchObject({ name: 'success', contactId: knownAtA, name2: 'Bea', isNew: false, recognized: true })
+    expect(fb.state()).toMatchObject({ name: 'success', contactId: knownAtB, name2: 'Al', isNew: false, recognized: true })
     fa.send({ type: 'done' })
     expect(fa.state()).toMatchObject({ name: 'exit', to: 'chat', contactId: knownAtA })
   }, 120_000)
