@@ -104,26 +104,32 @@ where one of the two was (Message Tasks RLTP-MSG-6030), a class is `off` where o
 entry (`entries.ts`) before the section, the dedupe key, the actId and the journal see it. A command
 under an alias is the entry's command, in the entry's one queue; everything above holds unchanged.
 
-**Taken for the fresh contact, run only after the join** (held, a failure, a restart; or taken under
-the fresh id in the moment the holder had joined it and the app had not read that yet). The gesture
-was for the contact as it stood then. Its record stays in the fresh contact's queue and is never
-rewritten; its attempt reads at the holder what the contact stands for, and where that is another
-entry now:
+**The person changed between taking and running.** A gesture is for the person as it stood when it
+was taken: an ordered record journals the contacts joined into its entry by then (`aliases`). Its
+attempt reads at the holder what its contact stands for. A contact was joined meanwhile where the
+record's own contact is an alias of another entry now (taken for the fresh contact, run after the
+join: held, a failure, a restart; or taken under the fresh id in the moment the holder had joined it
+and the app had not read that yet), or where its entry holds an alias the record does not name (taken
+for the known contact, the fresh one joined into it since). Then:
 
-- it runs in the entry's section, behind everything open for the entry (the entry's open records get
-  their attempt first; one that stays open holds it, its recovery planned);
-- a record that **restricts** (`acts.ts` `restricts`: `block`, `withdrawTrust`, `setPaused` on,
-  `setClass` off) runs. The join would have carried the restriction over had the act run in time, so
-  the end state is the same;
 - a record that **lifts or grants** (`unblock`, `giveTrust`, `setPaused` off, `setClass` on or
-  default) and has committed nothing in the library ends `done` with `refused/superseded`, without an
-  act: the person it stands for now may carry a decision the gesture never saw (a block of the known
-  contact). One that committed its first part before the join completes its parts (no partial state).
+  default) runs nothing more, no part of it: the person may carry a restriction the gesture never saw
+  (a block or a pause of the other contact). Where every part committed before, it answers from the
+  library's journal; otherwise it ends `done` with `refused/superseded`. A part left open stays undone
+  (an unblock whose resume failed leaves the pause): lifting it takes a new gesture for the person;
+- a record that **restricts** (`acts.ts` `restricts`: `block`, `withdrawTrust`, `setPaused` on,
+  `setClass` off) runs. Taken for the fresh contact, it runs in the entry's section, behind everything
+  open for the entry (the entry's open records get their attempt first; one that stays open holds it,
+  its recovery planned), and as an act of its own on the entry (act id `<actId>@<entry>`, its parts
+  under it): a part it committed for the fresh contact before the join was that contact's, the person
+  gets the whole restriction. The record stays in the fresh contact's queue and is never rewritten.
 
-So an unblock or a trust taken for the fresh contact never lifts a restriction of the person, whatever
-order the two queues recover in. The price: a restriction of the fresh contact taken before the join
-ends behind a lift taken for the entry before that attempt ran, and a lift for the fresh contact that
-did not run in time has to be repeated by the human.
+So no gesture lifts a restriction of a person it did not see, and a restriction taken for either
+contact holds for the person, whatever order the queues recover in and wherever a failure cut an act.
+The price: a restriction of the fresh contact taken before the join ends behind a lift taken for the
+person before that attempt ran, and a lift that did not run before the join has to be repeated by the
+human. An entry joined, split off and joined again while one attempt runs is not followed from inside
+its own section: the record stays open and its recovery starts over.
 
 **One turn for reading and act** (`contact-turn.ts`). The write gate counts calls and does not order
 them, and the holder's joining work (`receive`, `tick`, `resume`, `sharedConnectReceive`) runs on the
@@ -135,9 +141,11 @@ turn; joining work shares the turn among itself and never runs between the two. 
 before it: trust toward a blocked contact is refused (`contact-blocked`) when it runs, not when the
 screen offered it.
 
-**Unordered commands** with a contact in their key (`invite`, `counterVerify`): a running gesture and
-an open record are found under any id of the person (`keyNow`, `runningUnder`), read as the entries
-stand now; only the key part that is the command's typed contact id is read so.
+**Keys.** A command knows where its dedupe key holds a contact (`acts.ts` `keyContact`; `send`,
+`decide` and the codes name none). Only that part is read as its entry, at the acceptance, when a
+running gesture or an open record is looked for (`keyNow`, `runningUnder`: found under any id of the
+person), and when a journaled key is read. A draft key or a group id that equals a contact id stays
+what it is.
 
 ## Timers
 
@@ -173,7 +181,8 @@ failures and a dedupe read held across a reopening, `review-422-r5`/`-r6` the in
 timer of an ended opening that fires anyway, plus a `gc-only` probe that the locked opening's holder
 is collectible before its planned recovery was due. `tests/rltp/trust.loopback.test.ts` holds the
 trust acts in the queue (review 483 B1, rounds 1 to 3). `tests/rltp/re-meet-order.loopback.test.ts` holds a
-contact joined meanwhile: the runs of the review of #563, generated runs with the chaining before any
+contact joined meanwhile: the runs of the reviews of #563 (a part committed before the join, the
+surviving id, a draft key that equals an alias among them), generated runs with the chaining before any
 command and the first command left over (held before its journal, before its act, or cut and
 recovered), each against the end state this section gives; `re-meet-commands.loopback.test.ts` the
 commands under an alias; `contact-turn.test.ts` the turn.

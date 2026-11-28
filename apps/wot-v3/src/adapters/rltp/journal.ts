@@ -30,6 +30,10 @@ export interface IntentRecord {
    *  open record of the contact when it was journaled; a timestamp alone would not tell two gestures
    *  of one millisecond apart. Records written before 3.0.4 have none and come first. */
   readonly seq?: number
+  /** an ordered record's person as it stood when the gesture was taken: the contacts joined into its
+   *  entry by then (its aliases; absent: none). A contact joined into it later is one the gesture never saw
+   *  (CONTACT-ORDER.md "A contact joined meanwhile") */
+  readonly aliases?: readonly string[]
   readonly attempts: number
   /** what the human confirms again (needs-confirmation only) */
   readonly preview?: CardPreview

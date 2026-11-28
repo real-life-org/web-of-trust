@@ -13,21 +13,35 @@ export interface Entries {
   (id: string): string
   /** no alias at all: every id stands for itself */
   readonly none: boolean
+  /** the contacts joined into the entry `id` stands for (its aliases) */
+  aliasesOf(id: string): readonly string[]
 }
 
 export function entryIds(contacts: readonly ContactView[]): Entries {
   const of = new Map<string, string>()
-  for (const c of contacts) for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
-  return Object.assign((id: string) => of.get(id) ?? id, { none: of.size === 0 })
+  const aliases = new Map<string, readonly string[]>()
+  for (const c of contacts) {
+    aliases.set(c.id, c.aliases)
+    for (const a of c.aliases) if (a !== c.id) of.set(a, c.id)
+  }
+  const entry = (id: string) => of.get(id) ?? id
+  return Object.assign(entry, { none: of.size === 0, aliasesOf: (id: string) => aliases.get(entry(id)) ?? [] })
 }
 
 /** a conversation or command target (`c:<id>`) as its entry's; any other target as it is */
 export const entryKey = <K extends string>(entry: Entries, key: K): K => (key.startsWith('c:') ? (`c:${entry(key.slice(2))}` as K) : key)
 
-/** a dedupe key (`command|<part>|…`) of a command on `contactId`, with that part read as its entry; a key of
- *  a command without a contact (a group, a draft, a prompt) as it is */
-export const entryDedupe = (entry: Entries, dedupe: string, contactId: unknown): string =>
-  typeof contactId !== 'string' || entry(contactId) === contactId ? dedupe : dedupe.split('|').map((part) => (part === contactId ? entry(contactId) : part)).join('|')
+/** a dedupe key (`command|<part>|…`) of a command on `contactId`, with the key's contact part read as its
+ *  entry. `at` is where the command's key holds its contact (`acts.ts` `keyContact`; none: the key names no
+ *  contact). Only that part, and only where it is the command's contact: a draft key or a group id that
+ *  happens to equal a contact id is never read as one */
+export const entryDedupe = (entry: Entries, dedupe: string, contactId: unknown, at: number | undefined): string => {
+  if (at === undefined || typeof contactId !== 'string' || entry(contactId) === contactId) return dedupe
+  const parts = dedupe.split('|')
+  if (parts[at] !== contactId) return dedupe
+  parts[at] = entry(contactId)
+  return parts.join('|')
+}
 
 /** a command's input with its contact id read as its entry */
 export const entryInput = <I extends Readonly<Record<string, unknown>>>(entry: Entries, input: I): I =>
