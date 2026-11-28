@@ -244,7 +244,8 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     case 'committing':
       return page(<Working label={v.committing} />, undefined, undefined)
     case 'capturing':
-      return page(<Working label={v.capturing} />, undefined, undefined)
+      // the capture goes on in the core: back is a way out while its result or a store is awaited
+      return page(<Working label={v.capturing} />, undefined, back)
     case 'waiting': {
       const name = nameOf(s.name2)
       return page(

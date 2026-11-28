@@ -257,11 +257,10 @@ export interface Connection {
   // What the core holds of the ceremony, read from its view on every bundle, never from a screen's history
   /** this side's code was read by a camera in one place: the scanner's `scan`, the shower's `displayed` */
   readonly camera: boolean
-  /** the acceptance is made: the inviter accepted, or the responder received the inviter's acceptance (each
-   *  side issues its credential exactly then: `myCredential` of the core's view) */
+  /** the acceptance is made: the inviter accepted, or the responder received the inviter's acceptance
+   *  (`accepted` of the core's view) */
   readonly accepted: boolean
-  /** the responder showed its back-code: the contact it opened stands while the ceremony is open (a contact
-   *  of the carried path opens only at the end) */
+  /** the responder showed its back-code (`backShown` of the core's view); false for the inviter */
   readonly backShown: boolean
   /** the link names a relay its documents travel through; false for a link of a device without a carrier;
    *  null while it is not resolved (unknown, never taken as an answer) */

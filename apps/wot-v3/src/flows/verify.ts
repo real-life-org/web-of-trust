@@ -30,12 +30,10 @@ export interface ProposalRef {
   readonly connection: ConnectionId
   readonly card: CardRef | null
   readonly name: string | null
-  /** the end of the code it answers: it is accepted only before (the person scans again after) */
-  readonly validUntil: number
 }
 
 /** where a connection ceremony stands, from the last published bundle */
-export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'validUntil' | 'decision'>
+export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'decision'>
 
 /** `connect-failed`: the other side ended the connection ceremony with an error (its code is in the diagnostics) */
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used' | 'no-card' | 'code-too-long'> | 'failed' | 'connect-failed'
@@ -100,7 +98,9 @@ export type VerifyState =
   | (Base & { readonly name: 'waiting'; readonly contactId: ContactId; readonly name2: string | null; readonly waitLong: boolean })
   | (Base & { readonly name: 'loadingFallback'; readonly contactId: ContactId; readonly name2: string | null })
   | (Base & { readonly name: 'fallback'; readonly contactId: ContactId; readonly name2: string | null; readonly sentQr: string })
-  | (Base & { readonly name: 'capturing'; readonly preview: CardPreview; readonly origin: CaptureOrigin })
+  /** `mutualNow`: who is mutual by the last bundle that arrived during this capture (none before it): only
+   *  a bundle newer than the capture's start can overrule its result */
+  | (Base & { readonly name: 'capturing'; readonly preview: CardPreview; readonly origin: CaptureOrigin; readonly mutualNow?: readonly string[] })
   /** `decision`: the open request it answers; null when none is open any more (declined, gone) and the
    *  counter-step is offered directly */
   | (Base & { readonly name: 'confirmationRequired'; readonly contactId: ContactId; readonly decision: DecisionId | null; readonly name2: string | null; readonly busy: boolean })
@@ -108,7 +108,7 @@ export type VerifyState =
   | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   /** a proposal answers the shown code (a connection ceremony): the shower accepts or declines; a
    *  decline tells the other side and spends the code */
-  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly validUntil: number; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
+  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
   /** the ceremony runs: the scanner waits for the shower's answer, the shower for the last documents.
    *  What the scanner does next is decided by `scannerStep` from the ceremony's state in the last bundle */
   | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean; readonly phase?: ScannerPhase; readonly kept?: boolean; readonly due?: boolean })
@@ -176,8 +176,8 @@ export type VerifyEffect =
   | ({ readonly id: 'ver.wait'; readonly ms: number } & Effect)
   | ({ readonly id: 'ver.sent'; readonly contactId: ContactId } & Effect)
   | ({ readonly id: 'ver.counter'; readonly contactId: ContactId } & Effect)
-  /** `validUntil`: an accept past the answered code's end is not issued (`code-expired`) */
-  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline'; readonly validUntil: number } & Effect)
+  /** an accept past the answered code's end is not issued: the act refuses it (`code-expired`) */
+  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline' } & Effect)
   | ({ readonly id: 'ver.back'; readonly connection: ConnectionId } & Effect)
   | ({ readonly id: 'ver.readBack'; readonly raw: string } & Effect)
 
@@ -270,19 +270,23 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('capturing.result.again.counter', 'result ver.capture', 'confirmationRequired{decision: null}', 'free', 'nothing open; the counter-step after the question', { guard: 'already captured, incoming, no open request, counter-step offered' }),
   row('capturing.result.again.pending', 'result ver.capture', 'counterPending', 'free', '–', { guard: 'already captured, own step issued' }),
   row('capturing.result.again.mutual', 'result ver.capture', 'success{isNew: false}', 'free', '–', { guard: 'already captured, mutual' }),
+  row('capturing.result.bundle.mutual', 'result ver.capture', 'success', 'free', '–', { guard: 'any result for a contact a bundle during this capture names mutual (newer than the result; a bundle before the capture started does not count): it wins over every other row of the result' }),
   row('capturing.result.again.met', 'result ver.capture', 'ready{hint: nothing-open}', 'free', '–', { guard: 'already captured, known contact, nothing open, no counter-step offered yet' }),
   row('capturing.result.again.none', 'result ver.capture', 'ready{hint}', 'free', '–', { guard: 'already captured, nothing open' }),
-  row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal'),
+  row('capturing.result.refused', 'result ver.capture', 'scanError{code}', 'free', 'intent done with the refusal; a store in error is the error'),
+  row('capturing.back', 'back', 'ready | showing', 'free', 'the capture goes on in the core; its result is in the conversation', { guard: 'always: the way out while the result or a store is awaited; with a valid card ready (ver.expire), without one a fresh card (ver.show)', effects: ['ver.expire | ver.show'] }),
   row('confirmationRequired.accept', 'accept', 'confirmationRequired{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
   row('confirmationRequired.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmationRequired.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay'),
   row('confirmationRequired.result.failed', 'result ver.counter', 'confirmationRequired', 'free', 'the decision stays open'),
+  row('confirmationRequired.result.expired', 'result ver.counter', 'ready{hint: nothing-open} | showing', 'free', '–', { guard: 'refused because the request ended or is gone (decision-expired, decision-gone): nothing is open to answer', effects: ['ver.expire | ver.show'] }),
   row('confirmationRequired.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation (E4: no decline here)'),
   row('confirmationRequired.leave', 'leave', 'exit(chat)', 'free', 'the decision stays open in the conversation'),
   row('confirmIncoming.accept', 'accept', 'confirmIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.counter'] }),
   row('confirmIncoming.bundle.mutual', 'bundle', 'success', 'free', '–', { guard: 'verification === mutual (also while the counter-step runs)' }),
   row('confirmIncoming.result.ok', 'result ver.counter', 'counterPending', 'free', 'intent replay', { guard: 'not mutual yet' }),
   row('confirmIncoming.result.failed', 'result ver.counter', 'confirmIncoming{failed}', 'free', 'the decision stays open'),
+  row('confirmIncoming.result.expired', 'result ver.counter', 'showing', 'free', '–', { guard: 'refused because the request ended or is gone (decision-expired, decision-gone): a fresh card', effects: ['ver.show'] }),
   row('confirmIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list and the conversation'),
   row('confirmIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the decision is no longer open (decided on another device or in the conversation)', effects: ['ver.show'] }),
   row('ready.bundle.proposed', 'bundle', 'connectIncoming{card: null}', 'free', 'the decision stays open in the list', { guard: 'an open proposal answers the shown code: one code, one person' }),
@@ -323,7 +327,8 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('connectIncoming.decline', 'decline', 'connectIncoming{busy}', 'after-effect', 'intent replay', { effects: ['ver.decide'] }),
   row('connectIncoming.result.accepted', 'result ver.decide', 'connecting{shower}', 'free', 'the ceremony completes from the core’s snapshot', { guard: 'accepted, not complete yet' }),
   row('connectIncoming.result.declined', 'result ver.decide', 'showing', 'free', '–', { guard: 'declined: the code is spent', effects: ['ver.show'] }),
-  row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'accepted past the code’s end: nothing is issued, a fresh code', effects: ['ver.show'] }),
+  row('connectIncoming.result.expired', 'result ver.decide', 'showing', 'free', 'the proposal stays unanswered in the core until it expires there', { guard: 'answered past the code’s end or the request’s (code-expired, decision-expired): nothing is issued, a fresh code', effects: ['ver.show'] }),
+  row('connectIncoming.result.gone', 'result ver.decide', 'success | showing', 'free', '–', { guard: 'refused, and the last bundle\'s ceremony holds the request no longer (decided elsewhere, ended; our own answer running is no end): as connectIncoming.bundle.gone', effects: ['ver.show'] }),
   row('connectIncoming.result.failed', 'result ver.decide', 'connectIncoming{failed}', 'free', 'the decision stays open'),
   row('connectIncoming.notNow', 'notNow', 'exit(back, deferred)', 'free', 'the decision stays open in the list'),
   row('connectIncoming.bundle.gone', 'bundle', 'showing', 'free', '–', { guard: 'not busy, the proposal is no longer open, the ceremony neither complete nor holding a contact (that is the success, connecting.bundle.complete)', effects: ['ver.show'] }),
@@ -371,6 +376,8 @@ const toReady = (s: S, row: string, hint: ReadyHint | null = null): Out =>
   s.card ? emit(s, { name: 'ready', hint }, row, (r) => [{ id: 'ver.expire', run: r, at: s.card?.expiresAt ?? 0 }]) : show(s, row)
 
 const SCAN_ERRORS: readonly string[] = ['card-invalid', 'card-self', 'already-scanned', 'code-expired', 'code-used']
+/** a counter-step refused because its request is over: nothing is open to answer any more */
+const requestEnded = (code: string | undefined): boolean => code === 'decision-expired' || code === 'decision-gone'
 const scanCode = (code: string | undefined): ScanErrorCode => (code && SCAN_ERRORS.includes(code) ? (code as ScanErrorCode) : 'failed')
 
 /** the contact an id stands for now, as the machine knows it from the last bundle: itself, or the
@@ -535,10 +542,17 @@ function step(s: S, e: E): Out {
       if (e.type === 'leave' || e.type === 'back') return exit(s, 'chat', s.contactId, 'fallback.leave')
       return stay(s)
     case 'capturing':
+      if (e.type === 'back') return toReady(s, 'capturing.back')
+      // a bundle during this capture: what it says counts against the result (the lage before the start does not)
+      if (e.type === 'bundle') return { state: { ...s, mutualNow: s.mutual }, effects: [], row: null }
       if (isResult(e, s.run, 'ver.capture')) {
         if (!e.result.ok) return goto(s, { name: 'scanError', code: scanCode(e.result.code) }, 'capturing.result.refused')
         const v = e.result.value as { outcome: EncounterOutcome; follow: CaptureFollow; decision: DecisionId | null; contactId: ContactId | null }
         const name2 = s.preview.name
+        // the newer lage first: a contact the last bundle names mutual is the success, whatever the result
+        // read (a bundle during the capture is newer than the stores the result was read from)
+        const resultContact = v.outcome.kind === 'captured' ? v.outcome.contactId : v.contactId
+        if (resultContact && (s.mutualNow ?? []).includes(current(s, resultContact))) return goto(s, { ...succeed(s, resultContact, name2), ...(v.outcome.kind === 'captured' ? {} : { isNew: false }) }, 'capturing.result.bundle.mutual')
         if (v.outcome.kind === 'captured') {
           return goto(s, { name: 'confirmationRequired', contactId: v.outcome.contactId, decision: v.outcome.decision, name2, busy: false }, 'capturing.result.captured')
         }
@@ -558,6 +572,7 @@ function step(s: S, e: E): Out {
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pick(s), busy: true }, 'confirmationRequired.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
+        if (!e.result.ok && requestEnded(e.result.code)) return toReady(s, 'confirmationRequired.result.expired', 'nothing-open')
         if (!e.result.ok) return goto(s, { ...pick(s), busy: false }, 'confirmationRequired.result.failed')
         if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmationRequired.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmationRequired.result.ok')
@@ -569,6 +584,7 @@ function step(s: S, e: E): Out {
       if (mutual(s, e, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
       if (e.type === 'accept' && !s.busy) return emit(s, { ...pickIncoming(s), busy: true, failed: false }, 'confirmIncoming.accept', (r) => [{ id: 'ver.counter', run: r, contactId: s.contactId }])
       if (isResult(e, s.run, 'ver.counter')) {
+        if (!e.result.ok && requestEnded(e.result.code)) return show(s, 'confirmIncoming.result.expired')
         if (!e.result.ok) return goto(s, { ...pickIncoming(s), busy: false, failed: true }, 'confirmIncoming.result.failed')
         if (isMutual(s, s.contactId)) return goto(s, succeed(s, s.contactId, s.name2), 'confirmIncoming.bundle.mutual')
         return goto(s, { name: 'counterPending', contactId: s.contactId, name2: s.name2 }, 'confirmIncoming.result.ok')
@@ -579,7 +595,12 @@ function step(s: S, e: E): Out {
       return stay(s)
     case 'connectIncoming': {
       if (isResult(e, s.run, 'ver.decide')) {
-        if (!e.result.ok && e.result.code === 'code-expired') return show(s, 'connectIncoming.result.expired')
+        if (!e.result.ok && (e.result.code === 'code-expired' || e.result.code === 'decision-expired')) return show(s, 'connectIncoming.result.expired')
+        // the request is no longer open by the last bundle (it came while the act ran): as when it goes then
+        // where the request stands now, by the last bundle's ceremony: its open request is another one or none.
+        // Our own answer running (in-flight) keeps the request; a ceremony the bundle does not name says nothing
+        const now = s.connections?.[s.connection]
+        if (!e.result.ok && now && now.decision !== s.decision) return proposalGone(s, 'connectIncoming.result.gone')
         if (!e.result.ok) return goto(s, { ...pickConnect(s), busy: null, failed: true }, 'connectIncoming.result.failed')
         if (s.busy === 'decline') return show(s, 'connectIncoming.result.declined')
         return connectionEnd(s, s.connection, s.name2) ?? goto(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'shower', waitLong: false }, 'connectIncoming.result.accepted')
@@ -587,16 +608,10 @@ function step(s: S, e: E): Out {
       if (s.busy) return stay(s)
       if (e.type === 'accept' || e.type === 'decline') {
         const choice = e.type
-        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice, validUntil: s.validUntil }])
+        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice }])
       }
       if (e.type === 'notNow' || e.type === 'back' || e.type === 'leave') return exit(s, 'back', null, 'connectIncoming.notNow', s.decision)
-      if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) {
-        // decided elsewhere: a contact of this ceremony (accepted, open or complete) is the success; anything
-        // else leaves a spent code behind
-        const c = s.connections?.[s.connection]
-        if (c && (c.status === 'complete' || (c.status === 'open' && c.contactId))) return connectionEnd(s, s.connection, s.name2) ?? stay(s)
-        return show(s, 'connectIncoming.bundle.gone')
-      }
+      if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) return proposalGone(s, 'connectIncoming.bundle.gone')
       return stay(s)
     }
     case 'connecting': {
@@ -707,7 +722,15 @@ function step(s: S, e: E): Out {
   }
 }
 
-const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, validUntil: s.validUntil, name2: s.name2 })
+/** the proposal asked is no longer open: decided elsewhere, a contact of this ceremony (accepted, open or
+ *  complete) is the success; anything else leaves a spent code behind */
+function proposalGone(s: Extract<S, { name: 'connectIncoming' }>, row: string): Out {
+  const c = s.connections?.[s.connection]
+  if (c && (c.status === 'complete' || (c.status === 'open' && c.contactId))) return connectionEnd(s, s.connection, s.name2) ?? stay(s)
+  return show(s, row)
+}
+
+const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, name2: s.name2 })
 const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role, ...(s.phase ? { phase: s.phase } : {}), ...(s.kept ? { kept: s.kept } : {}), ...(s.due ? { due: s.due } : {}) })
 
 /** the end of a back-code's link: "the contact stays" only when this ceremony's contact is there */
@@ -722,7 +745,7 @@ function readBack(s: S, connection: ConnectionId): Out {
   if (!c || (c.status === 'open' && !c.decision && !c.accepted && !c.contactId)) {
     return s.name === 'readingBack' && s.connection === connection ? stay(s) : goto(s, { name: 'readingBack', connection }, 'readingBack.result.unknown')
   }
-  if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, validUntil: c.validUntil, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
+  if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
   if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, { name: 'success', contactId: c.contactId, name2: c.name, isNew: true, ...(c.status === 'open' ? { connection } : {}) }, 'readingBack.result.contact')
   // ended with an error after the acceptance opened the contact here: said so, the contact stays
   if (c?.status === 'failed' && c.contactId) return goto(s, { name: 'scanError', code: 'connect-failed-kept' }, 'readingBack.result.failed')
@@ -767,7 +790,7 @@ function scannerStep(s: S, connection: ConnectionId, cause: 'entry' | 'due' | 'b
 function proposedHere(s: S, e: Extract<E, { type: 'bundle' }>, row: string): Out | null {
   const ref = s.card?.card ?? null
   const p = ref === null ? undefined : e.proposals?.find((x) => x.card === ref)
-  return p ? goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, validUntil: p.validUntil, name2: p.name, busy: null, failed: false }, row) : null
+  return p ? goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, name2: p.name, busy: null, failed: false }, row) : null
 }
 
 /** Where a connection ceremony leaves the shower's flow, by the last bundle; null while it runs. Complete

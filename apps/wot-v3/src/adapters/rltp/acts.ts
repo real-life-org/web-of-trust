@@ -3,7 +3,7 @@
 // the journaled input and the same actId, so the library's act journal makes it idempotent.
 
 import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent, SharedConnectView } from '@real-life/trust-protocol'
-import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
+import { CHALLENGE_MAX_AGE, sharedConnect as sc } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
 import type { CommandName, ConnectionId, ContactId, DecisionId, EncounterOutcome, GroupId, MessageId } from '../../port'
 import type { LogLine, MessageLine } from './app-data'
@@ -26,7 +26,8 @@ export interface ActContext {
   readonly legacyCard: boolean
   /** the app is in front now (a human act that opens a contact runs only then) */
   foreground(): boolean
-  /** the device time now (an act run late, a recovery, reads its preconditions at this time) */
+  /** the session's time now: the device time, never behind a time this device already used (an act run
+   *  late, a recovery, reads its preconditions and deadlines at this time; a clock set back reopens none) */
   now(): number
 }
 
@@ -41,10 +42,54 @@ async function ownName(h: Holder): Promise<{ name: string } | Record<string, nev
   return typeof name === 'string' && name.length > 0 ? { name } : {}
 }
 
-/** `_exp` of a trigger link the holder wrote, in milliseconds */
+/** `_exp` of a trigger link this holder wrote, in milliseconds, for showing its end: read from the fragment
+ *  as the library reads it (an act answering a link reads it with the library's own reader) */
 export function linkExpiry(link: string): number {
-  const m = /[#&]_exp=(\d+)/.exec(link)
-  return m ? Number(m[1]) * 1000 : 0
+  const hash = link.indexOf('#')
+  if (hash < 0) return 0
+  for (const kv of link.slice(hash + 1).split('&')) {
+    const at = kv.indexOf('=')
+    const v = at < 0 ? '' : kv.slice(at + 1)
+    if (kv.slice(0, at) === '_exp' && /^[1-9][0-9]{0,11}$/.test(v)) return Number(v) * 1000
+  }
+  return 0
+}
+
+/** until when (ms) the inviter takes a proposal for its link and accepts it: the link's `_exp` plus the
+ *  ceremony's clock tolerance (the code in front of the person, with the tolerance the holder takes a
+ *  proposal with) */
+export function proposalValidUntil(link: { readonly exp: number }): number {
+  return (link.exp + sc.CLOCK_TOLERANCE_S) * 1000
+}
+
+/** An act bound to a deadline (a link's end, a prompt's). An act that committed under this actId is
+ *  answered with the library's journaled result and nothing runs again (its inputs may have changed
+ *  since, a profile name). Otherwise `open` reads the act's inputs and deadline, and the deadline is read
+ *  against the session's time of the act (`ctx.now`), never against the journaled time of the intent (an
+ *  intent may wait in the app's journal past it): `past` names the refusal for a deadline passed (null:
+ *  none), read with no pause before `run` starts the holder's act. */
+async function beforeDeadline(h: Holder, o: ActOpts, ctx: ActContext, open: () => Promise<{ past: (now: number) => ActError | null; run: () => Promise<ActResult> }>): Promise<ActOutcome> {
+  const rp = await h.replay(o.actId, ctx.now())
+  if (rp.ok) return { ok: true, outbound: [], events: [...rp.result.events] }
+  const { past, run } = await open()
+  const refused = past(ctx.now())
+  return refused !== null ? { ok: false, code: refused } : run()
+}
+
+/** a code past its end, as the core refuses one past its window (`code-expired` at the port) */
+const CODE_ENDED: ActError = 'gate-expired'
+
+/** An answer to a prompt: only before the prompt's own end; an acceptance of a proposal also only while the
+ *  code it answers is valid (proposalValidUntil). A decline of a proposal issues nothing and is bound to the
+ *  prompt's end alone. */
+function answerPrompt(h: Holder, promptId: string, choice: 'accept' | 'decline', o: ActOpts, ctx: ActContext): Promise<ActOutcome> {
+  return beforeDeadline(h, o, ctx, async () => {
+    const prompt = (await h.prompts()).find((p) => p.id === promptId)
+    const v = choice === 'accept' && prompt?.kind === 'shared-connect-confirm' ? (await h.sharedConnect()).find((x) => x.promptId === promptId) : undefined
+    const promptEnd = prompt?.expiresAt ?? Infinity
+    const codeEnd = v ? proposalValidUntil(v.link) : Infinity
+    return { past: (now) => (now >= promptEnd ? 'prompt-expired' : now > codeEnd ? CODE_ENDED : null), run: () => h.decide(promptId, choice, o) }
+  })
 }
 
 /** a later part of an act refused after an earlier one committed: the contact's state is partial,
@@ -85,7 +130,7 @@ export interface ActSpec {
 /** why the back-code act does not run for this ceremony now; null when it may */
 export function notShown(v: SharedConnectView | undefined, now: number, foreground: boolean): 'closed' | 'accepted' | 'expired' | 'background' | null {
   if (!v || v.role !== 'responder' || v.status !== 'open') return 'closed'
-  if (v.myCredential !== null) return 'accepted'
+  if (v.accepted) return 'accepted'
   if (now >= v.link.exp * 1000) return 'expired'
   if (!foreground) return 'background'
   return null
@@ -207,8 +252,19 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: async (h, i, o, ctx) => {
       // a trigger link: the responder's proposal; `scan` only for a code this device's camera read
       if (typeof i.link === 'string') {
-        const carrier = await ctx.offer(i.carrier)
-        return h.sharedConnectPropose({ link: i.link, relays: (ctx.relays ?? []).map((r) => ({ ...r })), channel: i.origin === 'camera' ? 'scan' : 'link', ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
+        const link = i.link
+        return beforeDeadline(h, o, ctx, async () => {
+          const carrier = await ctx.offer(i.carrier)
+          const name = await ownName(h)
+          // the link's end as the library's reader takes it (`_exp` of the fragment; valid before it); a link
+          // it refuses otherwise is the holder's to refuse. Expired once is expired later: the time never runs back
+          const read = await sc.readSharedConnectLink(link, Math.floor(ctx.now() / 1000))
+          const end = read.ok ? read.link.exp * 1000 : read.reason === 'expired' ? 0 : Infinity
+          return {
+            past: (now) => (now >= end ? CODE_ENDED : null),
+            run: () => h.sharedConnectPropose({ link, relays: (ctx.relays ?? []).map((r) => ({ ...r })), channel: i.origin === 'camera' ? 'scan' : 'link', ...name, ...(carrier ? { carrier } : {}) }, o),
+          }
+        })
       }
       if (i.role === 'sent') return h.captureSentCard(i.card as never, o)
       const carrier = await ctx.offer(i.carrier)
@@ -242,7 +298,7 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   },
   counterVerify: {
     policy: 'replay',
-    run: (h, i, o) => (typeof i.promptId === 'string' ? h.decide(i.promptId, 'accept', o) : h.counter(str(i, 'contactId'), o)),
+    run: (h, i, o, ctx) => (typeof i.promptId === 'string' ? answerPrompt(h, i.promptId, 'accept', o, ctx) : h.counter(str(i, 'contactId'), o)),
     outcome: (_e, i) => (typeof i.promptId === 'string' ? { decided: { prompt: i.promptId, choice: 'accept' } } : null),
   },
   // Trust is a setting on this device (Trust 2770, 2840): on sends the own anchor (an anchor-mapping),
@@ -354,9 +410,10 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
     run: (h, i, o) => h.leaveGroup(str(i, 'groupId'), o),
     outcome: () => undefined,
   },
+  // the deadlines of the answer read at the act (answerPrompt)
   decide: {
     policy: 'replay',
-    run: (h, i, o) => h.decide(str(i, 'promptId'), i.choice === 'decline' ? 'decline' : 'accept', o),
+    run: (h, i, o, ctx) => answerPrompt(h, str(i, 'promptId'), i.choice === 'decline' ? 'decline' : 'accept', o, ctx),
     outcome: (_e, i) => ({ decided: { prompt: str(i, 'promptId'), choice: i.choice === 'decline' ? 'decline' : 'accept' } }),
   },
 }

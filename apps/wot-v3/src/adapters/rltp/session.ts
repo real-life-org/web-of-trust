@@ -10,7 +10,7 @@ import type { ActId, AppError, AppEvent, BackRead, CardPreview, ConnectionId, Co
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, ownMessageLine, type ActContext, type ActOutcome, type ActSpec } from './acts'
+import { ACTS, ownMessageLine, proposalValidUntil, type ActContext, type ActOutcome, type ActSpec } from './acts'
 import { carrierOffer, journaledOffer } from './carrier-offer'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type DisplayedCards, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
@@ -310,6 +310,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   let highWhen = (await app.get<{ high: number }>('kv', KV.clock))?.high ?? 0
   const now = () => clock.now()
   const when = () => (highWhen = Math.max(highWhen, now()))
+  /** the same time for a check that only reads (a preview, a deadline, a limit): never behind a time this
+   *  device already used, and it raises the high mark not (only what is written moves it, `when`) */
+  const timeNow = () => Math.max(highWhen, now())
   const clockWrite = (): AppWrite => ({ store: 'kv', key: KV.clock, value: { high: when() } })
   // the library's act journal holds an act for its retention, max(P90D, retry horizon), after the
   // commit (lib 0.6.1 replay): an open record is settled through holder.replay until one day before
@@ -338,7 +341,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     appSeq++
     const next = project({
       revision: revision(deps.generation, Number(lastViews.commitSeq), appSeq),
-      now: now(),
+      // the session's time: a code or a request past its end is not offered again after the clock went back
+      now: timeNow(),
       timeZone: clock.timeZone(),
       anchorShort: deps.anchorShort,
       contacts: lastViews.contacts,
@@ -541,7 +545,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         // a duplicate's answer ends with its begun hand-over: it starts only when the carrier can take it
         if (entry.resend !== undefined && transport.status.get().network !== 'online') return false
         // the deadline at the start itself, not at the call: time passes while the holder reads (6135)
-        if (when() >= entry.notAfter) return false
+        if (timeNow() >= entry.notAfter) return false
         // filed before the deposit: a report the transport gives synchronously finds it (review 420 R12-4)
         filed.add(k)
         if (transport.submit([entry])) {
@@ -1047,12 +1051,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const replayable = (r: IntentRecord) => !executing.has(r.actId) && !knownAnswer.has(r.actId) && (r.state === 'outcome-unknown' || r.state === 'journaled' || r.state === 'running')
   const scheduleReplay = (rec: IntentRecord) => {
     const wait = BACKOFF[rec.attempts - 1]
-    if (wait === undefined || stopped || expiresAt(rec) < when()) return
+    if (wait === undefined || stopped || expiresAt(rec) < timeNow()) return
     setTimer(now() + wait, () => {
       if (stopped) return
       void findIntent(rec.actId).then((cur) => {
         const spec = cur ? ACTS[cur.command as keyof typeof ACTS] : undefined
-        if (cur && spec && replayable(cur) && expiresAt(cur) >= when()) settle(cur, spec)
+        if (cur && spec && replayable(cur) && expiresAt(cur) >= timeNow()) settle(cur, spec)
       })
     })
   }
@@ -1245,7 +1249,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     }
     // the limit holds at the act itself, whatever waited before (review 421 R8-1): past it the
     // library's act journal may have forgotten this actId
-    if (expiresAt(rec) < when()) return settleAtLimit<T>(running, spec)
+    if (expiresAt(rec) < timeNow()) return settleAtLimit<T>(running, spec)
     const act = async (): Promise<ActOutcome | 'unknown'> => {
       if (rec.state === 'journaled' || rec.policy !== 'replay') {
         // the act never started, or the human confirms it again (confirm-again, N3): it runs, the same
@@ -1359,7 +1363,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
     legacyCard: deps.ceremony === 'card',
     foreground: () => foreground,
-    now,
+    // the session's time: a deadline read by an act never runs back with the device clock; reading it moves
+    // nothing (the act's journal entry and commit do)
+    now: timeNow,
   }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {
@@ -1435,8 +1441,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
             if (open.policy === 'replay' && openSpec) settleAfter = () => settle(open, openSpec)
             return { ok: false, error: { kind: 'unavailable', reason: 'in-flight' } }
           }
-          // the human again: the manual limit holds (§3.4 "Retry-Frist", review 421 R2-2)
-          if (open.createdAt + manualLimitMs < when()) return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
+          // the human again: past the manual limit (§3.4 "Retry-Frist", review 421 R2-2) nothing runs again;
+          // the attempt asks the library's journal first and takes a committed result over (settleAtLimit),
+          // the one rule of this gesture, confirmIntent and retryIntent
           return execute<T>(open, openSpec)
         }
         // a draft that went out already is not sent twice (the same draft key after its intent ended)
@@ -1487,12 +1494,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const rec = await findIntent(actId)
       const spec = rec ? ACTS[rec.command as keyof typeof ACTS] : undefined
       if (!rec || !spec || rec.state !== 'needs-confirmation') return { ok: false, error: { kind: 'refused', code: 'decision-gone' } }
-      if (rec.createdAt + manualLimitMs < when()) {
-        const log = (await app.readAll()).log
-        await app.write(expireWrites(rec, log))
-        await sync().catch(() => undefined)
-        return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
-      }
+      // past the limit, too: the attempt asks the library's journal first and takes a committed result
+      // over with its writes; only an act it does not know expires (settleAtLimit, as the recovery)
       return execute<T>(rec, spec)
     })().finally(() => inflight.delete(key))
     const handle = { actId, done }
@@ -1514,12 +1517,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
-      if (rec.createdAt + manualLimitMs < when()) {
-        const log = (await app.readAll()).log
-        await app.write(expireWrites(rec, log))
-        await sync().catch(() => undefined)
-        return { ok: false, error: { kind: 'unavailable', reason: 'later' } }
-      }
+      // past the limit, too: the attempt asks the library's journal first and takes a committed result
+      // over with its writes; only an act it does not know expires (settleAtLimit, as the recovery)
       return execute<T>(rec, spec)
     })().finally(() => inflight.delete(key))
     const handle = { actId, done }
@@ -1561,7 +1560,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const all = [...before.intents.values()] as IntentRecord[]
     // records of the contact order never expire: their recovery completes them (CONTACT-ORDER.md)
     const open = all.filter((r) => isOpen(r) && !ordered(r) && !executing.has(r.actId) && !knownAnswer.has(r.actId))
-    const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < when())
+    const due = purgeOnly ? [] : open.filter((r) => expiresAt(r) < timeNow())
     // every record at its limit is settled through the journal lookup, claimed before it starts (R13-3)
     for (const r of due) {
       const spec = ACTS[r.command as keyof typeof ACTS]
@@ -1573,7 +1572,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     // finished records leave the journal at their retention, also while the session runs
     const doneUntil = (r: IntentRecord) => (r.finishedAt ?? r.createdAt) + DONE_RETENTION_MS
     const finished = all.filter((r) => !isOpen(r))
-    const purge = finished.filter((r) => doneUntil(r) < when())
+    const purge = finished.filter((r) => doneUntil(r) < timeNow())
     if (purge.length > 0) {
       await queue(async () => app.write(purge.map((r) => ({ store: 'intents' as const, key: r.actId, value: null }))))
       await sync().catch(() => undefined)
@@ -1645,7 +1644,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const back = await backCodeOf(raw).catch((e: unknown) => ({ error: toAppError(e) }))
     if (back && 'error' in back) return { ok: false, error: back.error }
     if (back) return { ok: true, value: { role: 'back', name: typeof back.propose.payload?.reason === 'string' ? back.propose.payload.reason : null, knownContact: null, self: false } }
-    const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
+    const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(timeNow() / 1000)).catch(() => null)
     if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
     let mine: SharedConnectView | undefined
     try {
@@ -1692,7 +1691,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const connection = back.id as ConnectionId
       const before = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
       if (!before) return { ok: true, value: { kind: 'no-match' } }
-      if (now() > (before.link.exp + sc.CLOCK_TOLERANCE_S) * 1000) return { ok: true, value: { kind: 'expired', connection } }
+      if (timeNow() > proposalValidUntil(before.link)) return { ok: true, value: { kind: 'expired', connection } }
       const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
       if (!r.ok) return { ok: false, error: mapActError(r.code) }
       schedule(r.nextDueAt)
@@ -1715,7 +1714,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     const challenge = (card.challenge ?? null) as { value?: unknown; issuedAt?: unknown } | null
     const encounters = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
     const self = !sent && typeof challenge?.value === 'string' && Object.hasOwn(encounters.own, challenge.value)
-    if (!sent && !self && typeof challenge?.issuedAt === 'string' && Date.parse(challenge.issuedAt) + CHALLENGE_MAX_AGE < now()) {
+    // the session's time: a card shown as expired stays so after the clock went back
+    if (!sent && !self && typeof challenge?.issuedAt === 'string' && Date.parse(challenge.issuedAt) + CHALLENGE_MAX_AGE < timeNow()) {
       return { ok: false, error: { kind: 'refused', code: 'code-expired' } }
     }
     return { ok: true, value: { role: sent ? 'sent' : 'displayed', name: typeof card.name === 'string' ? card.name : null, knownContact: null, self } }
@@ -1754,7 +1754,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (isOpen(r)) void recoverOrdered(r.target)
         continue
       }
-      if (!spec || expiresAt(r) < when()) continue
+      if (!spec || expiresAt(r) < timeNow()) continue
       if (r.policy === 'replay' && replayable(r)) settle(r, spec)
       else if (r.policy === 'confirm-again' && (r.state === 'needs-confirmation' || r.state === 'running' || r.state === 'outcome-unknown')) void lookUp(r, spec).catch(() => lookedUp.delete(r.actId))
     }

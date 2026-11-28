@@ -40,6 +40,7 @@ import type {
 } from '../../port'
 import { compareOrder, orderKey, type DisplayedCards, type EncounterCache, type LedgerContact, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { DEPARTED } from './ingest'
+import { proposalValidUntil } from './acts'
 import { isOpen, type IntentRecord } from './journal'
 
 export interface ProjectionInput {
@@ -127,14 +128,12 @@ export function connectionOf(v: SharedConnectView, relayed: boolean | null): Con
     failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null,
     closedAt: v.closedAt,
     camera: v.role === 'responder' ? v.channel === 'scan' : v.channel === 'displayed',
-    // each side's credential is issued at the acceptance and only there (Inviter.accept, Responder on the accept)
-    accepted: v.myCredential !== null,
-    // a responder's contact opens from the back-code or at the end: while open, only the back-code opened it
-    backShown: v.role === 'responder' && v.status === 'open' && v.contactId !== null,
+    accepted: v.accepted,
+    backShown: v.backShown,
     relayed,
     theirDid: v.theirDid,
     expiresAt: v.link.exp * 1000,
-    validUntil: (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000,
+    validUntil: proposalValidUntil(v.link),
     decision: (v.promptId ?? null) as DecisionId | null,
   }
 }
@@ -182,7 +181,7 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     // the proposal answers the code of its enactment (E9); the code is the one in front of the person
     // while its link is valid, with the ceremony's clock tolerance: the holder takes a proposal that
     // long, so one it took is asked
-    const validUntil = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
+    const validUntil = proposalValidUntil(v.link)
     return { ...base, kind: 'connect-confirm', connection: v.id as ConnectionId, name: v.name, answers: now <= validUntil ? { card: v.id as CardRef, validUntil } : null }
   }
   // an invitation into a group, from the contact it came over, with the group's name as the invitation
