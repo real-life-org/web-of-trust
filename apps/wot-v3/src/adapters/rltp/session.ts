@@ -25,6 +25,7 @@ import { createSharedConnectCarriage, type SharedConnectCarriage } from './share
 import { keysFromRootIkm } from './keys'
 import { answerLogin, type LoginKeys } from './login'
 import { idbHolderStore, type HolderStore } from './store-idb'
+import { entryDedupe, entryIds, entryInput, entryKey, type Entries } from './entries'
 import { challengeEnd, challengeOpen, depositKey, DRAIN_LIMIT_MS, type AnyLease, type Carriage, type CarrierOpening, type DisplayedCard } from './transport'
 
 export const holderDbName = (ns: string) => `wot-v3-holder-${ns}`
@@ -66,6 +67,10 @@ export interface RltpFaults {
   killAt: 'after-journal' | 'before-take' | null
   /** a hold point of the contact order's dedupe read (CONTACT-ORDER.md; the interleaving tests) */
   probe?: ((point: 'dedupe:before' | 'dedupe:after', actId: string) => Promise<void> | void) | null
+  /** hold points of the re-meeting tests: an unordered gesture before its journal is read and written
+   *  (`journal:before`), and any act after its journal, right before its library effect (`act:before`).
+   *  Without a hook no turn passes at these points: the order of everything else stays as it is */
+  hold?: ((point: 'journal:before' | 'act:before', actId: string) => Promise<void> | void) | null
 }
 
 export interface Session {
@@ -79,6 +84,8 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** the entry a contact id stands for now (entries.ts): itself, or the entry it was joined into */
+  entryOf(contactId: string): string
   /** the inviter's camera read a back-code (shared-connect without a carrier, lib 0.22.0): the proposal of
    *  the own shown code it answers, as if a carrier had brought it; the confirmation opens */
   readBackCode(raw: string): Promise<Result<BackRead>>
@@ -298,6 +305,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
+  /** the one reading of a contact id (entries.ts), from the last bundle's contacts */
+  let entries: Entries = entryIds([])
   let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; relayed: Record<string, boolean | null>; groups: GroupView[]; pendingJoins: PendingJoinView[]; provenance: Record<string, Record<string, string[]>> } | null = null
   /** whether a messaging identity names a relay, by DID: the library's full resolution, a known answer kept */
   const relayedOf = relayCache()
@@ -412,6 +421,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
       lastViews = { commitSeq: a, contacts, prompts, profile, connections, relayed, groups, pendingJoins, provenance }
+      entries = entryIds(contacts)
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
@@ -765,6 +775,14 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const inflight = new Map<string, IntentHandle<unknown>>()
   /** the inputs of the gesture a key runs for (intent only) */
   const inflightInput = new Map<string, Readonly<Record<string, unknown>>>()
+  /** where the key of a command holds its contact id (`acts.ts` `keyContact`): the command is the key's
+   *  first part */
+  const keyContactOf = (dedupe: string): number | undefined => ACTS[dedupe.slice(0, Math.max(0, dedupe.indexOf('|'))) as keyof typeof ACTS]?.keyContact
+  /** a gesture's key as the entries stand now (entries.ts): the key of a record or a running gesture taken
+   *  under an id that became an alias since is read so, never rewritten */
+  const keyNow = (dedupe: string, input: Readonly<Record<string, unknown>> | null | undefined) => entryDedupe(entries, dedupe, input?.contactId, keyContactOf(dedupe))
+  /** the running gesture of a key, also one taken under an id of the person that became an alias since */
+  const runningUnder = (dedupe: string): string | undefined => (inflight.has(dedupe) ? dedupe : [...inflight.keys()].find((k) => keyNow(k, inflightInput.get(k)) === dedupe))
 
   const putIntent = (r: IntentRecord) => app.write([{ store: 'intents', key: r.actId, value: r }, clockWrite()])
 
@@ -872,6 +890,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return stillOpen(UNKNOWN)
     }
     const input = rec.input ?? {}
+    if (deps.faults?.hold) await deps.faults.hold('act:before', rec.actId)
     let r: ActOutcome
     try {
       r = await gate.run((h) => spec.run(h, input, { when: rec.when, actId: rec.actId }, actContext))
@@ -1064,8 +1083,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
    *  inputs and as taken, like the gesture itself (a changed text under the key is refused, R10-2) */
   const settle = (rec: IntentRecord, spec: ActSpec) => {
     if (!resumed) return
-    const key = rec.dedupe ?? `retry|${rec.actId}`
-    if (inflight.has(key)) return
+    const key = rec.dedupe !== undefined ? keyNow(rec.dedupe, rec.input) : `retry|${rec.actId}`
+    if (runningUnder(key) !== undefined) return
     const h: IntentHandle<unknown> = {
       actId: rec.actId,
       journaled: Promise.resolve(true),
@@ -1242,6 +1261,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return { ok: false, error: error.kind === 'locked' ? error : { kind: 'infra', code: 'unknown-outcome', retryable: true } }
     }
     void sync().catch(() => undefined)
+    if (deps.faults?.hold) await deps.faults.hold('act:before', rec.actId)
     if (deps.faults?.killAt === 'after-journal') {
       // the process dies here: nothing after this point runs, the record stays `running`
       deps.faults.killAt = null
@@ -1374,22 +1394,33 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     void _offer
     return rest
   }
-  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) => JSON.stringify(gesture(a)) === JSON.stringify(gesture(structuredClone(b)))
+  /** two inputs of one gesture: a contact id in them is compared as the entry it stands for now (entries.ts).
+   *  The inputs themselves are journaled and handed to the act as given: the library reads an alias itself,
+   *  and for some acts the id says more than the person (counterVerify: which meeting's record) */
+  const sameInput = (a: Readonly<Record<string, unknown>> | null, b: Readonly<Record<string, unknown>>) =>
+    JSON.stringify(gesture(a === null ? a : entryInput(entries, a))) === JSON.stringify(gesture(structuredClone(entryInput(entries, b))))
 
   const intent = <T>(
     command: keyof typeof ACTS & string,
-    target: string,
-    dedupe: string,
-    input: Readonly<Record<string, unknown>>,
+    given: string,
+    givenDedupe: string,
+    givenInput: Readonly<Record<string, unknown>>,
     preview?: CardPreview,
     opts: { auto?: boolean } = {},
   ): IntentHandle<T> => {
+    // the command's target and key read by the entry its contact id stands for (entries.ts), before the
+    // queue, the dedupe and the journal see them: a command on an alias is one on the person it stands for.
+    // Its input stays as given (sameInput)
+    const target = entryKey(entries, given)
+    const dedupe = entryDedupe(entries, givenDedupe, givenInput.contactId, ACTS[command as keyof typeof ACTS]?.keyContact)
+    const input = givenInput
     const spec = ACTS[command as keyof typeof ACTS]
     if (spec?.ordered) return orderedIntent<T>(spec, command, target, dedupe, input)
-    const running = inflight.get(dedupe)
-    if (running) {
+    const runningKey = runningUnder(dedupe)
+    const running = runningKey === undefined ? undefined : inflight.get(runningKey)
+    if (runningKey !== undefined && running) {
       // the same gesture joins; other inputs under the same key are refused, never taken (R9-3)
-      if (inflightInput.has(dedupe) && !sameInput(inflightInput.get(dedupe) ?? null, input)) {
+      if (inflightInput.has(runningKey) && !sameInput(inflightInput.get(runningKey) ?? null, input)) {
         return { actId: running.actId, done: Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } }), journaled: Promise.resolve(false) }
       }
       return running as IntentHandle<T>
@@ -1423,7 +1454,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       try {
         // the same gesture while its record is still open (after a restart, or a held draft released
         // while its earlier act is being replayed): that record, its actId, never a second act
-        const same = ([...(await app.readAll()).intents.values()] as IntentRecord[]).filter((r) => r.dedupe === dedupe)
+        if (deps.faults?.hold) await deps.faults.hold('journal:before', actId)
+        const journal = [...(await app.readAll()).intents.values()] as IntentRecord[]
+        // both sides read as the entries stand now, in this turn: the gesture's own key was read when it was
+        // taken, and a join may have come while it waited here
+        const key = keyNow(dedupe, input)
+        const same = journal.filter((r) => r.dedupe !== undefined && keyNow(r.dedupe, r.input) === key)
         // a message whose record expired with an unknown outcome is spent: sending again is a new act
         // under a new draft key, never this one (review 421 R3-2); other gestures (a new card) are
         // new acts under their fixed key (R4-1)
@@ -1450,7 +1486,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
         if (command === 'send') {
           const line = await app.get<LogLine>('log', `msg:out:${String(input.draftKey)}`)
           // only the same text to the same contact: other inputs under a used key are refused (R8-3)
-          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || line.contactId !== String(input.contactId))) {
+          if (line?.kind === 'message' && line.digest !== null && (line.text !== String(input.text) || entries(line.contactId) !== entries(String(input.contactId)))) {
             return { ok: false, error: { kind: 'refused', code: 'superseded' } }
           }
           if (line?.kind === 'message' && line.digest !== null) {
@@ -1514,7 +1550,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       // superseded stays as it is
       if (rec && spec?.ordered) return (isOpen(rec) ? recoverOrdered(rec.target, actId) : Promise.resolve({ ok: false, error: { kind: 'refused', code: 'superseded' } })) as Promise<Result<T>>
       // a replay of the same record already runs: join it
-      const joined = rec?.dedupe ? inflight.get(rec.dedupe) : undefined
+      const joinedKey = rec?.dedupe ? runningUnder(keyNow(rec.dedupe, rec.input)) : undefined
+      const joined = joinedKey === undefined ? undefined : inflight.get(joinedKey)
       if (joined) return joined.done as Promise<Result<T>>
       if (!rec || !spec || rec.policy !== 'replay' || (rec.state !== 'outcome-unknown' && rec.state !== 'partial')) return { ok: false, error: { kind: 'refused', code: 'superseded' } }
       // past the limit, too: the attempt asks the library's journal first and takes a committed result
@@ -1610,10 +1647,12 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   const sendHeld = (contacts: readonly ContactView[]) => {
     if (stopped) return
     const ready = new Set(contacts.filter((c) => c.canMessage && !c.blocked).map((c) => c.id))
+    const entry = entryIds(contacts)
     void app.readAll().then((snap) => {
       for (const v of snap.log.values()) {
         const l = v as LogLine
-        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(l.contactId) || l.draftKey === null) continue
+        // held under an id that is an alias now: the entry it joined decides
+        if (l.kind !== 'message' || l.dir !== 'out' || l.held !== 'not-ready' || !ready.has(entry(l.contactId)) || l.draftKey === null) continue
         intent('send', l.key, `send|${l.draftKey}`, { contactId: l.contactId, text: l.text, draftKey: l.draftKey, ...(l.replyTo ? { replyTo: l.replyTo } : {}) }, undefined, { auto: true })
       }
     })
@@ -1837,6 +1876,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    entryOf: (contactId: string) => entries(contactId),
     readBackCode,
     answerLogin: (raw, opts) => answerLogin(keys as LoginKeys, raw, { ...opts, now: when() }),
     markRead,

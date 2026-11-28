@@ -265,7 +265,8 @@ export function createRltpPort(deps: RltpDeps): RltpPort {
       return withSession((s) => {
         if (!key.startsWith('c:')) return unsupported()
         // the composer is closed for a blocked contact; nothing is journaled or kept (paper §7.4)
-        if (s.models()?.contactDetails.get(key.slice(2))?.blocked) return handle({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
+        // read by the entry the id stands for: a send under an alias meets the same refusal
+        if (s.models()?.contactDetails.get(s.entryOf(key.slice(2)))?.blocked) return handle({ ok: false, error: { kind: 'refused', code: 'contact-blocked' } })
         return s.intent('send', key, `send|${draftKey}`, { contactId: key.slice(2), text, draftKey })
       })
     },
