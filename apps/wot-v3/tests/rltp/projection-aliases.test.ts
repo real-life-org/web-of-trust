@@ -95,4 +95,51 @@ describe('rltp projection: an alias reads as its entry', () => {
     expect(m.contactDetails.get('bea')?.actions.giveTrust).toEqual({ ok: false, reason: 'in-flight' })
     expect(texts(m.conversations.get('c:bea')?.items)).toEqual(['typing'])
   })
+
+  // ── review of #571 ──
+
+  it('a counter-step that names its request puts only that one in flight: another request of the person stays open', () => {
+    const prompts = [
+      { id: 'p-1', kind: 'encounter-confirm', contactId: 'bea', openedAt: T, expiresAt: T + 60_000 },
+      { id: 'p-2', kind: 'group-invite', contactId: 'bea', groupName: 'Garten', openedAt: T, expiresAt: T + 60_000 },
+    ] as never
+    const intents = [{ actId: 'a1', command: 'counterVerify', target: 'c:bea2', policy: 'replay', state: 'running', input: { contactId: 'bea2', promptId: 'p-1' }, when: T, createdAt: T, attempts: 1 }] as never
+    const m = project(input([], { prompts, intents }))
+    expect(m.decisions.map((d) => [d.id, d.state])).toEqual([
+      ['p-1', 'in-flight'],
+      ['p-2', 'open'],
+    ])
+  })
+
+  it('a quote stays within its relationship: a mid held only under the other contact gives none', () => {
+    const first = msg('first', T, 'bea')
+    const answer: MessageLine = { ...msg('answer', T + 1, 'bea2'), replyTo: 'mid-first' }
+    const within: MessageLine = { ...msg('within', T + 2, 'bea2'), replyTo: 'mid-answer' }
+    const items = (project(input([first, answer, within])).conversations.get('c:bea')?.items ?? []).filter((i): i is MessageItem => i.kind === 'message')
+    expect(items.map((i) => [i.text, i.replyTo?.text ?? null])).toEqual([
+      ['first', null],
+      ['answer', null],
+      ['within', 'answer'],
+    ])
+  })
+
+  it('the ceremonies’ ends are read a bounded number of times, not once per contact and ceremony', () => {
+    let reads = 0
+    const n = 64
+    const connections = Array.from({ length: n }, (_, i) => {
+      const v = { ...(connection(`e-${i}`, `c${i}`) as object) }
+      Object.defineProperty(v, 'closedAt', { enumerable: true, get: () => (reads++, T - 1000 - i) })
+      return v
+    }) as never
+    const contacts = Array.from({ length: n }, (_, i) => contact(`c${i}`, { sharedConnect: { enactmentId: `e-${i}`, channel: 'scan', theirChannel: 'displayed', met: true } }))
+    const m = project(input([], { contacts, connections }))
+    expect(m.contactDetails.get('c7')?.metAt).toBe(T - 1007)
+    expect(reads).toBeLessThan(n * 8)
+  })
+
+  it('a ceremony that failed and whose contact was kept, no encounter record: met at the ceremony’s end, as without any alias', () => {
+    const failed = { ...(connection('e-9', null) as object), status: 'failed', closedAt: T - 700 } as never
+    const m = project(input([], { contacts: [contact('cem', { sharedConnect: { enactmentId: 'e-9', channel: 'scan', theirChannel: 'displayed', met: true } })], connections: [failed] }))
+    expect(m.contactDetails.get('cem')?.metAt).toBe(T - 700)
+  })
 })

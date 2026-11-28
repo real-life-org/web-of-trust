@@ -152,7 +152,12 @@ export function localDay(at: number, timeZone: string): string {
 /** running intents per target, for in-flight availability */
 function runningTargets(intents: readonly IntentRecord[]): Set<string> {
   const s = new Set<string>()
-  for (const r of intents) if (r.state === 'journaled' || r.state === 'running') s.add(`${r.command}|${r.target}`)
+  for (const r of intents) {
+    if (r.state !== 'journaled' && r.state !== 'running') continue
+    s.add(`${r.command}|${r.target}`)
+    // a counter-step answers one request where it names it, else the contact's encounter request
+    if (r.command === 'counterVerify') s.add(typeof r.input?.promptId === 'string' ? `answers|${r.input.promptId}` : `counters|${r.target}`)
+  }
   return s
 }
 
@@ -174,7 +179,12 @@ function decisionOf(p: PromptView, running: Set<string>, contacts: ReadonlyMap<s
     id: p.id as DecisionId,
     openedAt: p.openedAt,
     expiresAt: p.expiresAt ?? null,
-    state: running.has(`decide|${p.id}`) || (p.contactId !== undefined && running.has(`counterVerify|c:${p.contactId}`)) ? ('in-flight' as const) : ('open' as const),
+    // in flight: its own answer, or a counter-step that names it, or (an encounter request) the contact's
+    // counter-step without a request. Another request of the person stays open
+    state:
+      running.has(`decide|${p.id}`) || running.has(`answers|${p.id}`) || (p.kind === 'encounter-confirm' && p.contactId !== undefined && running.has(`counters|c:${p.contactId}`))
+        ? ('in-flight' as const)
+        : ('open' as const),
   }
   if (p.kind === 'encounter-confirm' && p.contactId !== undefined) {
     return { ...base, kind: 'encounter-confirm', contactId: p.contactId as ContactId, answers: answeredCard(contacts.get(p.contactId), displayed) }
@@ -339,10 +349,11 @@ function authorOf(l: MessageLine, names: ReadonlyMap<string, string | null>) {
   return l.dir === 'out' ? ({ kind: 'self' } as const) : ({ kind: 'contact', contactId: l.contactId as ContactId, name: names.get(l.contactId) ?? null } as const)
 }
 
-function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, names: ReadonlyMap<string, string | null>): MessageItem {
+function messageItem(l: MessageLine, byMid: ReadonlyMap<string, MessageLine>, names: ReadonlyMap<string, string | null>, relOf: (l: LogLine) => string): MessageItem {
   // replyTo names a mid of this relationship (Message Tasks 3.2); shown only when the app holds an
-  // earlier message with it in this conversation, otherwise the reference is dropped
-  const ref = l.replyTo !== null ? byMid.get(l.replyTo) : undefined
+  // earlier message with it in this relationship, otherwise the reference is dropped. A conversation
+  // joined from two contacts holds two relationships: a mid is looked up in the line's own
+  const ref = l.replyTo !== null ? byMid.get(`${relOf(l)}|${l.replyTo}`) : undefined
   // a mid is random, not causal: any other message of this relationship that the app holds counts,
   // whatever order the display gives them within a second (review 421 R2-5)
   const replyTo = ref && ref !== l ? { id: ref.id as MessageId, author: authorOf(ref, names), text: ref.text } : undefined
@@ -427,6 +438,9 @@ function withAliases<V>(map: Map<string, V>, contacts: readonly ContactView[], a
 export function project(raw0: ProjectionInput): ReadModels {
   const entry = entryIds(raw0.contacts)
   const raw = byEntry(raw0, entry)
+  // the relationship a line came over: the contact it was filed under, before it is read as its entry
+  const filed = entry.none ? null : new Map(raw0.lines.map((l) => [l.id, l.key] as const))
+  const relOf = (l: LogLine): string => filed?.get(l.id) ?? l.key
   const input: ProjectionInput = { ...raw, contacts: raw.contacts.map((c) => namedByCeremony(shownProfile(c, raw.shown[c.id]), raw.connections ?? [])) }
   const running = runningTargets(input.intents)
   const decisions: Decision[] = []
@@ -475,12 +489,12 @@ export function project(raw0: ProjectionInput): ReadModels {
     // blocked: nothing of the contact's content is shown (Message Tasks 6230)
     const visible = contact?.blocked ? sorted.filter((l) => l.kind !== 'message' || l.dir === 'out') : sorted
     const byMid = new Map<string, MessageLine>()
-    for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(l.mid, l)
+    for (const l of visible) if (l.kind === 'message' && l.mid !== null) byMid.set(`${relOf(l)}|${l.mid}`, l)
     // the report selection alone reads the hidden messages: reporting after a silent block (paper §6, Anton 21.10.)
     if (contactId !== null && contact) {
       const all = new Map<string, MessageLine>()
-      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(l.mid, l)
-      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names)))
+      for (const l of sorted) if (l.kind === 'message' && l.mid !== null) all.set(`${relOf(l)}|${l.mid}`, l)
+      reportable.set(contactId, sorted.filter((l): l is MessageLine => l.kind === 'message').map((l) => messageItem(l, all, names, relOf)))
     }
     const mark = input.reads[key]
     const items: ConversationItem[] = []
@@ -501,7 +515,7 @@ export function project(raw0: ProjectionInput): ReadModels {
         items.push({ kind: 'decision', id: l.id, decision: l.decision as DecisionId, ...(l.of ? { of: l.of } : {}), // the group's name is the inviter's text: none of a blocked contact's content is shown (6230)
         ...(l.groupName && !contact?.blocked ? { groupName: l.groupName } : {}), at: l.at, resolution: open ? null : resolutionOf(l.decision, l, input.intents) })
       } else {
-        items.push(messageItem(l, byMid, names))
+        items.push(messageItem(l, byMid, names, relOf))
         if (l.dir === 'in' && (!mark || compareOrder(orderKey(l), mark) > 0)) unread++
       }
     }
@@ -518,6 +532,17 @@ export function project(raw0: ProjectionInput): ReadModels {
 
   const contactDetails = new Map<string, ContactDetail>()
   const connections = input.connections ?? []
+  // the ends of the connection ceremonies per person: of the ceremony that opened a contact, read by the
+  // entry that contact stands for now (one pass over the ceremonies)
+  const endsOf = new Map<string, number[]>()
+  const ceremonyById = new Map(connections.map((v) => [v.id, v] as const))
+  const end = (id: string, at: number | null | undefined) => {
+    if (typeof at === 'number') endsOf.set(id, [...(endsOf.get(id) ?? []), at])
+  }
+  // of a contact joined into another: the ceremony names it
+  for (const v of connections) if (v.contactId !== null && entry(v.contactId) !== v.contactId) end(entry(v.contactId), v.closedAt)
+  // of the entry itself: the ceremony its contact names
+  for (const c of input.contacts) if (c.sharedConnect) end(c.id, ceremonyById.get(c.sharedConnect.enactmentId)?.closedAt)
   const contacts: ContactListItem[] = input.contacts.map((c) => {
     const key: ConversationKey = `c:${c.id}`
     // a contact from a connection ceremony over a link, not in person: its class is 'link' (no trust)
@@ -564,7 +589,7 @@ export function project(raw0: ProjectionInput): ReadModels {
     // and the ends of the connection ceremonies that opened it or a contact joined into it (a ceremony has
     // no encounter record). The first meeting stays the first; the last is the newest
     const met = [c.id, ...c.aliases].map((id) => input.encounters.met[id]).filter((m) => m !== undefined)
-    const ends = connections.filter((v) => v.status === 'complete' && v.contactId !== null && v.closedAt !== null && entry(v.contactId) === c.id).map((v) => v.closedAt as number)
+    const ends = endsOf.get(c.id) ?? []
     const firsts = [...met.map((m) => m.metAt), ...ends]
     const lasts = [...met.map((m) => m.lastMetAt), ...ends]
     const cls = (k: TrustClass) => ({ setting: c.classes[k]?.setting ?? 'default', on: c.classes[k]?.on ?? false }) as const
