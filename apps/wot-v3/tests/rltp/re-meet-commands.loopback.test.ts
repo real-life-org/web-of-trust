@@ -126,6 +126,67 @@ describe('commands on one person under its alias and its known id run in one ord
   }, 120_000)
 })
 
+describe('the last gesture taken, in take order, across the ids of one person (review: CodeRabbit)', () => {
+  it('block(known), block(fresh), unblock(known) pending; the chaining; block(known): a new gesture, not the older block under the fresh id; the person ends blocked', async () => {
+    const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
+    const fresh = secondCeremony(w.A)?.contactId as ContactId
+    const known = contactsOf(w.A).map((c) => c.id).find((id) => id !== fresh) as ContactId
+    // every ordered gesture of A held at its dedupe read until released
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    let reached = 0
+    w.A.faults.probe = async (p) => {
+      if (p !== 'dedupe:before') return
+      reached++
+      await gate
+    }
+    const h1 = act(w.A, 'block', known)
+    const h2 = act(w.A, 'block', fresh)
+    const h3 = act(w.A, 'unblock', known)
+    await turns(() => reached >= 2)
+    await w.passHeld(3 * 60_000)
+    expect(contactsOf(w.A).map((c) => c.id)).toEqual([known])
+    const h4 = act(w.A, 'block', known)
+    expect(h4.actId).not.toBe(h2.actId)
+    release()
+    w.A.faults.probe = null
+    await Promise.all([h1.done, h2.done, h3.done, h4.done])
+    await w.settle()
+    await w.pass(4 * CARRIER_TICK_MS)
+    expect(blocked(w.A, known)).toBe(true)
+  }, 120_000)
+})
+
+describe('a message sent again under the known id while its send under the fresh id runs (review: CodeRabbit)', () => {
+  it('the same draft and text join the running send, not refused; it arrives once', async () => {
+    const { w } = await metTwice({ first: 'shared-connect', second: 'carrier', scanner: 'A' }, 0)
+    const fresh = secondCeremony(w.A)?.contactId as ContactId
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    let held = false
+    w.A.faults.probe = async (p) => {
+      if (p !== 'act:before' || held) return
+      held = true
+      await gate
+    }
+    const h1 = w.A.port.trust.send(`c:${fresh}`, 'Once', 'd-once')
+    await turns(() => held)
+    await w.passHeld(3 * 60_000)
+    const known = onlyContact(w.A)
+    expect(known).not.toBe(fresh)
+    const h2 = w.A.port.trust.send(`c:${known}`, 'Once', 'd-once')
+    expect(h2.actId).toBe(h1.actId)
+    release()
+    w.A.faults.probe = null
+    expect((await h1.done).ok).toBe(true)
+    expect((await h2.done).ok).toBe(true)
+    await w.settle()
+    await w.pass(2 * CARRIER_TICK_MS)
+    const atB = conversationOf(w.B, onlyContact(w.B))?.items.filter((i): i is MessageItem => i.kind === 'message').map((i) => i.text)
+    expect(atB?.filter((t) => t === 'Once')).toEqual(['Once'])
+  }, 120_000)
+})
+
 describe('trust is not given to a blocked person, under any id', () => {
   it('blocked, then met again: giving trust under the known id and under the alias is refused, nothing given', async () => {
     const { w, known, alias } = await chained()
