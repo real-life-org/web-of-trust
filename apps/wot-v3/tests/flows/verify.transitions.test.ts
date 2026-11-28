@@ -560,6 +560,13 @@ describe('verify transitions, mutual while the counter-step runs', () => {
   })
 })
 
+/** a port's counter-step answered by the test: the contact's (`counterVerify`), and the acceptance of the
+ *  request a screen shows (`decide(id, 'accept')`, #568); a decline stays the port's */
+const counterStep = (p: AppPort, answer: () => Result<unknown>): Pick<AppPort['trust'], 'counterVerify' | 'decide'> => ({
+  counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(answer() as never) }),
+  decide: (id, choice, options) => (choice === 'accept' ? { actId: 'x' as never, done: Promise.resolve(answer() as never) } : p.trust.decide(id, choice, options)),
+})
+
 // ── rows the library 0.5.0 does not produce, and failures: a port double over the real device ──
 describe('verify transitions over a port double', () => {
   const double = (d: LoopbackDevice, over: { confirm?: () => Result<unknown>; counter?: () => Result<unknown>; sent?: () => Result<unknown> | Promise<never>; contact?: ContactId }) => {
@@ -571,7 +578,7 @@ describe('verify transitions over a port double', () => {
       trust: {
         ...p.trust,
         ...(over.confirm ? { confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve(over.confirm!() as never) }) } : {}),
-        ...(over.counter ? { counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(over.counter!() as never) }) } : {}),
+        ...(over.counter ? counterStep(p, over.counter) : {}),
         ...(over.sent ? { sentCardFor: () => Promise.resolve(over.sent!()) as never } : {}),
       },
     } as AppPort
@@ -799,7 +806,7 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
       ...B.port,
       trust: {
         ...B.port.trust,
-        counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve((fail ? { ok: false, error: { kind: 'infra', code: 'transport', retryable: true } } : { ok: true, value: undefined }) as never) }),
+        ...counterStep(B.port, () => (fail ? { ok: false, error: { kind: 'infra', code: 'transport', retryable: true } } : { ok: true, value: undefined })),
       },
     } as AppPort
     const fb = flow(B, port)
@@ -821,7 +828,7 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
       {
         const { devices, until } = await mediatorWorld()
         const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
-        const port = { ...B.port, trust: { ...B.port.trust, counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(refused() as never) }) } } as AppPort
+        const port = { ...B.port, trust: { ...B.port.trust, ...counterStep(B.port, refused) } } as AppPort
         const fb = flow(B, port)
         const first = (await fb.until('ready')).card?.qr
         expect((await A.port.trust.confirmCard(first ?? '').done).ok).toBe(true)
@@ -842,7 +849,7 @@ describe('verify transitions over the mediator: the shown card takes the bundle 
         if (!scanned.ok) throw new Error('scan')
         const sent = await A.port.trust.sentCardFor(scanned.value.contactId!)
         if (!sent.ok) throw new Error('sent')
-        const fb = flow(B, { ...B.port, trust: { ...B.port.trust, counterVerify: () => ({ actId: 'x' as never, done: Promise.resolve(refused() as never) }) } } as AppPort)
+        const fb = flow(B, { ...B.port, trust: { ...B.port.trust, ...counterStep(B.port, refused) } } as AppPort)
         await fb.until('ready')
         fb.scanner.source = () => sent.value.qr
         fb.send({ type: 'scan' })
