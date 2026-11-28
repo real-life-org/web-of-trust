@@ -287,7 +287,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       // the scanner's second code: the sent card of encounter-scan, or the back-code of a connection
       // ceremony without a carrier; one screen
       const name = nameOf(s.name2)
-      const first = name.split(' ')[0] ?? name
+      const first = firstName(name)
       const [title, body, label, qr] = s.name === 'fallback' ? [v.fallbackTitle, f(v.fallbackBody, { name: first }), v.fallbackLabel, s.sentQr] : [f(v.backTitle, { name: first }), f(s.connections?.[s.connection]?.contactId ? v.backBody : v.backBodyNoContact, { name: first }), v.backLabel, s.qr]
       return page(
         <div className="flex flex-col items-center gap-4 text-center">
@@ -297,7 +297,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
         </div>,
         <>
           {/* the back-code: back to waiting for the acceptance over the connection */}
-          {s.name === 'backCode' ? <QuietAction label={v.backKeepWaiting} onClick={() => send({ type: 'keepWaiting' })} /> : null}
+          {s.name === 'backCode' && s.connections?.[s.connection]?.relayed !== false ? <QuietAction label={v.backKeepWaiting} onClick={() => send({ type: 'keepWaiting' })} /> : null}
           <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />
         </>,
         () => send({ type: 'leave' }),

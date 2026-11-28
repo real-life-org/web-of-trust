@@ -19,35 +19,46 @@ const fromResult = (r: Result<unknown>): EffectResult =>
  *  the machine's (the state changed) or whose flow ended is cancelled, its result `cancelled` (the machine
  *  drops it as a result of an older run anyway) */
 export function flowTimers(clock: Platform['clock']) {
-  const live = new Map<number, { cancel: () => void; settle: () => void }>()
+  /** the waits of the effects, by run: a clock timer, or the wait for the app's foreground */
+  const live = new Map<number, Set<{ settle: () => void }>>()
+  const hold = (run: number, start: (done: (r: EffectResult) => void) => () => void): Promise<EffectResult> =>
+    new Promise((resolve) => {
+      let over = false
+      let stop: (() => void) | null = null
+      const entry = { settle: () => done({ ok: false, code: 'cancelled' }) }
+      const done = (r: EffectResult) => {
+        if (over) return
+        over = true
+        // the clock timer or the lifecycle listener goes with it, once
+        stop?.()
+        stop = null
+        live.get(run)?.delete(entry)
+        if (live.get(run)?.size === 0) live.delete(run)
+        resolve(r)
+      }
+      const off = start(done)
+      if (over) off()
+      else stop = off
+      if (!live.has(run)) live.set(run, new Set())
+      live.get(run)?.add(entry)
+    })
+  const end = (t: { settle: () => void }) => t.settle()
   return {
+    /** a timer of `run` until `at`; a later timer of the same run replaces it (the earlier one is cancelled) */
     wait(run: number, at: number): Promise<EffectResult> {
-      return new Promise((resolve) => {
-        const settle = () => {
-          live.delete(run)
-          resolve({ ok: false, code: 'cancelled' })
-        }
-        const cancel = clock.setTimer(at, () => {
-          live.delete(run)
-          resolve({ ok: true })
-        })
-        live.get(run)?.settle()
-        live.set(run, { cancel, settle })
-      })
+      for (const t of [...(live.get(run) ?? [])]) end(t)
+      return hold(run, (done) => clock.setTimer(at, () => done({ ok: true })))
+    },
+    /** the app in front again, for `run`: released like a timer when the run ends */
+    front(run: number, life: Platform['lifecycle']): Promise<EffectResult> {
+      return hold(run, (done) => life.onState((st) => (st === 'active' ? done({ ok: true }) : undefined)))
     },
     /** every timer of another run than `run` ends now */
     keep(run: number) {
-      for (const [r, t] of [...live]) {
-        if (r === run) continue
-        t.cancel()
-        t.settle()
-      }
+      for (const [r, ts] of [...live]) if (r !== run) for (const t of [...ts]) end(t)
     },
     clear() {
-      for (const t of [...live.values()]) {
-        t.cancel()
-        t.settle()
-      }
+      for (const ts of [...live.values()]) for (const t of [...ts]) end(t)
     },
   }
 }
@@ -56,16 +67,6 @@ type FlowTimers = ReturnType<typeof flowTimers>
 /** what a timer belongs to: the state's name and the scanner's phase (`unknown` and `wait` share the wait's
  *  deadline, set at the scan) */
 export const timerKey = (s: VerifyState): string => `${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
-
-/** resolves when the app is in front again */
-const front = (life: Platform['lifecycle']) =>
-  new Promise<void>((resolve) => {
-    const off = life.onState((st) => {
-      if (st !== 'active') return
-      off()
-      resolve()
-    })
-  })
 
 /** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
 function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
@@ -177,15 +178,19 @@ export function verifyExecutor(
         // newest state of the ceremony decides again (`resumed`), nothing ran meanwhile
         const life = platform.lifecycle
         if (life && life.current() === 'background') {
-          await front(life)
-          return { ok: false, code: 'resumed' }
+          // released with the run: an effect whose state ended holds no listener
+          const back = await timers.front(e.run, life)
+          return back.ok ? { ok: false, code: 'resumed' } : back
         }
         const r = await port.trust.showBackCode(e.connection).done
         // the end of the code it answers is checked before the code is shown
         if (r.ok && r.value.kind === 'shown' && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
         // the act found the app behind (a race with the check above): back in front, the newest state decides
         if (r.ok && r.value.kind === 'not-shown' && r.value.why === 'background' && life) {
-          if (life.current() === 'background') await front(life)
+          if (life.current() === 'background') {
+            const back = await timers.front(e.run, life)
+            if (!back.ok) return back
+          }
           return { ok: false, code: 'resumed' }
         }
         return fromResult(r)

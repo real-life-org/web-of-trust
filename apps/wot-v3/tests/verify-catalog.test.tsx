@@ -12,6 +12,13 @@ describe('verify screen catalog', () => {
     expect(VERIFY_STATES.filter((s) => s !== 'exit' && !VERIFY_CATALOG_STATES.includes(s))).toEqual([])
   })
 
+  it('the back-code names the person by first name, also when the stated name starts with a space', async () => {
+    const backCode = VERIFY_CATALOG.find((e) => e.id === 'verify-backCode')!.override as { flow: 'verify'; state: object }
+    const override = { flow: 'verify', state: { ...backCode.state, name2: ' Bea Lindqvist' } } as const
+    render(<App composition={{ ...composeScenario(iiw), flowOverride: override as never }} />)
+    expect(await screen.findByText('Let Bea scan this code')).toBeInTheDocument()
+  })
+
   it.each(VERIFY_CATALOG.map((e) => [e.id, e] as const))('%s renders', async (_id, entry) => {
     const composition = { ...composeScenario(iiw), flowOverride: entry.override }
     render(<App composition={composition} />)

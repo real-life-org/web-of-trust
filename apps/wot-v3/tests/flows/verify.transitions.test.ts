@@ -12,7 +12,7 @@ import type { FakeScanner } from '../../src/platform/fake'
 import { loginLink } from '../../src/lib/login-request'
 import { BACK_AFTER_MS, verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
 import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
-import { bundleEvent, flowTimers, timerKey, verifyExecutor } from '../../src/hooks/verify'
+import { bundleEvent, carrierInReach, flowTimers, timerKey, verifyExecutor } from '../../src/hooks/verify'
 import { connectionOf } from '../../src/adapters/rltp/projection'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
 import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
@@ -852,7 +852,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     expect(fb.rows().some((r) => r === 'connectIncoming.result.accepted' || r === 'connecting.bundle.complete')).toBe(true)
     expect(fa.rows()).toEqual(expect.arrayContaining(['scanner.wait']))
     expect(fa.rows().some((r) => r === 'scanner.end.complete' || r === 'scanner.accepted' || r === 'scanner.accepted.contact')).toBe(true)
-    expect(fa.rows().some((r) => r.startsWith('backing') || r.startsWith('backCode'))).toBe(false)
+    expect(fa.rows().some((r) => r === 'scanner.back' || r.startsWith('backing') || r.startsWith('backCode'))).toBe(false)
   }, 60_000)
 
   it('the shower declines: a fresh code there, "declined" at the scanner, then its own code again', async () => {
@@ -1020,8 +1020,8 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     expect(back.qr).toContain('/vti/flow/shared-connect/0.1/back')
     await settle()
     expect(A.port.stores.contacts.get()).toMatchObject({ status: 'ready', value: [{ name: 'Bea' }] })
-    // after a restart the scanner reads the same link with its camera: the same back-code again, no second
-    // contact; typed in, the link stays spent
+    // the flow opened anew on the same device and session (not a process restart) reads the same link with the
+    // camera: the same back-code again, no second contact; typed in, the link stays spent
     const again = flow(A)
     await again.until('ready')
     again.scanner.source = () => link
@@ -1083,9 +1083,9 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     const link = 'https://web-of-trust.de/t#_from=x&_id=e1'
     const tick = () => new Promise((r) => setTimeout(r, 0))
     /** A reads a code with its camera (or as a link); the port double holds the ceremony `first` */
-    const run = async (first: Partial<Connection> | null, opts: { offline?: boolean; origin?: 'camera' | 'url'; preview?: Partial<CardPreview>; back?: () => Promise<Result<BackShow>> } = {}) => {
+    const run = async (first: Partial<Connection> | null, opts: { offline?: boolean; carrier?: Connectivity['carrier']; origin?: 'camera' | 'url'; preview?: Partial<CardPreview>; back?: () => Promise<Result<BackShow>> } = {}) => {
       const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
-      const connectivity = writableStore<Connectivity>({ ...A.port.stores.connectivity.get(), network: opts.offline ? 'offline' : 'online', carrier: 'connected' })
+      const connectivity = writableStore<Connectivity>({ ...A.port.stores.connectivity.get(), network: opts.offline ? 'offline' : 'online', carrier: opts.carrier ?? 'connected' })
       let backs = 0
       const set = (c: Partial<Connection> & Pick<Connection, 'status'>, rev: number) => connections.set(ready([conn(c)], revision(1, rev, 1)))
       const port: AppPort = {
@@ -1129,7 +1129,12 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     const shown = await run({})
     await shown.fa.until('connecting')
     expect(shown.fa.rows()).toContain('scanner.wait')
-    clockA.advance(BACK_AFTER_MS)
+    // one millisecond before the deadline: no act yet; at the deadline: the code
+    clockA.advance(BACK_AFTER_MS - 1)
+    await tick()
+    expect(shown.backs()).toBe(0)
+    expect(shown.fa.state().name).toBe('connecting')
+    clockA.advance(1)
     await shown.fa.until('backCode')
     shown.set({ status: 'open', backShown: true, contactId: 'c-bea' as ContactId }, 3)
     shown.fa.send({ type: 'keepWaiting' })
@@ -1193,6 +1198,12 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     await noRelay.fa.until('backCode')
     const offline = await run({}, { offline: true })
     await offline.fa.until('backCode')
+    // online, but the carrier unreachable or not configured: the same, at once
+    for (const carrier of ['unreachable', 'not-configured'] as const) {
+      const noCarrier = await run({}, { carrier })
+      await noCarrier.fa.until('backCode')
+      expect(noCarrier.fa.rows()).not.toContain('scanner.wait')
+    }
     // a link opened as a link: waiting without a back-code; the long wait and "keep waiting"
     const viaLink = await run({ camera: false }, { origin: 'url' })
     await viaLink.fa.until('connecting')
@@ -1428,6 +1439,8 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     expect(making.fa.rows()).toContain('backing.leave')
     never({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })
     await tick()
+    // the late result does not reopen the code
+    expect(making.fa.state().name).toBe('exit')
     // the shower: an older bundle names the read ceremony open, without its confirmation: no answer yet, the
     // read ceremony is kept; the bundle with the confirmation opens it; and back is a way out meanwhile
     for (const leave of [false, true]) {
@@ -1535,6 +1548,59 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
     }
   })
 
+  it('no "keep waiting" on the back-code of a link without a relay: no carrier brings an acceptance there', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const connections = writableStore<Loadable<readonly Connection[]>>(ready([conn({ status: 'open', relayed: false })], revision(1, 2, 1)))
+    const port: AppPort = {
+      ...A.port,
+      stores: { ...A.port.stores, connections },
+      trust: {
+        ...A.port.trust,
+        previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+        confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+        showBackCode: () => ({ actId: 'y' as never, done: Promise.resolve({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } } as never) }),
+      },
+    }
+    const fa = flow(A, port)
+    await fa.until('ready')
+    fa.scanner.source = () => 'https://web-of-trust.de/t#_from=x&_id=e1'
+    fa.send({ type: 'scan' })
+    await fa.until('confirm')
+    fa.send({ type: 'yes' })
+    await fa.until('backCode')
+    fa.send({ type: 'keepWaiting' })
+    expect(fa.state().name).toBe('backCode')
+  })
+
+  it('a second wait of the same run replaces the first for good: the first one\'s timer cannot remove it', async () => {
+    const clock = virtualClock(T0, 'UTC')
+    const timers = flowTimers(clock)
+    const first = timers.wait(1, T0 + 1000)
+    const second = timers.wait(1, T0 + 5000)
+    expect(await first).toEqual({ ok: false, code: 'cancelled' })
+    clock.advance(1000)
+    timers.clear()
+    clock.advance(5000)
+    expect(await second).toEqual({ ok: false, code: 'cancelled' })
+  })
+
+  it('the back-code act waiting for the foreground lets go of the lifecycle when its run ends', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const listeners = new Set<(s: 'active' | 'background') => void>()
+    const lifecycle = { ...A.platform.lifecycle, current: () => 'background' as const, onState: (cb: (s: 'active' | 'background') => void) => (listeners.add(cb), () => void listeners.delete(cb)) }
+    const timers = flowTimers(A.platform.clock)
+    const exec = verifyExecutor(A.port, { ...A.platform, lifecycle }, { current: null }, null, timers)
+    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(listeners.size).toBe(1)
+    // the run ends (an acceptance ended the code): the wait is released
+    timers.keep(8)
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(listeners.size).toBe(0)
+  })
+
   it('timers belong to their state: one of an earlier run is cancelled', async () => {
     const clock = virtualClock(T0, 'UTC')
     const timers = flowTimers(clock)
@@ -1608,7 +1674,8 @@ describe('verify transitions, the connection ceremony without a carrier', () => 
       }
     }
     await settle()
-    expect(B.port.stores.connectivity.get().network).not.toBe('offline')
+    // the responder's carrier is in reach: the code at once comes from the missing relay, not from the carrier
+    expect(carrierInReach(B.port)).toBe(true)
     const fa = flow(A)
     const fb = flow(B)
     await fa.until('ready')

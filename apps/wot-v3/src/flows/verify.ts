@@ -307,7 +307,7 @@ export const VERIFY_TABLE: readonly Row[] = [
   row('readingBack.result.unknown', 'result ver.readBack', 'readingBack{connection}', 'free', 'no answer either way', { guard: 'taken or read again, the ceremony in no bundle yet' }),
   row('backing.result.notShown', 'result ver.back', 'scannerStep(bundle)', 'free', 'the act ran nothing', { guard: 'closed or accepted: the bundle that says so ends the code' }),
   row('scanner.wait.link', 'scannerStep', 'connecting{scanner}', 'free', '–', { guard: 'open, not accepted, not read by the camera: no back-code', effects: ['ver.wait WAIT_LONG_MS'] }),
-  row('backCode.keepWaiting', 'keepWaiting', 'connecting{scanner}', 'free', 'the contact stays; the acceptance over the carrier ends the wait', { effects: ['ver.wait BACK_AFTER_MS'] }),
+  row('backCode.keepWaiting', 'keepWaiting', 'connecting{scanner}', 'free', 'the contact stays; the acceptance over the carrier ends the wait', { guard: 'the link names a relay', effects: ['ver.wait BACK_AFTER_MS'] }),
   row('backing.result.ok', 'result ver.back', 'backCode{qr, expiresAt}', 'free', 'intent replay: the same code again; the contact opened once', { guard: 'the ceremony neither ended nor accepted in the last bundle', effects: ['ver.expire'] }),
   row('backing.result.failed', 'result ver.back', 'scanError{no-card | code-too-long | code-expired | back-expired | failed}', 'free', 'the proposal stays in the core and goes out with a carrier'),
   row('backCode.expire', 'result ver.expire', 'scanError{back-expired | code-expired}', 'free', 'the contact stays when there is one', { guard: 'the code it answers ended; "the contact stays" only with this ceremony\'s contact' }),
@@ -667,7 +667,8 @@ function step(s: S, e: E): Out {
       if (e.type === 'bundle' && c && (c.status !== 'open' || c.accepted)) return scannerStep(s, s.connection, 'bundle')
       if (isResult(e, s.run, 'ver.expire')) return goto(s, { name: 'scanError', code: expiredCode(c) }, 'backCode.expire')
       // back to waiting for the acceptance over the carrier, by the person's choice; the wait starts anew
-      if (e.type === 'keepWaiting') return emit(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'scanner', waitLong: false, phase: 'wait', kept: true }, 'backCode.keepWaiting', (r) => [{ id: 'ver.wait', run: r, ms: BACK_AFTER_MS }])
+      // (not for a link without a relay: no carrier brings an acceptance there, the code is the way)
+      if (e.type === 'keepWaiting' && c?.relayed !== false) return emit(s, { name: 'connecting', connection: s.connection, name2: s.name2, role: 'scanner', waitLong: false, phase: 'wait', kept: true }, 'backCode.keepWaiting', (r) => [{ id: 'ver.wait', run: r, ms: BACK_AFTER_MS }])
       if (e.type === 'leave' || e.type === 'back' || e.type === 'done') {
         const contactId = c?.contactId ?? null
         return exit(s, contactId ? 'chat' : 'back', contactId, 'backCode.leave')

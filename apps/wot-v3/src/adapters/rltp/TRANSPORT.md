@@ -553,8 +553,10 @@ reach (network offline, carrier unreachable or not configured); otherwise it wai
 the carrier and shows the back-code on its own after `BACK_AFTER_MS` (12 s) without one, since it cannot
 tell which side lacks the connection. The wait measures "no acceptance yet", not "not delivered":
 shared-connect gives no signal before the acceptance, and a frame on the socket is no acceptance by the
-mediator. "Keep waiting" goes back to the wait; an acceptance over the carrier ends the wait and the code
-with the success, a decline or a failure with its message. Every one of these decisions is taken against the
+mediator. "Keep waiting" goes back to the wait (not offered for a link without a relay). An acceptance over
+the carrier ends the wait for it and the code: with the success when the responder's contact stands (its
+back-code opened it), otherwise the screen waits for the rest of the ceremony, without a back-code; a
+decline or a failure ends both with its message. Every one of these decisions is taken against the
 ceremony as the port projects it from the core's view on every bundle (`Connection`: camera, accepted,
 backShown, relayed, theirDid, expiresAt, decision, contactId), the same on the first scan and on a
 resumption, never from what the screen did before. The back-code act runs only while the app is in front;
