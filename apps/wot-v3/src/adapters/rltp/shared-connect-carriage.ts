@@ -21,10 +21,9 @@
 //    (`deps.attempts`), and it says when, never that the counterpart has them.
 //  - A document reaches the mediator's acknowledgement only after the holder took it: one it could
 //    not take now stays there and comes again at the next connect.
-//  - The messaging keys come from the KeyProvider under the nonce this side minted: the inviter's
-//    handle (the enactment id), the responder's own challenge (the id of its propose, which its later
-//    documents name as `threadId` and its credential as `taskContext`). The wire checks the keys
-//    against the enactment's did:peer:2, so a wrong nonce opens nothing.
+//  - The messaging keys come from the KeyProvider under the nonce the view names for this side
+//    (`nonce`: the inviter's handle, the responder's own challenge). The wire checks the keys against
+//    the enactment's did:peer:2, so a wrong nonce opens nothing.
 //  - Documents of a commit go out in order once the wire is open. A send that did not reach the
 //    socket, a reconnect and a restart are answered alike: the view's whole outbox goes out again
 //    (the counterpart's machine answers a duplicate, it never acts twice).
@@ -35,6 +34,7 @@
 
 import { fromB64u, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, HolderEvent, KeyProvider, SharedConnectView } from '@real-life/trust-protocol'
+import { proposalValidUntil } from './acts'
 import { codeOnly, sharedConnectKeys, type SharedConnectKeys, type SharedConnectWire, type SharedConnectWireOpening } from './shared-connect-wire'
 
 /** how long (device time) a closed enactment keeps its wire: its last documents leave, a
@@ -101,8 +101,6 @@ interface Run {
   readonly startedAt: number
 }
 
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
-
 /** a refused document's type as one of the ceremony's words, never the sender's string */
 function docWord(type: string): string {
   const base = type.endsWith('#response') ? type.slice(0, -'#response'.length) : type
@@ -121,18 +119,6 @@ export function openFailure(e: unknown): string {
   if (/resolv/i.test(m)) return 'resolve'
   if (/socket|websocket|network|fetch/i.test(m)) return 'socket'
   return 'other'
-}
-
-/** the nonces the messaging identity of an enactment may derive from, most direct first */
-function nonceCandidates(v: SharedConnectView): string[] {
-  if (v.role === 'inviter') return [v.id]
-  const docs = v.outbox as readonly { type?: unknown; id?: unknown; threadId?: unknown }[]
-  const own = [
-    ...docs.filter((d) => d.type === sc.TASK_PROPOSE).map((d) => str(d.id)),
-    ...docs.map((d) => str(d.threadId)),
-    str((v.myCredential as { taskContext?: unknown } | null)?.taskContext),
-  ]
-  return [...new Set(own.filter((c): c is string => c !== null && sc.canonicalChallenge(c)))]
 }
 
 /** The explicit end of the retries for the last documents of a closed enactment (device time after
@@ -166,7 +152,7 @@ const owes = (v: SharedConnectView): boolean => v.outbox.length > 0 && (v.status
  *  - Closed otherwise: SC_LINGER_MS. */
 function wantedUntil(v: SharedConnectView, now: number, lastAttempt: number | undefined, attempt: Run | undefined): number | null {
   if (v.status === 'open') {
-    const live = (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000
+    const live = proposalValidUntil(v.link)
     const answered = v.theirDid !== null
     const decided = v.role === 'inviter' ? answered && v.promptId === null : v.theirPair !== null
     if (decided) return Infinity
@@ -240,16 +226,9 @@ export function createSharedConnectCarriage(deps: SharedConnectCarriageDeps): Sh
     if (r.code === 'concurrent') throw new Error('shared-connect: the document was not taken')
   }
 
-  const keysOf = async (v: SharedConnectView): Promise<SharedConnectKeys | null> => {
-    for (const c of nonceCandidates(v)) {
-      try {
-        return await sharedConnectKeys(deps.keys, fromB64u(c), v.did)
-      } catch {
-        // the next candidate
-      }
-    }
-    return null
-  }
+  /** the messaging keys under the nonce the view names for this side (`nonce`); null when they do not fit
+   *  the enactment's identity */
+  const keysOf = (v: SharedConnectView): Promise<SharedConnectKeys | null> => sharedConnectKeys(deps.keys, fromB64u(v.nonce), v.did).catch(() => null)
 
   const openRun = (r: Run, v: SharedConnectView) => {
     r.opening = true

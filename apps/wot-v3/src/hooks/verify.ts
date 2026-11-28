@@ -58,13 +58,18 @@ export function untilFront(life: Platform['lifecycle'], signal: AbortSignal): Pr
  *  does not outlive a change of state */
 export const verifyLifetime = (s: VerifyState): string => `${s.run}:${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
 
-/** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
-function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
+type Follow = { readonly follow: CaptureFollow; readonly decision: string | null }
+
+/** Where an already-captured card leaves the encounter, read from the published stores (N9); `pending`
+ *  while the decisions or the contact's store has not published yet (loading): a store that loads is no
+ *  answer, neither "nothing open" nor "not known" */
+function followOf(port: AppPort, contactId: ContactId | null): Follow | 'pending' {
   if (contactId === null) return { follow: 'none', decision: null }
   const decisions = port.stores.decisions.get()
+  const c = port.stores.contact(contactId).get()
+  if (decisions.status === 'loading' || c.status === 'loading') return 'pending'
   const open = decisions.status === 'ready' ? decisions.value.find((d) => d.kind === 'encounter-confirm' && d.contactId === contactId) : undefined
   if (open) return { follow: 'confirm', decision: open.id }
-  const c = port.stores.contact(contactId).get()
   const v = c.status === 'ready' ? c.value?.verification : undefined
   if (v === 'mutual') return { follow: 'mutual', decision: null }
   if (v === 'outgoing') return { follow: 'counter-pending', decision: null }
@@ -75,6 +80,29 @@ function followOf(port: AppPort, contactId: ContactId | null): { follow: Capture
   // arrived yet)
   if (v !== undefined) return { follow: 'met', decision: null }
   return { follow: 'none', decision: null }
+}
+
+/** `followOf` once both stores published, for an effect whose lifetime is `signal`: while one loads, the
+ *  next publication of either is awaited and the follow-up read again; null when the lifetime ended first.
+ *  The stores are read and subscribed with no pause between, so no publication goes unseen */
+async function publishedFollow(port: AppPort, contactId: ContactId | null, signal: AbortSignal): Promise<Follow | null> {
+  for (;;) {
+    if (signal.aborted) return null
+    const f = followOf(port, contactId)
+    if (f !== 'pending') return f
+    const stores = [port.stores.decisions, port.stores.contact(contactId as ContactId)]
+    const published = await new Promise<boolean>((resolve) => {
+      const done = (v: boolean) => {
+        for (const off of offs) off()
+        signal.removeEventListener('abort', onAbort)
+        resolve(v)
+      }
+      const onAbort = () => done(false)
+      const offs = stores.map((st) => st.subscribe(() => done(true)))
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    if (!published) return null
+  }
 }
 
 /** Where a web camera renders (ScannerPort.scan target): the screen sets it, the scan effect waits for
@@ -156,16 +184,17 @@ export function verifyExecutor(
         if (!r.ok) return fromResult(r)
         const outcome: EncounterOutcome = r.value
         const contactId = outcome.kind === 'already-captured' ? outcome.contactId : null
-        return { ok: true, value: { outcome, contactId, ...followOf(port, contactId) } }
+        // the flow decides the follow-up only from stores that published (a loading one is no answer)
+        const follow = await publishedFollow(port, contactId, signal)
+        if (follow === null) return CANCELLED
+        return { ok: true, value: { outcome, contactId, ...follow } }
       }
       case 'ver.sent':
         return fromResult(await port.trust.sentCardFor(e.contactId))
       case 'ver.counter':
         return fromResult(await port.trust.counterVerify(e.contactId).done)
       case 'ver.decide':
-        // a proposal is accepted only while the code it answers is valid: past it the person may have
-        // scanned a new code already, and nothing is issued for the old one
-        if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
+        // the end of the code a proposal answers is read by the act, at its own time (`code-expired`)
         return fromResult(await port.trust.decide(e.decision, e.choice).done)
       case 'ver.back': {
         // the act opens a contact: it runs only while the screen is in front; back from the background, the
@@ -208,7 +237,9 @@ export function carrierInReach(port: AppPort): boolean {
 export function bundleEvent(port: AppPort): VerifyEvent | null {
   const contacts = port.stores.contacts.get()
   const decisions = port.stores.decisions.get()
-  if (contacts.status !== 'ready' || decisions.status !== 'ready') return null
+  const all = port.stores.connections.get()
+  // a store that has not published is no answer: no bundle until all three did
+  if (contacts.status !== 'ready' || decisions.status !== 'ready' || all.status !== 'ready') return null
   const verifications: Record<string, Verification> = {}
   const aliases: Record<string, ContactId> = {}
   const names = new Map<string, string | null>()
@@ -220,13 +251,12 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   const open = decisions.value.flatMap((d) =>
     d.kind === 'encounter-confirm' && d.state === 'open' ? [{ id: d.id, contactId: d.contactId, card: d.answers?.card ?? null, name: names.get(d.contactId) ?? null }] : [],
   )
-  const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
-  const all = port.stores.connections.get()
+  const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name }] : []))
   // every ceremony as the core holds it: the flow decides against exactly these facts
   const connections = Object.fromEntries(
-    (all.status === 'ready' ? all.value : []).map((c) => [
+    all.value.map((c) => [
       c.id,
-      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, validUntil: c.validUntil, decision: c.decision },
+      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, decision: c.decision },
     ]),
   )
   return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections, inReach: carrierInReach(port) }

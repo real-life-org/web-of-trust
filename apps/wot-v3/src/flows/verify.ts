@@ -30,12 +30,10 @@ export interface ProposalRef {
   readonly connection: ConnectionId
   readonly card: CardRef | null
   readonly name: string | null
-  /** the end of the code it answers: it is accepted only before (the person scans again after) */
-  readonly validUntil: number
 }
 
 /** where a connection ceremony stands, from the last published bundle */
-export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'validUntil' | 'decision'>
+export type ConnectionState = Pick<Connection, 'status' | 'contactId' | 'name' | 'camera' | 'accepted' | 'backShown' | 'relayed' | 'expiresAt' | 'decision'>
 
 /** `connect-failed`: the other side ended the connection ceremony with an error (its code is in the diagnostics) */
 export type ScanErrorCode = Extract<RefusalCode, 'card-invalid' | 'card-self' | 'already-scanned' | 'code-expired' | 'code-used' | 'no-card' | 'code-too-long'> | 'failed' | 'connect-failed'
@@ -108,7 +106,7 @@ export type VerifyState =
   | (Base & { readonly name: 'confirmIncoming'; readonly contactId: ContactId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: boolean; readonly failed: boolean })
   /** a proposal answers the shown code (a connection ceremony): the shower accepts or declines; a
    *  decline tells the other side and spends the code */
-  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly validUntil: number; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
+  | (Base & { readonly name: 'connectIncoming'; readonly connection: ConnectionId; readonly decision: DecisionId; readonly name2: string | null; readonly busy: 'accept' | 'decline' | null; readonly failed: boolean })
   /** the ceremony runs: the scanner waits for the shower's answer, the shower for the last documents.
    *  What the scanner does next is decided by `scannerStep` from the ceremony's state in the last bundle */
   | (Base & { readonly name: 'connecting'; readonly connection: ConnectionId; readonly name2: string | null; readonly role: 'scanner' | 'shower'; readonly waitLong: boolean; readonly phase?: ScannerPhase; readonly kept?: boolean; readonly due?: boolean })
@@ -176,8 +174,8 @@ export type VerifyEffect =
   | ({ readonly id: 'ver.wait'; readonly ms: number } & Effect)
   | ({ readonly id: 'ver.sent'; readonly contactId: ContactId } & Effect)
   | ({ readonly id: 'ver.counter'; readonly contactId: ContactId } & Effect)
-  /** `validUntil`: an accept past the answered code's end is not issued (`code-expired`) */
-  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline'; readonly validUntil: number } & Effect)
+  /** an accept past the answered code's end is not issued: the act refuses it (`code-expired`) */
+  | ({ readonly id: 'ver.decide'; readonly decision: DecisionId; readonly choice: 'accept' | 'decline' } & Effect)
   | ({ readonly id: 'ver.back'; readonly connection: ConnectionId } & Effect)
   | ({ readonly id: 'ver.readBack'; readonly raw: string } & Effect)
 
@@ -587,7 +585,7 @@ function step(s: S, e: E): Out {
       if (s.busy) return stay(s)
       if (e.type === 'accept' || e.type === 'decline') {
         const choice = e.type
-        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice, validUntil: s.validUntil }])
+        return emit(s, { ...pickConnect(s), busy: choice, failed: false }, `connectIncoming.${choice}`, (r) => [{ id: 'ver.decide', run: r, decision: s.decision, choice }])
       }
       if (e.type === 'notNow' || e.type === 'back' || e.type === 'leave') return exit(s, 'back', null, 'connectIncoming.notNow', s.decision)
       if (e.type === 'bundle' && !(e.proposals ?? []).some((x) => x.id === s.decision)) {
@@ -707,7 +705,7 @@ function step(s: S, e: E): Out {
   }
 }
 
-const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, validUntil: s.validUntil, name2: s.name2 })
+const pickConnect = (s: Extract<S, { name: 'connectIncoming' }>) => ({ name: s.name, connection: s.connection, decision: s.decision, name2: s.name2 })
 const pickConnecting = (s: Extract<S, { name: 'connecting' }>) => ({ name: s.name, connection: s.connection, name2: s.name2, role: s.role, ...(s.phase ? { phase: s.phase } : {}), ...(s.kept ? { kept: s.kept } : {}), ...(s.due ? { due: s.due } : {}) })
 
 /** the end of a back-code's link: "the contact stays" only when this ceremony's contact is there */
@@ -722,7 +720,7 @@ function readBack(s: S, connection: ConnectionId): Out {
   if (!c || (c.status === 'open' && !c.decision && !c.accepted && !c.contactId)) {
     return s.name === 'readingBack' && s.connection === connection ? stay(s) : goto(s, { name: 'readingBack', connection }, 'readingBack.result.unknown')
   }
-  if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, validUntil: c.validUntil, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
+  if (c?.status === 'open' && c.decision) return goto(s, { name: 'connectIncoming', card: null, connection, decision: c.decision, name2: c.name, busy: null, failed: false }, 'readingBack.result.proposed')
   if (c?.contactId && c.status !== 'declined' && c.status !== 'failed') return goto(s, { name: 'success', contactId: c.contactId, name2: c.name, isNew: true, ...(c.status === 'open' ? { connection } : {}) }, 'readingBack.result.contact')
   // ended with an error after the acceptance opened the contact here: said so, the contact stays
   if (c?.status === 'failed' && c.contactId) return goto(s, { name: 'scanError', code: 'connect-failed-kept' }, 'readingBack.result.failed')
@@ -767,7 +765,7 @@ function scannerStep(s: S, connection: ConnectionId, cause: 'entry' | 'due' | 'b
 function proposedHere(s: S, e: Extract<E, { type: 'bundle' }>, row: string): Out | null {
   const ref = s.card?.card ?? null
   const p = ref === null ? undefined : e.proposals?.find((x) => x.card === ref)
-  return p ? goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, validUntil: p.validUntil, name2: p.name, busy: null, failed: false }, row) : null
+  return p ? goto(s, { name: 'connectIncoming', card: null, connection: p.connection, decision: p.id, name2: p.name, busy: null, failed: false }, row) : null
 }
 
 /** Where a connection ceremony leaves the shower's flow, by the last bundle; null while it runs. Complete

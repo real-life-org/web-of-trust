@@ -10,7 +10,7 @@ import type { ActId, AppError, AppEvent, BackRead, CardPreview, ConnectionId, Co
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
-import { ACTS, ownMessageLine, type ActContext, type ActOutcome, type ActSpec } from './acts'
+import { ACTS, ownMessageLine, proposalValidUntil, type ActContext, type ActOutcome, type ActSpec } from './acts'
 import { carrierOffer, journaledOffer } from './carrier-offer'
 import { compareOrder, EMPTY_ENCOUNTERS, EMPTY_LEDGER, KV, orderKey, type DisplayedCards, type EncounterCache, type Ledger, type LogLine, type MessageLine, type ReadMarks } from './app-data'
 import { idbAppDb, type AppDb, type AppWrite } from './app-db'
@@ -1692,7 +1692,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const connection = back.id as ConnectionId
       const before = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
       if (!before) return { ok: true, value: { kind: 'no-match' } }
-      if (now() > (before.link.exp + sc.CLOCK_TOLERANCE_S) * 1000) return { ok: true, value: { kind: 'expired', connection } }
+      if (now() > proposalValidUntil(before.link)) return { ok: true, value: { kind: 'expired', connection } }
       const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
       if (!r.ok) return { ok: false, error: mapActError(r.code) }
       schedule(r.nextDueAt)

@@ -547,7 +547,8 @@ wires: an enactment opened there stays in the holder until a carrier is configur
 **Without a carrier in reach** (lib 0.22.0). The shown code is always the trigger link, also while the
 device is offline: the link names the mediator from the build's configuration as the relay (none in a
 build without one), and a link shown in person carries the inviter's card (its pair keys, no delivery
-hints). A responder that read the link with its camera shows its back-code (`sharedConnectBack`, the act
+hints) and its name where the name fits beside the card; a name that does not fit is left out, the card
+stays, and the responder's screen shows the code as unnamed. A responder that read the link with its camera shows its back-code (`sharedConnectBack`, the act
 `showBackCode`) at once when the link names no relay or the connectivity the app shows has no carrier in
 reach (network offline, carrier unreachable or not configured); otherwise it waits for the acceptance over
 the carrier and shows the back-code on its own after `BACK_AFTER_MS` (12 s) without one, since it cannot
