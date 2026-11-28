@@ -5,16 +5,17 @@
 // failures and races (a failing counter-step or sent card, mutual before a result) are reached over a
 // port double and named as such.
 import { afterAll, describe, expect, it } from 'vitest'
-import type { AppPort, Connection, ContactId, Loadable, Result } from '../../src/port'
+import type { AppPort, BackRead, BackShow, CardPreview, Connection, ConnectionId, Connectivity, ContactId, DecisionId, Loadable, Result } from '../../src/port'
 import { ready, revision, secret, writableStore } from '../../src/port'
 import { virtualClock } from '../../src/platform/fake'
 import type { FakeScanner } from '../../src/platform/fake'
 import { loginLink } from '../../src/lib/login-request'
-import { verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
+import { BACK_AFTER_MS, verify, verifyStart, VERIFY_TABLE, WAIT_LONG_MS, type VerifyEvent, type VerifyState } from '../../src/flows/verify'
 import { createFlowRunner, type FlowRunner } from '../../src/hooks/flow-runner'
-import { bundleEvent, verifyExecutor } from '../../src/hooks/verify'
+import { bundleEvent, carrierInReach, verifyExecutor, verifyLifetime } from '../../src/hooks/verify'
+import { connectionOf } from '../../src/adapters/rltp/projection'
 import { LOOPBACK_PHRASES, loopbackDevice, memoryCarrier, type LoopbackDevice } from '../../harness/loopback'
-import { mediatorDouble } from '../../harness/mediator-double'
+import { mediatorDouble, phoneNet } from '../../harness/mediator-double'
 import { CARRIER_TICK_MS } from '../../src/adapters/rltp'
 import { tableCoverage } from './world'
 
@@ -52,7 +53,7 @@ interface Flow {
 function flow(d: LoopbackDevice, port: AppPort = d.port): Flow {
   const scans = { current: null as AbortController | null }
   const scanner = d.platform.scanner as FakeScanner
-  const r = cover.track(createFlowRunner(verify, verifyStart(), verifyExecutor(port, d.platform, scans), d.platform))
+  const r = cover.track(createFlowRunner(verify, verifyStart(), verifyExecutor(port, d.platform, scans, null), d.platform, { lifetime: verifyLifetime }))
   const push = () => {
     const e = bundleEvent(port)
     if (e) r.send(e)
@@ -60,6 +61,7 @@ function flow(d: LoopbackDevice, port: AppPort = d.port): Flow {
   port.stores.contacts.subscribe(push)
   port.stores.decisions.subscribe(push)
   port.stores.connections.subscribe(push)
+  port.stores.connectivity.subscribe(push)
   r.subscribe(() => {
     if (r.get().name !== 'scanning') scans.current?.abort()
   })
@@ -92,6 +94,26 @@ const qrOf = (f: Flow): string => {
   if (!s.card) throw new Error('no card shown')
   return s.card.qr
 }
+
+/** a ceremony as the port shows it, for the port doubles */
+const conn = (over: Partial<Connection> & Pick<Connection, 'status'>): Connection => ({
+  id: 'e1' as ConnectionId,
+  role: 'responder',
+  name: 'Bea',
+  contactId: null,
+  met: true,
+  failure: null,
+  closedAt: null,
+  camera: true,
+  accepted: false,
+  backShown: false,
+  relayed: true,
+  theirDid: 'did:peer:2.bea',
+  expiresAt: Number.MAX_SAFE_INTEGER,
+  validUntil: Number.MAX_SAFE_INTEGER,
+  decision: null,
+  ...over,
+})
 
 describe('verify transitions', () => {
   it('scanner offline, optical return path, displayer captures and counters; both reach success', async () => {
@@ -678,8 +700,15 @@ async function mediatorWorld(n = 2, ceremony?: 'shared-connect') {
     clock.advance(CARRIER_TICK_MS)
     await settle()
   }
-  /** carrier ticks until `ok` holds (the bundle crossing the mediator) */
+  /** until `ok` holds (the bundle crossing the mediator). First without moving the device clock: the
+   *  mediator double's delivery takes real time, which on a slow machine outlasts the settle loop's rest, and a
+   *  device clock moved meanwhile would pass the scanner's wait (BACK_AFTER_MS) on the speed of the machine.
+   *  Only what does not arrive in real time gets carrier ticks */
   const until = async (ok: () => boolean, what: string) => {
+    for (let i = 0; i < 200 && !ok(); i++) {
+      await settle()
+      await new Promise((r) => setTimeout(r, 25))
+    }
     for (let i = 0; i < 12 && !ok(); i++) await tick()
     if (!ok()) throw new Error(`mediator world: never ${what}`)
   }
@@ -804,18 +833,16 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     expect(fa.state()).toMatchObject({ role: 'scanner', name2: 'Bea', waitLong: false })
   }
 
-  it('scan, propose, the shower accepts on the same screen; both reach success; the scanner’s wait note and "keep waiting"', async () => {
-    const { clock, devices, until, settle } = await mediatorWorld(2, 'shared-connect')
+  it('scan, propose, the shower accepts on the same screen before the scanner’s wait ends: both reach success, no back-code, no early contact', async () => {
+    const { devices, until, settle } = await mediatorWorld(2, 'shared-connect')
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const fa = flow(A)
     const fb = flow(B)
     await scanAndPropose(fa, fb)
     await until(() => fb.state().name === 'connectIncoming', 'the proposal at the shower')
     expect(fb.state()).toMatchObject({ card: null, name2: 'Al', busy: null, failed: false })
-    clock.advance(WAIT_LONG_MS)
-    await expect.poll(() => (fa.state() as { waitLong?: boolean }).waitLong).toBe(true)
-    fa.send({ type: 'keepWaiting' })
-    expect(fa.state()).toMatchObject({ name: 'connecting', waitLong: false })
+    expect(fa.state()).toMatchObject({ name: 'connecting', role: 'scanner' })
+    expect((A.port.stores.contacts.get() as { value?: unknown[] }).value).toEqual([])
     fb.send({ type: 'accept' })
     expect(fb.state()).toMatchObject({ name: 'connectIncoming', busy: 'accept' })
     await settle()
@@ -824,7 +851,9 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     expect(fb.state()).toMatchObject({ name2: 'Al', isNew: true })
     expect(fb.rows()).toEqual(expect.arrayContaining(['ready.bundle.proposed', 'connectIncoming.accept']))
     expect(fb.rows().some((r) => r === 'connectIncoming.result.accepted' || r === 'connecting.bundle.complete')).toBe(true)
-    expect(fa.rows()).toEqual(expect.arrayContaining(['committing.result.proposed', 'connecting.result.long', 'connecting.keepWaiting', 'connecting.bundle.complete']))
+    expect(fa.rows()).toEqual(expect.arrayContaining(['scanner.wait']))
+    expect(fa.rows().some((r) => r === 'scanner.end.complete' || r === 'scanner.accepted' || r === 'scanner.accepted.contact')).toBe(true)
+    expect(fa.rows().some((r) => r === 'scanner.back' || r.startsWith('backing') || r.startsWith('backCode'))).toBe(false)
   }, 60_000)
 
   it('the shower declines: a fresh code there, "declined" at the scanner, then its own code again', async () => {
@@ -843,7 +872,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     fa.send({ type: 'done' })
     await fa.until('ready')
     expect(fb.rows()).toEqual(expect.arrayContaining(['connectIncoming.decline', 'connectIncoming.result.declined']))
-    expect(fa.rows()).toEqual(expect.arrayContaining(['connecting.bundle.declined', 'declined.done']))
+    expect(fa.rows()).toEqual(expect.arrayContaining(['scanner.end.declined', 'declined.done']))
   }, 60_000)
 
   it('"not now" leaves the request open; one decided elsewhere gives a fresh code; a failing answer keeps the question; the scanner may leave', async () => {
@@ -918,7 +947,7 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
     const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
     const shown = await B.port.trust.showCard().done
     if (!shown.ok) throw new Error('show')
-    const run = async (end: Pick<Connection, 'status' | 'contactId'>) => {
+    const run = async (end: Partial<Connection> & Pick<Connection, 'status' | 'contactId'>) => {
       const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
       const port: AppPort = {
         ...A.port,
@@ -932,16 +961,780 @@ describe('verify transitions, the connection ceremony over the mediator', () => 
       await fa.until('confirm')
       fa.send({ type: 'yes' })
       await fa.until('connecting')
-      connections.set(ready([{ id: 'e1' as never, role: 'responder', name: 'Bea', met: false, failure: null, closedAt: null, ...end }], revision(1, 2, 1)))
+      connections.set(ready([conn({ camera: false, ...end })], revision(1, 2, 1)))
       return fa
     }
     const failed = await run({ status: 'failed', contactId: null })
     await failed.until('scanError')
     expect(failed.state()).toMatchObject({ code: 'connect-failed' })
-    const foreign = await run({ status: 'complete', contactId: null })
-    await foreign.until('exit')
-    expect(foreign.state()).toMatchObject({ to: 'back', contactId: null })
-    expect(failed.rows()).toContain('connecting.bundle.failed')
-    expect(foreign.rows()).toContain('connecting.bundle.foreign')
+    // complete without a card (a counterpart whose app gives no channel), as the port really projects it:
+    // the core holds no contact, the port names the ceremony's list entry `connect:<id>`, the flow ends in the
+    // success (behaviour from before the offline path, unchanged here; open point: the screen offers "Close")
+    const real = connectionOf({ id: 'e1', role: 'responder', status: 'complete', link: { from: 'did:peer:2.x', id: 'e1', exp: 2_000_000_000, label: 'Bea' }, did: 'did:peer:2.y', theirDid: 'did:peer:2.x', theirPair: null, name: 'Bea', channel: 'scan', theirChannel: null, met: true, promptId: null, contactId: null, carrierNonce: null, failure: null, theirCredential: null, myCredential: {}, outbox: [], openedAt: 0, closedAt: 1 } as never, true)
+    expect(real.contactId).toBe('connect:e1')
+    const foreign = await run(real)
+    expect(await foreign.until('success')).toMatchObject({ contactId: 'connect:e1' })
+    expect(failed.rows()).toContain('scanner.end.failed')
+    expect(foreign.rows()).toContain('scanner.end.complete')
+    // the exit for a complete ceremony without any contact id stays in the machine; the port never projects it
+    const bare = await run({ status: 'complete', contactId: null })
+    await bare.until('exit')
+    expect(bare.rows()).toContain('scanner.end.foreign')
   })
+})
+
+
+// ── the connection ceremony without a carrier (lib 0.22.0): the link carries the shower's card, the
+//    scanner shows its back-code, the shower's camera reads it and the confirmation opens both contacts ──
+describe('verify transitions, the connection ceremony without a carrier', () => {
+  it('both offline: link, back-code, confirmation; the shower succeeds at once, the scanner once a carrier brings the rest', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    const nets = [phoneNet(med.net), phoneNet(med.net)]
+    const devices: LoopbackDevice[] = []
+    for (const [i, name] of ['Al', 'Bea'].entries()) {
+      devices.push(await loopbackDevice({ carrier: { mediator: { did: med.did, net: nets[i]!.net } }, id: name, name, words: LOOPBACK_PHRASES[i] ?? LOOPBACK_PHRASES[0], clock, seed: 91 + i * 7, ceremony: 'shared-connect' }))
+    }
+    const [A, B] = devices as [LoopbackDevice, LoopbackDevice]
+    const online = (on: boolean) => devices.forEach((d, i) => (nets[i]!.setOnline(on), d.platform.network.set(on ? 'online' : 'offline')))
+    const settle = async () => {
+      for (let i = 0; i < 40; i++) {
+        await med.settled()
+        for (const d of devices) await d.port.session()?.idle()
+        await new Promise((r) => setTimeout(r, 0))
+      }
+    }
+    online(false)
+    await settle()
+    const fa = flow(A)
+    const fb = flow(B)
+    await fb.until('ready')
+    const link = fb.state().card?.qr ?? ''
+    await fa.until('ready')
+    fa.scanner.source = () => link
+    fa.send({ type: 'scan' })
+    await fa.until('confirm')
+    fa.send({ type: 'yes' })
+    // no carrier in reach: the back-code at once; the scanner's contact exists from here on
+    const back = (await fa.until('backCode')) as Extract<VerifyState, { name: 'backCode' }>
+    expect(back).toMatchObject({ name2: 'Bea' })
+    expect(back.qr).toContain('/vti/flow/shared-connect/0.1/back')
+    await settle()
+    expect(A.port.stores.contacts.get()).toMatchObject({ status: 'ready', value: [{ name: 'Bea' }] })
+    // the flow opened anew on the same device and session (not a process restart) reads the same link with the
+    // camera: the same back-code again, no second contact; typed in, the link stays spent
+    const again = flow(A)
+    await again.until('ready')
+    again.scanner.source = () => link
+    again.send({ type: 'scan' })
+    expect(((await again.until('backCode')) as Extract<VerifyState, { name: 'backCode' }>).qr).toBe(back.qr)
+    expect(again.rows()).toContain('scanner.back')
+    const typedLink = flow(A)
+    await typedLink.until('ready')
+    typedLink.send({ type: 'manual' })
+    typedLink.send({ type: 'text', text: link })
+    typedLink.send({ type: 'submit' })
+    expect(await typedLink.until('scanError')).toMatchObject({ code: 'code-used' })
+    await settle()
+    expect((A.port.stores.contacts.get() as { value?: unknown[] }).value).toHaveLength(1)
+    // the back-code typed in or opened as a link at the shower opens nothing: only its camera counts
+    fb.send({ type: 'manual' })
+    fb.send({ type: 'text', text: back.qr })
+    fb.send({ type: 'submit' })
+    expect(await fb.until('scanError')).toMatchObject({ code: 'back-not-camera' })
+    fb.send({ type: 'retry' })
+    await fb.until('ready')
+    fb.send({ type: 'link', raw: back.qr })
+    expect(await fb.until('scanError')).toMatchObject({ code: 'back-not-camera' })
+    fb.send({ type: 'retry' })
+    await fb.until('ready')
+    await settle()
+    expect((B.port.stores.decisions.get() as { value?: unknown[] }).value).toEqual([])
+    expect(fb.rows()).toContain('previewing.result.back.notCamera')
+    // the shower's camera reads it: the confirmation on the same screen, then the success
+    fb.scanner.source = () => back.qr
+    fb.send({ type: 'scan' })
+    await fb.until('connectIncoming')
+    expect(fb.state()).toMatchObject({ name2: 'Al', busy: null })
+    fb.send({ type: 'accept' })
+    await fb.until('success')
+    expect(fb.state()).toMatchObject({ name2: 'Al', isNew: true })
+    // the scanner's code stays while it is shown; the carrier comes and completes the ceremony
+    await settle()
+    expect(fa.state().name).toBe('backCode')
+    online(true)
+    for (let i = 0; i < 8 && fa.state().name !== 'success'; i++) {
+      clock.advance(CARRIER_TICK_MS)
+      await settle()
+    }
+    expect(fa.state()).toMatchObject({ name: 'success', name2: 'Bea' })
+    const contactsA = A.port.stores.contacts.get()
+    const [cA] = contactsA.status === 'ready' ? contactsA.value : []
+    expect((fa.state() as { contactId: string }).contactId).toBe(cA?.id)
+    expect(fa.rows()).toEqual(expect.arrayContaining(['scanner.back', 'backing.result.ok', 'scanner.end.complete']))
+    expect(fb.rows()).toEqual(expect.arrayContaining(['previewing.result.back']))
+    expect(fb.rows()).toContain('readingBack.result.proposed')
+    expect(fb.rows()).toContain('connecting.bundle.complete')
+  }, 60_000)
+
+  it('over a port double: every step of the scanner decided against the newest state of its ceremony', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const clockA = A.platform.clock as unknown as { advance(ms: number): void; now(): number }
+    const link = 'https://web-of-trust.de/t#_from=x&_id=e1'
+    const tick = () => new Promise((r) => setTimeout(r, 0))
+    /** A reads a code with its camera (or as a link); the port double holds the ceremony `first` */
+    const run = async (first: Partial<Connection> | null, opts: { offline?: boolean; carrier?: Connectivity['carrier']; origin?: 'camera' | 'url'; preview?: Partial<CardPreview>; back?: () => Promise<Result<BackShow>> } = {}) => {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const connectivity = writableStore<Connectivity>({ ...A.port.stores.connectivity.get(), network: opts.offline ? 'offline' : 'online', carrier: opts.carrier ?? 'connected' })
+      let backs = 0
+      const set = (c: Partial<Connection> & Pick<Connection, 'status'>, rev: number) => connections.set(ready([conn(c)], revision(1, rev, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections, connectivity },
+        trust: {
+          ...A.port.trust,
+          previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Mallory', knownContact: null, self: false, ...opts.preview } }),
+          confirmCard: () => {
+            // the proposal's ceremony is published before the act's result, as the session does
+            if (first) set({ status: 'open', ...first }, 2)
+            return { actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }
+          },
+          showBackCode: () => {
+            backs++
+            return { actId: 'y' as never, done: (opts.back ?? (async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })))() as never }
+          },
+        },
+      }
+      const fa = flow(A, port)
+      await fa.until('ready')
+      if (opts.preview?.answered) {
+        if (first) set({ status: 'open', ...first }, 2)
+        fa.scanner.source = () => link
+        fa.send({ type: 'scan' })
+      } else if (opts.origin === 'url') {
+        fa.send({ type: 'link', raw: link })
+        await fa.until('confirm')
+        fa.send({ type: 'yes' })
+      } else {
+        fa.scanner.source = () => link
+        fa.send({ type: 'scan' })
+        await fa.until('confirm')
+        fa.send({ type: 'yes' })
+      }
+      return { fa, set, connectivity, backs: () => backs }
+    }
+
+    // a carrier in reach, a relay in the link: wait; no acceptance within BACK_AFTER_MS: the back-code;
+    // "keep waiting" waits again; a decline while the code is shown says the contact stays
+    const shown = await run({})
+    await shown.fa.until('connecting')
+    expect(shown.fa.rows()).toContain('scanner.wait')
+    // one millisecond before the deadline: no act yet; at the deadline: the code
+    clockA.advance(BACK_AFTER_MS - 1)
+    await tick()
+    expect(shown.backs()).toBe(0)
+    expect(shown.fa.state().name).toBe('connecting')
+    clockA.advance(1)
+    await shown.fa.until('backCode')
+    shown.set({ status: 'open', backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    shown.fa.send({ type: 'keepWaiting' })
+    expect(shown.fa.state()).toMatchObject({ name: 'connecting', role: 'scanner', waitLong: false })
+    // a second "keep waiting" while it waits changes nothing (no 20 s wait)
+    shown.fa.send({ type: 'keepWaiting' })
+    expect(shown.fa.rows().filter((r) => r === 'connecting.keepWaiting')).toEqual([])
+    clockA.advance(BACK_AFTER_MS)
+    await shown.fa.until('backCode')
+    expect(shown.fa.rows()).toEqual(expect.arrayContaining(['backCode.keepWaiting', 'scanner.back']))
+    shown.set({ status: 'declined', contactId: 'c-bea' as ContactId }, 4)
+    expect(await shown.fa.until('declined')).toMatchObject({ kept: true })
+
+    // B1: the acceptance arrives over the carrier while the scanner waits (still open, the rest under way):
+    // no back-code after the wait, the rest is awaited; then complete
+    const acceptedWhileWaiting = await run({})
+    await acceptedWhileWaiting.fa.until('connecting')
+    acceptedWhileWaiting.set({ status: 'open', accepted: true }, 3)
+    await tick()
+    clockA.advance(BACK_AFTER_MS * 3)
+    await tick()
+    await tick()
+    expect(acceptedWhileWaiting.fa.state()).toMatchObject({ name: 'connecting', role: 'scanner' })
+    expect(acceptedWhileWaiting.backs()).toBe(0)
+    expect(acceptedWhileWaiting.fa.rows()).toContain('scanner.accepted')
+    acceptedWhileWaiting.set({ status: 'complete', accepted: true, contactId: 'c-bea' as ContactId }, 4)
+    expect(await acceptedWhileWaiting.fa.until('success')).toMatchObject({ contactId: 'c-bea', name2: 'Bea' })
+    // B1: the acceptance arrives while the code is shown: the code goes (the contact stands: the success)
+    const acceptedWhileShown = await run({})
+    await acceptedWhileShown.fa.until('connecting')
+    clockA.advance(BACK_AFTER_MS)
+    await acceptedWhileShown.fa.until('backCode')
+    acceptedWhileShown.set({ status: 'open', accepted: true, backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    expect(await acceptedWhileShown.fa.until('success')).toMatchObject({ contactId: 'c-bea' })
+    expect(acceptedWhileShown.fa.rows()).toContain('scanner.accepted.contact')
+    // B1: the acceptance arrives while the code is being made: no code
+    let resolveBack: (r: Result<BackShow>) => void = () => undefined
+    const making = await run({}, { offline: true, back: () => new Promise((r) => (resolveBack = r)) })
+    await making.fa.until('backing')
+    making.set({ status: 'open', accepted: true, backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    await making.fa.until('success')
+    resolveBack({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })
+    await tick()
+    expect(making.fa.state().name).toBe('success')
+
+    // the ceremony ends while the code is made, before the act's result: complete, declined, failed
+    for (const [status, to, contactId] of [['complete', 'success', 'c-bea'], ['declined', 'declined', null], ['failed', 'scanError', 'c-bea']] as const) {
+      let resolve: (r: Result<BackShow>) => void = () => undefined
+      const r = await run({}, { offline: true, back: () => new Promise((x) => (resolve = x)) })
+      await r.fa.until('backing')
+      r.set({ status, contactId: contactId as ContactId | null }, 3)
+      await r.fa.until(to)
+      resolve({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })
+      await tick()
+      expect(r.fa.state().name).toBe(to)
+      if (status === 'failed') expect(r.fa.state()).toMatchObject({ code: 'connect-failed-kept' })
+    }
+
+    // a link without a relay: the back-code at once, also online; no carrier in reach: the same
+    const noRelay = await run({ relayed: false })
+    await noRelay.fa.until('backCode')
+    const offline = await run({}, { offline: true })
+    await offline.fa.until('backCode')
+    // online, but the carrier unreachable or not configured: the same, at once
+    for (const carrier of ['unreachable', 'not-configured'] as const) {
+      const noCarrier = await run({}, { carrier })
+      await noCarrier.fa.until('backCode')
+      expect(noCarrier.fa.rows()).not.toContain('scanner.wait')
+    }
+    // a link opened as a link: waiting without a back-code; the long wait and "keep waiting"
+    const viaLink = await run({ camera: false }, { origin: 'url' })
+    await viaLink.fa.until('connecting')
+    clockA.advance(WAIT_LONG_MS)
+    await expect.poll(() => (viaLink.fa.state() as { waitLong?: boolean }).waitLong).toBe(true)
+    viaLink.fa.send({ type: 'keepWaiting' })
+    expect(viaLink.fa.state()).toMatchObject({ name: 'connecting', waitLong: false })
+    expect(viaLink.fa.rows()).toEqual(expect.arrayContaining(['scanner.wait.link', 'connecting.result.long', 'connecting.keepWaiting']))
+    expect(viaLink.backs()).toBe(0)
+
+    // W4, B2: a resumption (the same link read again) takes the stored ceremony through the same step: its
+    // name, not the scanned one; shown before → the code at once; accepted → no code; ended → its end
+    const resumeShown = await run({ backShown: true, contactId: 'c-bea' as ContactId }, { preview: { answered: 'e1' as ConnectionId } })
+    expect(await resumeShown.fa.until('backCode')).toMatchObject({ name2: 'Bea' })
+    const resumeNoRelay = await run({ relayed: false }, { preview: { answered: 'e1' as ConnectionId } })
+    await resumeNoRelay.fa.until('backCode')
+    const resumeOffline = await run({}, { offline: true, preview: { answered: 'e1' as ConnectionId } })
+    await resumeOffline.fa.until('backCode')
+    const resumeWait = await run({}, { preview: { answered: 'e1' as ConnectionId } })
+    expect(await resumeWait.fa.until('connecting')).toMatchObject({ name2: 'Bea' })
+    const resumeAccepted = await run({ accepted: true }, { preview: { answered: 'e1' as ConnectionId } })
+    await resumeAccepted.fa.until('connecting')
+    clockA.advance(BACK_AFTER_MS)
+    await tick()
+    expect(resumeAccepted.backs()).toBe(0)
+    const resumeDeclined = await run({ status: 'declined', contactId: 'c-bea' as ContactId }, { preview: { answered: 'e1' as ConnectionId } })
+    expect(await resumeDeclined.fa.until('declined')).toMatchObject({ kept: true, name2: 'Bea' })
+    const resumeTyped = flow(A, { ...A.port, trust: { ...A.port.trust, previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false, answered: 'e1' as ConnectionId } }) } })
+    await resumeTyped.until('ready')
+    resumeTyped.send({ type: 'link', raw: link })
+    expect(await resumeTyped.until('scanError')).toMatchObject({ code: 'code-used' })
+
+    // left at the code: to the conversation of the contact the code opened
+    const left = await run({}, { offline: true })
+    await left.fa.until('backCode')
+    left.set({ status: 'open', backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    await tick()
+    left.fa.send({ type: 'leave' })
+    expect(await left.fa.until('exit')).toMatchObject({ to: 'chat', contactId: 'c-bea' })
+    // the code past the end of the link it answers: not shown (checked before), and gone at its end
+    // (the end without a contact in the projection says only the end; with the contact, that it stays)
+    const ended = await run({}, { offline: true, back: async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: clockA.now() - 1 } }) })
+    expect(await ended.fa.until('scanError')).toMatchObject({ code: 'code-expired' })
+    const expiring = await run({}, { offline: true, back: async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: clockA.now() + 1000 } }) })
+    await expiring.fa.until('backCode')
+    expiring.set({ status: 'open', backShown: true, contactId: 'c-bea' as ContactId }, 3)
+    await tick()
+    clockA.advance(2000)
+    expect(await expiring.fa.until('scanError')).toMatchObject({ code: 'back-expired' })
+    expect(expiring.fa.rows()).toContain('backCode.expire')
+    // a back-code that cannot be made: the reason; a failure of this device is said as one
+    for (const [error, code] of [[{ kind: 'refused', code: 'code-too-long' }, 'code-too-long'], [{ kind: 'refused', code: 'no-card' }, 'no-card'], [{ kind: 'refused', code: 'code-used' }, 'code-expired'], [{ kind: 'infra', code: 'storage', retryable: true }, 'failed']] as const) {
+      const refused = await run({}, { offline: true, back: async () => ({ ok: false, error: error as never }) })
+      expect(await refused.fa.until('scanError')).toMatchObject({ code })
+      expect(refused.fa.rows()).toContain('backing.result.failed')
+    }
+    // in the background no back-code act runs; back in front, the newest state decides
+    const lifecycle = A.platform.lifecycle as unknown as { emit(s: 'active' | 'background'): void }
+    lifecycle.emit('background')
+    const away = await run({})
+    await away.fa.until('connecting')
+    clockA.advance(BACK_AFTER_MS)
+    await away.fa.until('backing')
+    await tick()
+    expect(away.backs()).toBe(0)
+    away.set({ status: 'open', accepted: true }, 3)
+    lifecycle.emit('active')
+    await away.fa.until('connecting')
+    await tick()
+    expect(away.backs()).toBe(0)
+    expect(away.fa.rows()).toContain('scanner.accepted')
+    // a ceremony unknown to the last bundle (cannot happen with the session) waits like a link
+    const unknown = await run(null)
+    await unknown.fa.until('connecting')
+  })
+
+  it('round 3: a missing state is no answer; the wait keeps its deadline and the person\'s choice; a late failure after an early success; the link path after the acceptance', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const clockA = A.platform.clock as unknown as { advance(ms: number): void; now(): number }
+    const link = 'https://web-of-trust.de/t#_from=x&_id=e1'
+    const tick = () => new Promise((r) => setTimeout(r, 0))
+    const run = async (opts: { offline?: boolean; origin?: 'camera' | 'url'; back?: () => Promise<Result<BackShow>> } = {}) => {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const connectivity = writableStore<Connectivity>({ ...A.port.stores.connectivity.get(), network: opts.offline ? 'offline' : 'online', carrier: 'connected' })
+      let backs = 0
+      let rev = 2
+      const set = (c: Partial<Connection> & Pick<Connection, 'status'>) => connections.set(ready([conn(c)], revision(1, rev++, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections, connectivity },
+        trust: {
+          ...A.port.trust,
+          previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+          // the proposal's result comes before any bundle names its ceremony
+          confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+          showBackCode: () => {
+            backs++
+            return { actId: 'y' as never, done: (opts.back ?? (async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })))() as never }
+          },
+        },
+      }
+      const fa = flow(A, port)
+      await fa.until('ready')
+      if (opts.origin === 'url') fa.send({ type: 'link', raw: link })
+      else {
+        fa.scanner.source = () => link
+        fa.send({ type: 'scan' })
+      }
+      await fa.until('confirm')
+      fa.send({ type: 'yes' })
+      return { fa, set, connectivity, backs: () => backs }
+    }
+    // no bundle names the ceremony yet: no answer either way (not the link path), the id is kept; the first
+    // bundle, a camera scan without a carrier, gives the back-code at once
+    const late = await run({ offline: true })
+    expect(await late.fa.until('connecting')).toMatchObject({ connection: 'e1', phase: 'unknown' })
+    clockA.advance(WAIT_LONG_MS)
+    await tick()
+    expect(late.fa.state()).toMatchObject({ name: 'connecting', phase: 'unknown', waitLong: false })
+    late.set({ status: 'open' })
+    await late.fa.until('backCode')
+    expect(late.fa.rows()).toEqual(expect.arrayContaining(['scanner.unknown', 'connecting.bundle.known']))
+    // the carrier goes away while it waits: the back-code at once
+    const lost = await run()
+    lost.set({ status: 'open' })
+    await lost.fa.until('connecting')
+    await expect.poll(() => (lost.fa.state() as { phase?: string }).phase).toBe('wait')
+    lost.connectivity.set({ ...lost.connectivity.get(), network: 'offline' })
+    await lost.fa.until('backCode')
+    expect(lost.fa.rows()).toContain('connecting.carrier.lost')
+    // "keep waiting" chosen: the carrier going away does not override it; the deadline does
+    lost.fa.send({ type: 'keepWaiting' })
+    expect(lost.fa.state()).toMatchObject({ phase: 'wait', kept: true })
+    lost.connectivity.set({ ...lost.connectivity.get(), network: 'online' })
+    lost.connectivity.set({ ...lost.connectivity.get(), network: 'offline' })
+    await tick()
+    expect(lost.fa.state().name).toBe('connecting')
+    clockA.advance(BACK_AFTER_MS)
+    await lost.fa.until('backCode')
+    // back from the background after the deadline: the code at once, no new wait
+    const lifecycle = A.platform.lifecycle as unknown as { emit(s: 'active' | 'background'): void }
+    const away = await run()
+    away.set({ status: 'open' })
+    await expect.poll(() => (away.fa.state() as { phase?: string }).phase).toBe('wait')
+    lifecycle.emit('background')
+    clockA.advance(BACK_AFTER_MS)
+    await away.fa.until('backing')
+    lifecycle.emit('active')
+    await away.fa.until('backCode')
+    expect(away.fa.rows().filter((r) => r === 'scanner.wait')).toHaveLength(1)
+    // the act ran nothing (accepted meanwhile): the code waits for the bundle that says so, then goes
+    const notShown = await run({ offline: true, back: async () => ({ ok: true, value: { kind: 'not-shown', why: 'accepted' } }) })
+    notShown.set({ status: 'open' })
+    await notShown.fa.until('backing')
+    await tick()
+    expect(notShown.fa.state().name).toBe('backing')
+    expect(notShown.fa.rows()).toContain('backing.result.notShown')
+    notShown.set({ status: 'open', accepted: true })
+    await notShown.fa.until('connecting')
+    // an early success (the acceptance, the contact from the back-code, still open) shows a later failure
+    const early = await run({ offline: true })
+    early.set({ status: 'open' })
+    await early.fa.until('backCode')
+    early.set({ status: 'open', accepted: true, backShown: true, contactId: 'c-bea' as ContactId })
+    expect(await early.fa.until('success')).toMatchObject({ connection: 'e1' })
+    early.set({ status: 'failed', accepted: true, contactId: 'c-bea' as ContactId })
+    expect(await early.fa.until('scanError')).toMatchObject({ code: 'connect-failed-kept' })
+    expect(early.fa.rows()).toContain('success.bundle.failed')
+    // the link path after the acceptance: a phase of its own, the long-wait timer ends with it
+    const viaLink = await run({ origin: 'url' })
+    viaLink.set({ status: 'open', camera: false })
+    await expect.poll(() => (viaLink.fa.state() as { phase?: string }).phase).toBe('link')
+    viaLink.set({ status: 'open', camera: false, accepted: true })
+    await expect.poll(() => (viaLink.fa.state() as { phase?: string }).phase).toBe('accepted')
+    clockA.advance(WAIT_LONG_MS)
+    await tick()
+    expect(viaLink.fa.state()).toMatchObject({ phase: 'accepted', waitLong: false })
+  })
+
+  it('round 4: the deadline set at the scan holds when the first state arrives; a way out of every wait; the read ceremony kept until it shows an answer', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const clockA = A.platform.clock as unknown as { advance(ms: number): void }
+    const link = 'https://web-of-trust.de/t#_from=x&_id=e1'
+    const tick = () => new Promise((r) => setTimeout(r, 0))
+    const scanner = async (back?: () => Promise<Result<BackShow>>) => {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      let rev = 2
+      const set = (c: Partial<Connection> & Pick<Connection, 'status'>) => connections.set(ready([conn(c)], revision(1, rev++, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections },
+        trust: {
+          ...A.port.trust,
+          previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+          confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+          showBackCode: () => ({ actId: 'y' as never, done: (back ?? (async () => ({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })))() as never }),
+        },
+      }
+      const fa = flow(A, port)
+      await fa.until('ready')
+      fa.scanner.source = () => link
+      fa.send({ type: 'scan' })
+      await fa.until('confirm')
+      fa.send({ type: 'yes' })
+      await fa.until('connecting')
+      return { fa, set }
+    }
+    // the first state 15 s after the scan (online, a relay): the deadline passed, the code at once
+    const late = await scanner()
+    clockA.advance(15_000)
+    await expect.poll(() => (late.fa.state() as { due?: boolean }).due).toBe(true)
+    expect(late.fa.state()).toMatchObject({ phase: 'unknown' })
+    late.set({ status: 'open' })
+    await late.fa.until('backCode')
+    expect(late.fa.rows()).toEqual(expect.arrayContaining(['connecting.unknown.due', 'connecting.bundle.known']))
+    // the first state 5 s after the scan: the wait goes on with the deadline of the scan (7 s more, not 12)
+    const early = await scanner()
+    clockA.advance(5_000)
+    await tick()
+    early.set({ status: 'open' })
+    await expect.poll(() => (early.fa.state() as { phase?: string }).phase).toBe('wait')
+    clockA.advance(7_000)
+    await early.fa.until('backCode')
+    // a way out while the code is made
+    let never: (r: Result<BackShow>) => void = () => undefined
+    const making = await scanner(() => new Promise((r) => (never = r)))
+    making.set({ status: 'open', relayed: false })
+    await making.fa.until('backing')
+    making.fa.send({ type: 'back' })
+    await making.fa.until('exit')
+    expect(making.fa.rows()).toContain('backing.leave')
+    never({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } })
+    await tick()
+    // the late result does not reopen the code
+    expect(making.fa.state().name).toBe('exit')
+    // the shower: an older bundle names the read ceremony open, without its confirmation: no answer yet, the
+    // read ceremony is kept; the bundle with the confirmation opens it; and back is a way out meanwhile
+    for (const leave of [false, true]) {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([conn({ status: 'open', role: 'inviter' })], revision(1, 2, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections },
+        trust: { ...A.port.trust, previewCard: async () => ({ ok: true, value: { role: 'back', name: 'Bea', knownContact: null, self: false } }), readBackCode: async () => ({ ok: true, value: { kind: 'taken', connection: 'e1' as ConnectionId } }) },
+      }
+      const fb = flow(A, port)
+      await fb.until('ready')
+      fb.scanner.source = () => 'BACK'
+      fb.send({ type: 'scan' })
+      await expect.poll(() => (fb.state() as { connection?: string }).connection).toBe('e1')
+      expect(fb.state().name).toBe('readingBack')
+      if (leave) {
+        fb.send({ type: 'back' })
+        await fb.until('ready')
+        expect(fb.rows()).toContain('readingBack.back')
+      } else {
+        connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 3, 1)))
+        expect(await fb.until('connectIncoming')).toMatchObject({ connection: 'e1', decision: 'd1' })
+      }
+    }
+  })
+
+  it('round 3: the shower keeps the read ceremony until a bundle names it', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+    const port: AppPort = {
+      ...A.port,
+      stores: { ...A.port.stores, connections },
+      trust: { ...A.port.trust, previewCard: async () => ({ ok: true, value: { role: 'back', name: 'Bea', knownContact: null, self: false } }), readBackCode: async () => ({ ok: true, value: { kind: 'taken', connection: 'e1' as ConnectionId } }) },
+    }
+    const fb = flow(A, port)
+    await fb.until('ready')
+    fb.scanner.source = () => 'BACK'
+    fb.send({ type: 'scan' })
+    expect(await fb.until('readingBack')).toBeDefined()
+    await expect.poll(() => (fb.state() as { connection?: string }).connection).toBe('e1')
+    connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 5, 1)))
+    expect(await fb.until('connectIncoming')).toMatchObject({ connection: 'e1', decision: 'd1' })
+    expect(fb.rows()).toContain('readingBack.result.unknown')
+  })
+
+  it('maintainer review: a confirmation accepted elsewhere whose ceremony holds the contact is the success, no new code; "the contact stays" only with a contact', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 151, ceremony: 'shared-connect' })
+    // the shower: its confirmation disappears (accepted in the list), the ceremony open with the contact
+    {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const decisions = writableStore(A.port.stores.decisions.get())
+      const port: AppPort = { ...A.port, stores: { ...A.port.stores, decisions, connections } }
+      const fb = flow(A, port)
+      const shownCard = (await fb.until('ready')).card?.card ?? null
+      connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 2, 1)))
+      decisions.set(ready([{ id: 'd1' as DecisionId, kind: 'connect-confirm', connection: 'e1' as ConnectionId, name: 'Bea', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(99, 99, 99)))
+      await fb.until('connectIncoming')
+      const runBefore = fb.state().run
+      connections.set(ready([conn({ status: 'open', role: 'inviter', accepted: true, contactId: 'c-bea' as ContactId })], revision(1, 3, 1)))
+      decisions.set(ready([] as never, revision(99, 100, 99)))
+      expect(await fb.until('success')).toMatchObject({ contactId: 'c-bea', connection: 'e1' })
+      expect(fb.rows()).not.toContain('connectIncoming.bundle.gone')
+      expect(fb.state().run).toBe(runBefore)
+    }
+    // the scanner: the link ended before any back-code was shown (no contact): only the end, no promise
+    for (const [contactId, code] of [[null, 'code-expired'], ['c-bea', 'back-expired']] as const) {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([conn({ status: 'open', relayed: false, ...(contactId ? { backShown: true, contactId: contactId as ContactId } : {}) })], revision(1, 2, 1)))
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, connections },
+        trust: {
+          ...A.port.trust,
+          previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+          confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+          showBackCode: () => ({ actId: 'y' as never, done: Promise.resolve({ ok: true, value: { kind: 'not-shown', why: 'expired' } } as never) }),
+        },
+      }
+      const fa = flow(A, port)
+      await fa.until('ready')
+      fa.scanner.source = () => 'https://web-of-trust.de/t#_from=x&_id=e1'
+      fa.send({ type: 'scan' })
+      await fa.until('confirm')
+      fa.send({ type: 'yes' })
+      expect(await fa.until('scanError')).toMatchObject({ code })
+    }
+  })
+
+  it('over a port double: the shower after its acceptance: the other side declines, fails, or completes without a contact', async () => {
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock: virtualClock(T0, 'UTC'), seed: 141, ceremony: 'shared-connect' })
+    for (const [status, to, rowId] of [['declined', 'declined', 'connecting.bundle.declined'], ['failed', 'scanError', 'connecting.bundle.failed'], ['complete', 'exit', 'connecting.bundle.foreign']] as const) {
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const decisions = writableStore(A.port.stores.decisions.get())
+      const port: AppPort = { ...A.port, stores: { ...A.port.stores, decisions, connections }, trust: { ...A.port.trust, decide: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: undefined } as never) }) } }
+      const fb = flow(A, port)
+      const shownCard = (await fb.until('ready')).card?.card ?? null
+      connections.set(ready([conn({ status: 'open', role: 'inviter', decision: 'd1' as DecisionId })], revision(1, 2, 1)))
+      decisions.set(ready([{ id: 'd1' as DecisionId, kind: 'connect-confirm', connection: 'e1' as ConnectionId, name: 'Bea', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(99, 99, 99)))
+      await fb.until('connectIncoming')
+      fb.send({ type: 'accept' })
+      await fb.until('connecting')
+      connections.set(ready([conn({ status, role: 'inviter', accepted: true })], revision(1, 3, 1)))
+      await fb.until(to)
+      expect(fb.rows()).toContain(rowId)
+    }
+  })
+
+  it('no "keep waiting" on the back-code of a link without a relay: no carrier brings an acceptance there', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const connections = writableStore<Loadable<readonly Connection[]>>(ready([conn({ status: 'open', relayed: false })], revision(1, 2, 1)))
+    const port: AppPort = {
+      ...A.port,
+      stores: { ...A.port.stores, connections },
+      trust: {
+        ...A.port.trust,
+        previewCard: async () => ({ ok: true, value: { role: 'displayed', name: 'Bea', knownContact: null, self: false } }),
+        confirmCard: () => ({ actId: 'x' as never, done: Promise.resolve({ ok: true, value: { kind: 'proposed', connection: 'e1', contactId: null } } as never) }),
+        showBackCode: () => ({ actId: 'y' as never, done: Promise.resolve({ ok: true, value: { kind: 'shown', qr: 'BACK', validUntil: Number.MAX_SAFE_INTEGER } } as never) }),
+      },
+    }
+    const fa = flow(A, port)
+    await fa.until('ready')
+    fa.scanner.source = () => 'https://web-of-trust.de/t#_from=x&_id=e1'
+    fa.send({ type: 'scan' })
+    await fa.until('confirm')
+    fa.send({ type: 'yes' })
+    await fa.until('backCode')
+    fa.send({ type: 'keepWaiting' })
+    expect(fa.state().name).toBe('backCode')
+  })
+
+  /** a lifecycle double that counts its listeners */
+  const countingLifecycle = (base: LoopbackDevice['platform']['lifecycle'], state: { now: 'active' | 'background' }) => {
+    const listeners = new Set<(s: 'active' | 'background') => void>()
+    return { listeners, lifecycle: { ...base, current: () => state.now, onState: (cb: (s: 'active' | 'background') => void) => (listeners.add(cb), () => void listeners.delete(cb)) } }
+  }
+  /** a clock double that counts its pending timers */
+  const countingClock = () => {
+    const c = virtualClock(T0, 'UTC')
+    const pending = new Set<object>()
+    const clock = {
+      ...c,
+      now: () => c.now(),
+      timeZone: () => c.timeZone(),
+      setTimer: (at: number, cb: () => void) => {
+        const token = {}
+        pending.add(token)
+        const off = c.setTimer(at, () => {
+          pending.delete(token)
+          cb()
+        })
+        return () => {
+          pending.delete(token)
+          off()
+        }
+      },
+    }
+    return { clock, pending, advance: (ms: number) => c.advance(ms) }
+  }
+
+  it('the back-code act waiting for the foreground lets go of the lifecycle when its run ends after the listener was set', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const { listeners, lifecycle } = countingLifecycle(A.platform.lifecycle, { now: 'background' })
+    const exec = verifyExecutor(A.port, { ...A.platform, lifecycle }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId }, run.signal)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(listeners.size).toBe(1)
+    run.abort()
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(listeners.size).toBe(0)
+  })
+
+  it('a late back-code result after the run ended sets no listener at all', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const state = { now: 'active' as 'active' | 'background' }
+    const { listeners, lifecycle } = countingLifecycle(A.platform.lifecycle, state)
+    let release: (r: Result<BackShow>) => void = () => undefined
+    const port: AppPort = { ...A.port, trust: { ...A.port.trust, showBackCode: () => ({ actId: 'y' as never, done: new Promise<Result<BackShow>>((r) => (release = r)) as never }) } }
+    const exec = verifyExecutor(port, { ...A.platform, lifecycle }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.back', run: 7, connection: 'e1' as ConnectionId }, run.signal)
+    // the app goes behind and the run ends while the act is out; then the act answers "background"
+    state.now = 'background'
+    run.abort()
+    release({ ok: true, value: { kind: 'not-shown', why: 'background' } })
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(listeners.size).toBe(0)
+  })
+
+  it('a wait of the flow ends with its run: its timer is removed, and none is set for a run already ended', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const { clock, pending, advance } = countingClock()
+    const exec = verifyExecutor(A.port, { ...A.platform, clock: clock as never }, { current: null })
+    const run = new AbortController()
+    const waiting = exec({ id: 'ver.wait', run: 3, ms: 12_000 }, run.signal)
+    expect(pending.size).toBe(1)
+    run.abort()
+    expect(await waiting).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+    expect(await exec({ id: 'ver.expire', run: 4, at: T0 + 5000 }, run.signal)).toEqual({ ok: false, code: 'cancelled' })
+    expect(pending.size).toBe(0)
+    const live = new AbortController()
+    const fires = exec({ id: 'ver.wait', run: 5, ms: 1000 }, live.signal)
+    advance(1000)
+    expect(await fires).toEqual({ ok: true })
+    expect(pending.size).toBe(0)
+  })
+
+  it('over a port double: the shower judges the read against its ceremony as the newest bundle has it', async () => {
+    const { devices } = await world(2)
+    const [A] = devices as [LoopbackDevice]
+    const cases: [BackRead, Partial<Connection> & Pick<Connection, 'status'>, VerifyState['name'], string][] = [
+      [{ kind: 'taken', connection: 'e1' as ConnectionId }, { status: 'open', role: 'inviter', decision: 'd1' as DecisionId }, 'connectIncoming', 'readingBack.result.proposed'],
+      [{ kind: 'again', connection: 'e1' as ConnectionId }, { status: 'open', role: 'inviter', accepted: true, contactId: 'c-bea' as ContactId }, 'success', 'readingBack.result.contact'],
+      // W3: the confirmation the read opened was closed meanwhile (declined): nothing to ask
+      [{ kind: 'taken', connection: 'e1' as ConnectionId }, { status: 'declined', role: 'inviter' }, 'ready', 'readingBack.result.ok'],
+      [{ kind: 'refused', connection: 'e1' as ConnectionId, reason: 'second-propose' }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
+      [{ kind: 'expired', connection: 'e1' as ConnectionId }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
+      [{ kind: 'no-match' }, { status: 'open', role: 'inviter' }, 'scanError', 'readingBack.result.refused'],
+      // ended with an error after the acceptance opened the contact: the error, the contact stays
+      [{ kind: 'again', connection: 'e1' as ConnectionId }, { status: 'failed', role: 'inviter', accepted: true, contactId: 'c-bea' as ContactId }, 'scanError', 'readingBack.result.failed'],
+    ]
+    for (const [i, [read, state, to, rowId]] of cases.entries()) {
+      let release: () => void = () => undefined
+      const held = new Promise<void>((r) => (release = r))
+      const connections = writableStore<Loadable<readonly Connection[]>>(ready([], revision(1, 1, 1)))
+      const decisions = writableStore(A.port.stores.decisions.get())
+      const port: AppPort = {
+        ...A.port,
+        stores: { ...A.port.stores, decisions, connections },
+        trust: { ...A.port.trust, previewCard: async () => ({ ok: true, value: { role: 'back', name: 'Bea', knownContact: null, self: false } }), readBackCode: async () => (await held, { ok: true, value: read }) },
+      }
+      const fb = flow(A, port)
+      const shownCard = (await fb.until('ready')).card?.card ?? null
+      fb.scanner.source = () => 'BACK'
+      fb.send({ type: 'scan' })
+      await fb.until('readingBack')
+      if (i === 0) {
+        // the shown code gets another proposal meanwhile: not taken, the read's own ceremony is asked
+        decisions.set(ready([{ id: 'd2' as DecisionId, kind: 'connect-confirm', connection: 'e2' as ConnectionId, name: 'Ali', state: 'open', openedAt: 0, expiresAt: null, answers: { card: shownCard!, validUntil: Number.MAX_SAFE_INTEGER } }] as never, revision(1, 9, 1)))
+        await new Promise((r) => setTimeout(r, 0))
+        expect(fb.state().name).toBe('readingBack')
+      }
+      connections.set(ready([conn(state)], revision(1, 3, 1)))
+      release()
+      await fb.until(to)
+      if (i === 0) expect(fb.state()).toMatchObject({ connection: 'e1', decision: 'd1', name2: 'Bea' })
+      if (i === 3 || i === 5) expect(fb.state()).toMatchObject({ code: 'card-invalid' })
+      if (i === 4) expect(fb.state()).toMatchObject({ code: 'code-expired' })
+      expect(fb.rows()).toContain(rowId)
+    }
+  })
+
+  it('a responder whose link names no relay (the inviter has no carrier): the back-code at once, also online; the inviter reads it and both have a contact', async () => {
+    const med = mediatorDouble()
+    const clock = virtualClock(Date.now(), 'UTC')
+    // A: no mediator (a carrier that takes documents, no shared-connect wires); B: the mediator, online
+    const A = await loopbackDevice({ carrier: memoryCarrier(), id: 'Al', name: 'Al', words: LOOPBACK_PHRASES[0], clock, seed: 121, ceremony: 'shared-connect' })
+    const B = await loopbackDevice({ carrier: { mediator: med }, id: 'Bea', name: 'Bea', words: LOOPBACK_PHRASES[1], clock, seed: 128, ceremony: 'shared-connect' })
+    const settle = async () => {
+      for (let i = 0; i < 40; i++) {
+        await med.settled()
+        for (const d of [A, B]) await d.port.session()?.idle()
+        await new Promise((r) => setTimeout(r, 0))
+      }
+    }
+    await settle()
+    // the responder's carrier is in reach: the code at once comes from the missing relay, not from the carrier
+    expect(carrierInReach(B.port)).toBe(true)
+    const fa = flow(A)
+    const fb = flow(B)
+    await fa.until('ready')
+    const link = fa.state().card?.qr ?? ''
+    await fb.until('ready')
+    fb.scanner.source = () => link
+    fb.send({ type: 'scan' })
+    await fb.until('confirm')
+    fb.send({ type: 'yes' })
+    const back = (await fb.until('backCode')) as Extract<VerifyState, { name: 'backCode' }>
+    expect(fb.rows()).toContain('scanner.back')
+    // the link of a device without a carrier names no relay: the projection says so
+    expect((B.port.stores.connections.get() as { value?: Connection[] }).value?.find((c) => c.role === 'responder')).toMatchObject({ relayed: false, camera: true })
+    fa.scanner.source = () => back.qr
+    fa.send({ type: 'scan' })
+    await fa.until('connectIncoming')
+    fa.send({ type: 'accept' })
+    await fa.until('success')
+    await settle()
+    for (const d of [A, B]) expect((d.port.stores.contacts.get() as { value?: unknown[] }).value).toHaveLength(1)
+  }, 60_000)
 })

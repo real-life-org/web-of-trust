@@ -230,7 +230,7 @@ it.each(['close', 'forget'] as const)('R11 control: %s waits for holder.close be
   hooks.afterCreate = async () => { creations++ }
   const closeDb = vi.spyOn(IDBDatabase.prototype, 'close')
   const keys = { rootIkm: new Uint8Array(64).fill(71), dek: new Uint8Array(32).fill(72) }
-  const host = rltpHolderHost({
+  const host = rltpHolderHost({ ceremony: 'card',
     idb: new IDBFactory(), clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(11421), transport: unconfiguredTransport(),
     writer: { acquire: async () => releases }, publish: () => {}, emit: () => {}, onCurrent: () => {},

@@ -15,7 +15,48 @@ export type { VerifyState, VerifyEvent, ScanErrorCode, ShownCard } from '../flow
 const fromResult = (r: Result<unknown>): EffectResult =>
   r.ok ? { ok: true, value: r.value } : { ok: false, code: 'code' in r.error ? String(r.error.code) : r.error.kind }
 
-const timer = (clock: Platform['clock'], at: number) => new Promise<void>((resolve) => clock.setTimer(at, resolve))
+const CANCELLED: EffectResult = { ok: false, code: 'cancelled' }
+
+/** Until `at` on the device clock, for an effect whose lifetime is `signal` (the runner's): the timer goes
+ *  when the signal aborts, and none is set for one already aborted; both end as `cancelled` */
+export function untilTime(clock: Platform['clock'], at: number, signal: AbortSignal): Promise<EffectResult> {
+  if (signal.aborted) return Promise.resolve(CANCELLED)
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      off()
+      resolve(CANCELLED)
+    }
+    const off = clock.setTimer(at, () => {
+      signal.removeEventListener('abort', onAbort)
+      resolve({ ok: true })
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Until the app is in front again, for an effect whose lifetime is `signal`: the listener goes when the
+ *  signal aborts, and none is set for one already aborted; both end as `cancelled` */
+export function untilFront(life: Platform['lifecycle'], signal: AbortSignal): Promise<EffectResult> {
+  if (signal.aborted) return Promise.resolve(CANCELLED)
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      off()
+      resolve(CANCELLED)
+    }
+    const off = life.onState((st) => {
+      if (st !== 'active') return
+      off()
+      signal.removeEventListener('abort', onAbort)
+      resolve({ ok: true })
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** The lifetime of the verify flow's effects (the runner's `lifetime`): the run, the state's name and the
+ *  scanner's phase (`unknown` and `wait` share the wait's deadline, set at the scan). A timer or a listener
+ *  does not outlive a change of state */
+export const verifyLifetime = (s: VerifyState): string => `${s.run}:${s.name}:${s.name === 'connecting' ? (s.phase === 'unknown' ? 'wait' : (s.phase ?? '')) : ''}`
 
 /** Where an already-captured card leaves the encounter, read from the published bundle (N9). */
 function followOf(port: AppPort, contactId: ContactId | null): { follow: CaptureFollow; decision: string | null } {
@@ -72,21 +113,21 @@ export function scanTargetSlot(): ScanTargetSlot {
 
 export function verifyExecutor(
   port: AppPort,
-  platform: Pick<Platform, 'scanner' | 'clock'>,
+  platform: Pick<Platform, 'scanner' | 'clock'> & { readonly lifecycle?: Platform['lifecycle'] },
   scans: { current: AbortController | null },
   /** web scanners render into it; without a slot the scan gets no target (native, tests) */
   target: ScanTargetSlot | null = null,
 ) {
-  return async (e: VerifyEffect): Promise<EffectResult> => {
+  /** `signal`: the lifetime of the effect (the runner's); after every `await` an effect sets up nothing for a
+   *  lifetime that ended. Aborting ends only the screen's waiting, never an act already at the core */
+  return async (e: VerifyEffect, signal: AbortSignal = new AbortController().signal): Promise<EffectResult> => {
     switch (e.id) {
       case 'ver.show':
         return fromResult(await port.trust.showCard().done)
       case 'ver.expire':
-        await timer(platform.clock, e.at)
-        return { ok: true }
+        return untilTime(platform.clock, e.at, signal)
       case 'ver.wait':
-        await timer(platform.clock, platform.clock.now() + e.ms)
-        return { ok: true }
+        return untilTime(platform.clock, platform.clock.now() + e.ms, signal)
       case 'cam.check': {
         const availability = await platform.scanner.availability()
         const permission = availability === 'available' ? await platform.scanner.permission() : 'denied'
@@ -96,6 +137,9 @@ export function verifyExecutor(
         scans.current?.abort()
         const ctl = new AbortController()
         scans.current = ctl
+        // the camera goes with the state's lifetime too; one that ended before the view was there starts none
+        if (signal.aborted) ctl.abort()
+        else signal.addEventListener('abort', () => ctl.abort(), { once: true })
         const el = target ? await target.wait(ctl.signal) : null
         if (ctl.signal.aborted) return { ok: true, value: { kind: 'cancelled' } }
         return { ok: true, value: await platform.scanner.scan({ target: el, signal: ctl.signal }) }
@@ -123,8 +167,40 @@ export function verifyExecutor(
         // scanned a new code already, and nothing is issued for the old one
         if (e.choice === 'accept' && platform.clock.now() > e.validUntil) return { ok: false, code: 'code-expired' }
         return fromResult(await port.trust.decide(e.decision, e.choice).done)
+      case 'ver.back': {
+        // the act opens a contact: it runs only while the screen is in front; back from the background, the
+        // newest state of the ceremony decides again (`resumed`), nothing ran meanwhile
+        const life = platform.lifecycle
+        if (life && life.current() === 'background') {
+          // released with the lifetime: an effect whose state ended holds no listener
+          const back = await untilFront(life, signal)
+          return back.ok ? { ok: false, code: 'resumed' } : back
+        }
+        const r = await port.trust.showBackCode(e.connection).done
+        // the end of the code it answers is checked before the code is shown
+        if (r.ok && r.value.kind === 'shown' && platform.clock.now() >= r.value.validUntil) return { ok: false, code: 'back-expired' }
+        // the act found the app behind (a race with the check above): back in front, the newest state decides
+        if (r.ok && r.value.kind === 'not-shown' && r.value.why === 'background' && life) {
+          // a lifetime that ended while the act was out sets up no listener (untilFront checks the signal)
+          if (life.current() === 'background') {
+            const back = await untilFront(life, signal)
+            if (!back.ok) return back
+          }
+          return { ok: false, code: 'resumed' }
+        }
+        return fromResult(r)
+      }
+      case 'ver.readBack':
+        return fromResult(await port.trust.readBackCode(e.raw))
     }
   }
+}
+
+/** A carrier in reach for the documents of a connection ceremony, as the app's connectivity says it: the
+ *  network not offline and the carrier neither unreachable nor missing from the build */
+export function carrierInReach(port: AppPort): boolean {
+  const c = port.stores.connectivity.get()
+  return c.network !== 'offline' && c.carrier !== 'unreachable' && c.carrier !== 'not-configured'
 }
 
 /** The bundle event: verification per contact and the open encounter-confirm decisions with the card
@@ -146,8 +222,14 @@ export function bundleEvent(port: AppPort): VerifyEvent | null {
   )
   const proposals = decisions.value.flatMap((d) => (d.kind === 'connect-confirm' && d.state === 'open' && d.answers !== null ? [{ id: d.id, connection: d.connection, card: d.answers.card, name: d.name, validUntil: d.answers.validUntil }] : []))
   const all = port.stores.connections.get()
-  const connections = Object.fromEntries((all.status === 'ready' ? all.value : []).map((c) => [c.id, { status: c.status, contactId: c.contactId }]))
-  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections }
+  // every ceremony as the core holds it: the flow decides against exactly these facts
+  const connections = Object.fromEntries(
+    (all.status === 'ready' ? all.value : []).map((c) => [
+      c.id,
+      { status: c.status, contactId: c.contactId, name: c.name, camera: c.camera, accepted: c.accepted, backShown: c.backShown, relayed: c.relayed, expiresAt: c.expiresAt, validUntil: c.validUntil, decision: c.decision },
+    ]),
+  )
+  return { type: 'bundle', verifications, aliases, decisions: open, proposals, connections, inReach: carrierInReach(port) }
 }
 
 export interface VerifyFlow {
@@ -175,7 +257,9 @@ export function useVerify(
   useEffect(() => {
     if (override) return
     const scans = { current: null as AbortController | null }
-    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot), platform)
+    // every effect lives as long as its state (verifyLifetime): the runner aborts its signal on a change of
+    // state and when the screen goes
+    const r = createFlowRunner(verify, first, verifyExecutor(port, platform, scans, slot), platform, { lifetime: verifyLifetime })
     const push = () => {
       const e = bundleEvent(port)
       if (e) r.send(e)
@@ -183,6 +267,8 @@ export function useVerify(
     const offContacts = port.stores.contacts.subscribe(push)
     const offDecisions = port.stores.decisions.subscribe(push)
     const offConnections = port.stores.connections.subscribe(push)
+    // whether a carrier is in reach is part of the bundle
+    const offConnectivity = port.stores.connectivity.subscribe(push)
     // a scan runs only while the machine is in `scanning`; back at the shown card, the bundle is read
     // again (a bundle that answered the card while the camera was open takes over now)
     let last = r.get().name
@@ -198,6 +284,7 @@ export function useVerify(
       offContacts()
       offDecisions()
       offConnections()
+      offConnectivity()
       offScan()
       scans.current?.abort()
       r.dispose()

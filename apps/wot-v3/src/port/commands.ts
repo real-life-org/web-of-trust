@@ -32,14 +32,37 @@ export interface WipeReport {
 }
 
 export interface CardPreview {
-  /** displayed card → scan; sent card → optical return path */
-  readonly role: 'displayed' | 'sent'
+  /** displayed card → scan; sent card → optical return path; back → the back-code of a connection
+   *  ceremony that answers one of this device's shown codes (no carrier in reach of the other side) */
+  readonly role: 'displayed' | 'sent' | 'back'
   readonly name: string | null
   /** recognized before confirming */
   readonly knownContact: ContactId | null
   /** own code */
   readonly self: boolean
+  /** the very link this device's camera answered before, its ceremony open: the connection, resumed from
+   *  what the stored ceremony holds (`stores.connections`); absent otherwise */
+  readonly answered?: ConnectionId
 }
+
+export type BackShow =
+  | { readonly kind: 'shown'; readonly qr: string; readonly validUntil: number }
+  | { readonly kind: 'not-shown'; readonly why: 'closed' | 'accepted' | 'expired' | 'background' }
+
+/** What reading a back-code did (`readBackCode`), from the write's own result:
+ *  - `taken`: a new proposal for one of this device's open codes; its confirmation is open
+ *  - `again`: nothing new taken and nothing refused (the core absorbed the very proposal it holds, after the
+ *    acceptance maybe taking the card it carries, or the ceremony had ended): its state is the answer
+ *  - `refused`: the core refused it for that ceremony (another proposer, a card that does not agree, the
+ *    link expired, …), with the core's reason
+ *  - `expired`: the code it answers ended (with the clock tolerance) before it was read
+ *  - `no-match`: no open code of this device takes it (another device's, without its card, no back-code)
+ *  What the ceremony stands at afterwards is in `stores.connections`. */
+export type BackRead =
+  | { readonly kind: 'taken' | 'again'; readonly connection: ConnectionId }
+  | { readonly kind: 'refused'; readonly connection: ConnectionId; readonly reason: string }
+  | { readonly kind: 'expired'; readonly connection: ConnectionId }
+  | { readonly kind: 'no-match' }
 
 /** Outcome of an encounter act. No outcome means "mutual"; only ContactSummary.verification says that. */
 export type EncounterOutcome =
@@ -107,6 +130,18 @@ export interface TrustCommands {
   confirmCard(raw: string, origin?: 'camera' | 'url' | 'manual'): IntentHandle<EncounterOutcome>
   /** return path for the scanner: the own sent card as QR */
   sentCardFor(contactId: ContactId): Promise<Result<{ qr: string }>>
+  /** a connection ceremony without a carrier: the code the reader of a shown code shows back (its
+   *  proposal with its card); the reader's contact exists from here on. Refused `no-card` for a code
+   *  without the inviter's card (another app, an older version), `code-too-long` when it does not fit one
+   *  QR code (a long name), `code-expired` once the code it answers expired or its ceremony ended */
+  /** `shown`: the code, until `validUntil` (the end of the link it answers). `not-shown`: the act checked its
+   *  preconditions right before the holder and ran nothing: the ceremony is no open one of a responder
+   *  (`closed`), the acceptance arrived (`accepted`), its link ended (`expired`), the app is not in front
+   *  (`background`) */
+  showBackCode(connection: ConnectionId): IntentHandle<BackShow>
+  /** the camera of the device that shows a code read the back-code: the proposal is asked like one that
+   *  came over the carrier (a `connect-confirm` decision); accepting opens the contact. Not a human act */
+  readBackCode(raw: string): Promise<Result<BackRead>>
   counterVerify(contactId: ContactId): IntentHandle<void>
 
   // Trust

@@ -26,7 +26,7 @@ it.each([false, true])('R7: offline committed submission survives a fresh host=%
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const device = fakeDevice(), idb = new IDBFactory()
   let entropySeed = 700
-  const build = () => createRltpPort({
+  const build = () => createRltpPort({ ceremony: 'card',
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(entropySeed++) }),
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })
@@ -61,7 +61,7 @@ it('R7: a submit failure during handOn must not strand the activated session', a
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC')
   const device = fakeDevice(), idb = new IDBFactory(), endpoint = carrier.endpoint('A')
   let fail = false
-  const A = createRltpPort({
+  const A = createRltpPort({ ceremony: 'card',
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(720) }),
     idb, writer: { acquire: async () => () => {} },
     transport: { ...endpoint, submit(out) { if (fail) { fail = false; throw Error('transport unavailable') }; endpoint.submit(out) } },
@@ -89,7 +89,7 @@ it('R7: a submit failure during handOn must not strand the activated session', a
 it('R7: failed finishRestore marker removal is repaired by a fresh runtime', async () => {
   const carrier = memoryCarrier(), clock = virtualClock(T0, 'UTC'), device = fakeDevice(), idb = new IDBFactory()
   let seed = 730
-  const build = () => createRltpPort({
+  const build = () => createRltpPort({ ceremony: 'card',
     identity: fakeIdentityPlatform(device, { clock, entropy: fakeEntropy(seed++) }),
     idb, transport: carrier.endpoint('A'), writer: { acquire: async () => () => {} },
   })

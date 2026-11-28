@@ -52,6 +52,9 @@ export interface ProjectionInput {
   readonly profile: ProfileView
   /** the holder's connection ceremonies (shared-connect enactments) */
   readonly connections?: readonly SharedConnectView[]
+  /** by ceremony: whether its link names a relay (`relayedVia`, resolved by the session); absent: unknown
+   */
+  readonly relayed?: Readonly<Record<string, boolean | null>>
   /** the holder's groups, the personal community left out by the library */
   readonly groups?: readonly GroupView[]
   /** the invitations accepted and not answered by their inviters yet (lib pendingJoins) */
@@ -89,6 +92,52 @@ export interface ReadModels {
 
 /** the contact id of a connection ceremony's counterpart that gave no card: the ceremony's, prefixed */
 export const foreignContactId = (connection: string): ContactId => `connect:${connection}` as ContactId
+
+/** whether a messaging identity (a link's `_from`, a proposal's issuer) names a relay its documents travel
+ *  through: the library's full resolution (did:peer:2 and the long form of did:peer:4); null when it cannot
+ *  be resolved (unknown, never an answer) */
+export async function relayedVia(did: string): Promise<boolean | null> {
+  const peer = await sc.parsePeer(did).catch(() => null)
+  return peer ? peer.relays.length > 0 : null
+}
+
+/** `relayedVia` with a memory: a known answer is kept per DID, an identity not resolved (null) is asked again
+ *  the next time */
+export function relayCache(resolve: (did: string) => Promise<boolean | null> = relayedVia): (did: string) => Promise<boolean | null> {
+  const known = new Map<string, boolean>()
+  return async (did) => {
+    const hit = known.get(did)
+    if (hit !== undefined) return hit
+    const read = await resolve(did)
+    if (read !== null) known.set(did, read)
+    return read
+  }
+}
+
+/** One ceremony as the port shows it: every fact from the core's view of it (shared-connect-holder.ts
+ *  `sharedConnectView`), nothing from a screen */
+export function connectionOf(v: SharedConnectView, relayed: boolean | null): Connection {
+  return {
+    id: v.id as ConnectionId,
+    role: v.role,
+    status: v.status,
+    name: v.name,
+    contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null,
+    met: v.met,
+    failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null,
+    closedAt: v.closedAt,
+    camera: v.role === 'responder' ? v.channel === 'scan' : v.channel === 'displayed',
+    // each side's credential is issued at the acceptance and only there (Inviter.accept, Responder on the accept)
+    accepted: v.myCredential !== null,
+    // a responder's contact opens from the back-code or at the end: while open, only the back-code opened it
+    backShown: v.role === 'responder' && v.status === 'open' && v.contactId !== null,
+    relayed,
+    theirDid: v.theirDid,
+    expiresAt: v.link.exp * 1000,
+    validUntil: (v.link.exp + sc.CLOCK_TOLERANCE_S) * 1000,
+    decision: (v.promptId ?? null) as DecisionId | null,
+  }
+}
 
 const NO = (reason: Exclude<Availability, { ok: true }>['reason']): Availability => ({ ok: false, reason })
 const OK: Availability = { ok: true }
@@ -544,7 +593,7 @@ export function project(raw: ProjectionInput): ReadModels {
     conversations,
     reportable,
     decisions,
-    connections: connections.map((v) => ({ id: v.id as ConnectionId, role: v.role, status: v.status, name: v.name, contactId: (v.contactId ?? (v.status === 'complete' ? foreignContactId(v.id) : null)) as ContactId | null, met: v.met, failure: v.failure ? { code: v.failure.code, message: v.failure.message } : null, closedAt: v.closedAt })),
+    connections: connections.map((v) => connectionOf(v, input.relayed?.[v.id] ?? null)),
     profile: { name: input.profile.name ?? null, image: input.profile.image ?? null, anchorShort: input.anchorShort, pending: false },
     standing: {
       trustYou: input.contacts.filter((c) => c.trust.received).length,

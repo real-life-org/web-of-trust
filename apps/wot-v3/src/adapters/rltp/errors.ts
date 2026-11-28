@@ -68,6 +68,9 @@ export const ACT_ERRORS = {
   'link-invalid': r('card-invalid'),
   'enactment-unknown': GENERIC,
   'enactment-closed': r('code-used'),
+  // the back-code of shared-connect without a carrier (lib 0.22.0)
+  'no-card': r('no-card'),
+  'code-too-long': r('code-too-long'),
   'not-pending': r('decision-gone'),
   concurrent: GENERIC,
   // the app's KeyProvider implements sharedConnectMessaging: a refusal is a bug of the app

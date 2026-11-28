@@ -84,8 +84,11 @@ export async function loopbackDevice(opts: {
   seed: number
   language?: Language
   /** tests: the carrier as the adapter sees it (a lease that records what the session hands it) */
-  /** the ceremony a shown code starts (RltpPortDeps.ceremony) */
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent: the harness's
+   *  phones show the card of encounter-scan unless they run the app's ceremony */
   ceremony?: 'shared-connect' | 'card'
+  /** tests: the app's foreground and background, as the session sees it */
+  lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   wrap?: (t: ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier) => ReturnType<MemoryCarrier['endpoint']> | MediatorCarrier
 }): Promise<LoopbackDevice> {
   const device = fakeDevice()
@@ -103,7 +106,8 @@ export async function loopbackDevice(opts: {
   const transport = opts.wrap ? opts.wrap(made) : made
   const port = createRltpPort({
     faults,
-    ...(opts.ceremony ? { ceremony: opts.ceremony } : {}),
+    ceremony: opts.ceremony ?? 'card',
+    ...(opts.lifecycle ? { lifecycle: opts.lifecycle } : {}),
     identity,
     idb,
     transport,

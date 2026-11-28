@@ -6,7 +6,7 @@
 import { cardOk, CHALLENGE_MAX_AGE, createHolder, CryptoUnavailableError, InfraError, sharedConnect as sc } from '@real-life/trust-protocol'
 import type { ActResult, ContactView, DeliveryItemView, DeliveryReport, GroupView, PendingJoinView, Holder, HolderEvent, ProfileView, PromptView, ReceiveResult, RetryPolicy, SharedConnectView } from '@real-life/trust-protocol'
 import { concludable } from '@real-life/trust-protocol/adapters/vti-mediator'
-import type { ActId, AppError, AppEvent, CardPreview, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, LoginOutcome, MessageId, Result } from '../../port'
+import type { ActId, AppError, AppEvent, BackRead, CardPreview, ConnectionId, ContactId, DecisionResolution, EncounterOutcome, IntentHandle, LoginOutcome, MessageId, Result } from '../../port'
 import { revision, writableStore, type ReadStore } from '../../port'
 import type { DiagnosticEntry } from '../../port/diagnostics'
 import type { ClockPort, EntropyPort } from '../../platform/ports'
@@ -19,7 +19,7 @@ import { mapActError, TRANSIENT_REFUSALS } from './errors'
 import { createGate, GateClosedError, type Gate } from './gate'
 import { applyEncounterEvents, connectedContact, ingest, statusFinal } from './ingest'
 import { DONE_RETENTION_MS, isOpen, RETRY_HORIZON_MS, type IntentRecord } from './journal'
-import { project, type ReadModels } from './projection'
+import { project, relayCache, type ReadModels } from './projection'
 import { createSealer } from './sealed'
 import { createSharedConnectCarriage, type SharedConnectCarriage } from './shared-connect-carriage'
 import { keysFromRootIkm } from './keys'
@@ -45,13 +45,13 @@ export interface SessionDeps {
   readonly subtle?: SubtleCrypto
   /** fault switches of tests and the harness (architecture §3.2 FaultSwitches.killAt) */
   readonly faults?: RltpFaults
-  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'card' when absent */
+  /** the ceremony a shown code starts (RltpPortDeps.ceremony); 'shared-connect' when absent */
   readonly ceremony?: 'shared-connect' | 'card'
   /** what the adapter met, codes only (architecture §2.6); the host records it while the opening is
    *  in use */
   readonly diagnose?: (entry: Omit<DiagnosticEntry, 'id'>) => void
   /** the app comes back to the foreground: due work and open replays run again (§3.4) */
-  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   /** 'dereg-only': opened by a delete only to deregister (§2.1 rule 9 S3, architecture §4.2): no
    *  transport, no timers, no intent recovery, nothing submitted (review 420 R5-2) */
   readonly mode?: 'normal' | 'dereg-only'
@@ -79,6 +79,9 @@ export interface Session {
   retryIntent<T>(actId: ActId): IntentHandle<T>
   discardIntent(actId: ActId): Promise<Result>
   previewCard(raw: string): Promise<Result<CardPreview>>
+  /** the inviter's camera read a back-code (shared-connect without a carrier, lib 0.22.0): the proposal of
+   *  the own shown code it answers, as if a carrier had brought it; the confirmation opens */
+  readBackCode(raw: string): Promise<Result<BackRead>>
   /** EXPERIMENTAL: answer a login request of a web app (login.ts) with the identity toward it */
   answerLogin(raw: string, opts: { name?: string | null; picture?: string | null }): Promise<Result<LoginOutcome>>
   /** read boundary of a conversation: the item `upTo` and everything before it count as read */
@@ -295,7 +298,9 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   undo.push(() => cancelTimers())
   let models: ReadModels | null = null
   let appSeq = 0
-  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; groups: GroupView[]; pendingJoins: PendingJoinView[]; provenance: Record<string, Record<string, string[]>> } | null = null
+  let lastViews: { commitSeq: string; contacts: ContactView[]; prompts: PromptView[]; profile: ProfileView; connections: SharedConnectView[]; relayed: Record<string, boolean | null>; groups: GroupView[]; pendingJoins: PendingJoinView[]; provenance: Record<string, Record<string, string[]>> } | null = null
+  /** whether a messaging identity names a relay, by DID: the library's full resolution, a known answer kept */
+  const relayedOf = relayCache()
   /** events announced but not yet taken over, and the ids already taken (dedupe of act results) */
   let pending: HolderEvent[] = []
   const seen = new Set<string>()
@@ -340,6 +345,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       prompts: lastViews.prompts,
       profile: lastViews.profile,
       connections: lastViews.connections,
+      relayed: lastViews.relayed,
       groups: lastViews.groups,
       pendingJoins: lastViews.pendingJoins,
       provenance: lastViews.provenance,
@@ -367,6 +373,8 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       const [rawContacts, prompts, inbox, statusViews, connections, groups, pendingJoins] = await gate.run((h) =>
         Promise.all([h.contacts(), h.prompts(), h.inbox(), Promise.all(pendingOut.map((l) => h.deliveryStatus(l.digest ?? ''))), h.sharedConnect(), h.groups(), h.pendingJoins()]),
       )
+      // whether each ceremony's link names a relay, from the stored link (also after a restart)
+      const relayed = Object.fromEntries(await Promise.all(connections.map(async (v) => [v.id, await relayedOf(v.role === 'responder' ? v.link.from : v.did)] as const)))
       // who invited whom, per group this device holds the log of (Membership RLTP-MT-3400)
       const provenance: Record<string, Record<string, string[]>> = {}
       await gate.run(async (h) => {
@@ -399,7 +407,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       await app.write(writes)
       // events count as taken over only once their derivation is durable (review 420 R1-1)
       pending = pending.filter((e) => !take.includes(e))
-      lastViews = { commitSeq: a, contacts, prompts, profile, connections, groups, pendingJoins, provenance }
+      lastViews = { commitSeq: a, contacts, prompts, profile, connections, relayed, groups, pendingJoins, provenance }
       // which relationships a custody carrier carries, and which instance closes at a chaining
       if (deps.transport.kind === 'custody' && !deregOnly) deps.transport.carry(contacts)
       await publishFromDb()
@@ -1132,8 +1140,17 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   }
 
   /** A repeated optical capture reports no contact (N9); the cache of own captures maps the card back. */
-  const enrich = async (rec: IntentRecord, value: unknown): Promise<unknown> => {
+  const enrich = async (rec: IntentRecord, value: unknown, skipped?: string): Promise<unknown> => {
     const o = value as EncounterOutcome | null
+    // a back-code lives as long as the link it answers (the core shows none past it); an act that ran nothing
+    // says why with the reason the act itself found, never one read again now
+    if (rec.command === 'showBackCode') {
+      if (skipped !== undefined) return { kind: 'not-shown', why: skipped }
+      const v = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === rec.input?.connection)
+      if (typeof (value as { qr?: unknown } | null)?.qr === 'string') return { kind: 'shown', qr: (value as { qr: string }).qr, validUntil: (v?.link.exp ?? 0) * 1000 }
+      // committed without a code (an act the journal settles): the ceremony's state tells the flow the rest
+      return { kind: 'not-shown', why: 'closed' }
+    }
     if (rec.command !== 'confirmCard' || o?.kind !== 'already-captured' || o.contactId !== null) return value
     const anchor = (rec.input?.card as { anchor?: unknown } | undefined)?.anchor
     const cache = (await app.get<EncounterCache>('kv', KV.encounters)) ?? EMPTY_ENCOUNTERS
@@ -1286,10 +1303,10 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       return { ok: false, error }
     }
     if (r.nextDueAt !== undefined) schedule(r.nextDueAt)
-    return finishOk<T>(rec, running, spec, r.events)
+    return finishOk<T>(rec, running, spec, r.events, 'skipped' in r ? r.skipped : undefined)
   }
   /** a committed act's result: its projections and `done` in one transaction */
-  const finishOk = async <T>(rec: IntentRecord, running: IntentRecord, spec: ActSpec, events: readonly HolderEvent[]): Promise<Result<T>> => {
+  const finishOk = async <T>(rec: IntentRecord, running: IntentRecord, spec: ActSpec, events: readonly HolderEvent[], skipped?: string): Promise<Result<T>> => {
     const input = rec.input ?? {}
     for (const e of events) {
       if (seen.has(e.eventId)) continue
@@ -1297,7 +1314,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       pending.push(e)
     }
     try {
-      const value = (await enrich(rec, spec.outcome(events, input))) as T
+      const value = (await enrich(rec, spec.outcome(events, input), skipped)) as T
       // the act's own projections and `done` in one transaction (§3.4 step 4, N4, review 420 R1-1)
       await queue(async () => {
         const writes = await finishWrites(rec, value, events)
@@ -1329,12 +1346,20 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     deps.transport.kind === 'custody' && (command === 'showCard' || (command === 'confirmCard' && input.role === 'displayed'))
       ? { ...input, carrier: journaledOffer(deps.transport.carrier, entropy.bytes(32)) }
       : input
+  /** the app in front, as the lifecycle says; without one (tests, the harness) always */
+  let foreground = deps.lifecycle?.current?.() !== 'background'
+  const offFront = (deregOnly ? undefined : deps.lifecycle)?.onState((st) => {
+    foreground = st === 'active'
+  }) ?? (() => {})
+  undo.push(() => offFront())
   const actContext: ActContext = {
     offer: (raw) => carrierOffer(deps.rootIkm, raw),
-    // a trigger link that was read is answered over the carrier's address, where the carrier has wires
-    // for it (the VTI mediator); the shown code is such a link only where the build names it
+    // the documents of a connection ceremony travel over the carrier's address, where the carrier has
+    // wires for them (the VTI mediator): configuration, known also while the device is offline
     relays: sharedConnect && lease.kind === 'custody' ? [{ kind: 'tsp-mediator', address: lease.carrier }] : null,
-    showsLink: deps.ceremony === 'shared-connect',
+    legacyCard: deps.ceremony === 'card',
+    foreground: () => foreground,
+    now,
   }
   /** the gesture of an input: the journaled carrier offer (N) is the act's, never the gesture's */
   const gesture = (i: Readonly<Record<string, unknown>> | null) => {
@@ -1616,20 +1641,70 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
   /** The trigger link of a connection ceremony (shared-connect 0.1): read without the network; the name
    *  is the link's `_label`, unverified. An own link is this device's code. */
   const previewLink = async (raw: string): Promise<Result<CardPreview>> => {
+    // a back-code answers one of this device's own shown codes: the name its proposal states (unverified)
+    const back = await backCodeOf(raw).catch((e: unknown) => ({ error: toAppError(e) }))
+    if (back && 'error' in back) return { ok: false, error: back.error }
+    if (back) return { ok: true, value: { role: 'back', name: typeof back.propose.payload?.reason === 'string' ? back.propose.payload.reason : null, knownContact: null, self: false } }
     const read = await sc.readSharedConnectLink(raw.trim(), Math.floor(now() / 1000)).catch(() => null)
     if (!read?.ok) return { ok: false, error: { kind: 'refused', code: read?.reason === 'expired' ? 'code-expired' : 'card-invalid' } }
-    let self = false
-    let used = false
+    let mine: SharedConnectView | undefined
     try {
-      const mine = (await gate.run((h) => h.sharedConnect())).find((v) => v.id === read.link.id)
-      self = mine?.role === 'inviter'
-      used = mine?.role === 'responder'
+      mine = (await gate.run((h) => h.sharedConnect())).find((v) => v.id === read.link.id)
     } catch (e) {
       return { ok: false, error: toAppError(e) }
     }
-    // a link this device answered before is spent (one code, one ceremony)
-    if (used) return { ok: false, error: { kind: 'refused', code: 'code-used' } }
-    return { ok: true, value: { role: 'displayed', name: read.link.label ?? null, knownContact: null, self } }
+    const value = { role: 'displayed' as const, name: read.link.label ?? null, knownContact: null, self: mine?.role === 'inviter' }
+    // the very link this device's camera answered, its ceremony open: resumed from the stored ceremony (the
+    // name, the other side, the end are its own; the core gives the same back-code and opens nothing twice).
+    // A link under the same handle with other data is not that link
+    if (mine?.role === 'responder' && mine.status === 'open' && mine.channel === 'scan') {
+      const same = sc.sameVid(mine.link.from, read.link.from.did) && mine.link.exp === read.link.exp && (mine.link.label ?? null) === (read.link.label ?? null)
+      if (!same) return { ok: false, error: { kind: 'refused', code: 'card-invalid' } }
+      return { ok: true, value: { ...value, name: mine.name, answered: mine.id as ConnectionId } }
+    }
+    // any other link this device answered before is spent (one code, one ceremony)
+    if (mine?.role === 'responder') return { ok: false, error: { kind: 'refused', code: 'code-used' } }
+    return { ok: true, value }
+  }
+
+  /** A back-code (shared-connect without a carrier, lib 0.22.0) and the own open shown code it answers: the
+   *  responder's card in it is made for that one code (`backCardChallenge`), so it names the enactment;
+   *  null for anything else, also a back-code for no code of this device or one without a card */
+  const backCodeOf = async (raw: string): Promise<{ id: string; propose: { issuer?: unknown; payload?: { reason?: unknown } } } | null> => {
+    const code = raw.trim()
+    if (!code.includes(sc.BACK_PATH)) return null
+    const open = (await gate.run((h) => h.sharedConnect())).filter((v) => v.role === 'inviter' && v.status === 'open')
+    for (const v of open) {
+      const read = await sc.readBackCode(code, { did: v.did, id: v.id }).catch(() => null)
+      if (read?.card) return { id: v.id, propose: read.propose }
+    }
+    return null
+  }
+  /** the inviter's camera read a back-code. The kind is the one write's own result (`sharedConnectReadBack`),
+   *  never a view read before or after it: a code past its link's end is expired before anything is
+   *  written; the write's `sharedconnect.pending` is `taken`, its `sharedconnect.refused` is `refused`; a
+   *  write that reports neither took nothing new (the core absorbed the very proposal it holds, or the
+   *  ceremony had ended): `again`, and what the ceremony stands at is its state in the next bundle */
+  const readBackCode = async (raw: string): Promise<Result<BackRead>> => {
+    try {
+      const back = await backCodeOf(raw)
+      if (!back || typeof back.propose.issuer !== 'string') return { ok: true, value: { kind: 'no-match' } }
+      const connection = back.id as ConnectionId
+      const before = (await gate.run((h) => h.sharedConnect())).find((x) => x.id === back.id)
+      if (!before) return { ok: true, value: { kind: 'no-match' } }
+      if (now() > (before.link.exp + sc.CLOCK_TOLERANCE_S) * 1000) return { ok: true, value: { kind: 'expired', connection } }
+      const r = await gate.run((h) => h.sharedConnectReadBack(back.id, raw.trim(), when()))
+      if (!r.ok) return { ok: false, error: mapActError(r.code) }
+      schedule(r.nextDueAt)
+      const no = r.events.find((e): e is Extract<HolderEvent, { type: 'sharedconnect.refused' }> => e.type === 'sharedconnect.refused')
+      const taken = r.events.some((e) => e.type === 'sharedconnect.pending' && e.id === back.id)
+      // published before the answer: the flow judges the ceremony's newest state
+      await sync()
+      if (no) return { ok: true, value: { kind: 'refused', connection, reason: no.reason } }
+      return { ok: true, value: { kind: taken ? 'taken' : 'again', connection } }
+    } catch (e) {
+      return { ok: false, error: toAppError(e) }
+    }
   }
 
   const previewCard = async (raw: string): Promise<Result<CardPreview>> => {
@@ -1738,6 +1813,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
       deps.transport.deactivate()
       offStatus()
       offLifecycle()
+      offFront()
       retryTimer?.()
       timer?.cancel()
       timer = null
@@ -1761,6 +1837,7 @@ async function build(deps: SessionDeps, r: { store: HolderStore; app: AppDb; sea
     retryIntent,
     discardIntent,
     previewCard,
+    readBackCode,
     answerLogin: (raw, opts) => answerLogin(keys as LoginKeys, raw, { ...opts, now: when() }),
     markRead,
     async inboxSize() {

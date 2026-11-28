@@ -10,7 +10,7 @@ import { deflateSync, inflateSync } from 'fflate'
 import { create as createQr } from 'qrcode'
 import { CARD_LINK_PREFIX, MAX_CARD_BYTES, MAX_PAYLOAD, decodeCardLink, encodeCardLink } from '../../src/adapters/rltp/card-link'
 import { CARD_LINK_DICTIONARIES, CARD_LINK_DICTIONARY_VERSION } from '../../src/adapters/rltp/card-link-dictionary'
-import { qrPath } from '../../src/ui/components/QrCode'
+import { QR_ERROR_CORRECTION, qrPath } from '../../src/ui/components/QrCode'
 
 /** the lib functions this test needs to make real cards; loaded like the fault-injection tests load the real lib */
 type Card = Record<string, unknown>
@@ -126,7 +126,7 @@ describe('card link: compact form', () => {
     const { displayed, sent } = await cards(2)
     for (const card of [displayed, sent]) {
       const link = encodeCardLink(card)
-      const segments = createQr(link, { errorCorrectionLevel: 'M' }).segments.map((g) => [g.mode.id, g.getLength()])
+      const segments = createQr(link, { errorCorrectionLevel: QR_ERROR_CORRECTION }).segments.map((g) => [g.mode.id, g.getLength()])
       expect(segments).toEqual([['Byte', CARD_LINK_PREFIX.length], ['Alphanumeric', link.length - CARD_LINK_PREFIX.length]])
     }
   })
@@ -385,12 +385,14 @@ describe('card link: QR size (architecture §5.3; the bound is a UX target for t
   // shorter forms) the random fields of a displayed and a sent card were driven by a hill climb to the
   // largest deflate size (tests/vectors/card-link-qr-bounds.json). Measured 28.10. (deflate bytes, QR
   // version at level M; capacity v15 348, v16 382, v17 432 bytes): displayed 314-336 (v15), sent
-  // 376-401 (v16-17).
+  // 376-401 (v16-17). The oracle's version stays the one at level M; `qrPath` draws at level L
+  // (QR_ERROR_CORRECTION), never a larger version than that.
   it.each(BOUNDS.cases.map((c) => [c.kind, c.name, c] as const))('worst case, %s card, name "%s": within its bound', (kind, _name, c) => {
     const link = encodeCardLink(c.card)
     expect(sha256(link)).toBe(c.linkSha256)
-    expect(qrPath(link)?.version).toBe(c.version)
+    expect(createQr(link, { errorCorrectionLevel: 'M' }).version).toBe(c.version)
     expect(c.version).toBeLessThanOrEqual(QR_BOUND[kind])
+    expect(qrPath(link)?.version).toBeLessThanOrEqual(c.version)
   })
 
   it('the worst cases cover the declared range: four long forms of 39-40 characters, displayed and sent', () => {
@@ -402,12 +404,13 @@ describe('card link: QR size (architecture §5.3; the bound is a UX target for t
     }
   })
 
-  it('regression #463: a real sent card with a name of 12 characters needs version 16 (no bound of 15 for the sent card)', () => {
+  it('regression #463: a real sent card with a name of 12 characters needs version 16 at level M (no bound of 15 for the sent card), 13 as drawn at level L', () => {
     const r = REGRESSION_463
     expect(sha256(r.link)).toBe(r.linkSha256)
     expect(encodeCardLink(r.card)).toBe(r.link)
     expect(decodeCardLink(r.link)).toEqual(r.card)
-    expect(qrPath(r.link)?.version).toBe(16)
+    expect(createQr(r.link, { errorCorrectionLevel: 'M' }).version).toBe(16)
+    expect(qrPath(r.link)?.version).toBe(13)
     expect(r.version).toBeLessThanOrEqual(QR_BOUND.sent)
   })
 

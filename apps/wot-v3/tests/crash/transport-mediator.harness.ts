@@ -294,7 +294,7 @@ async function runSeed(seed: number, standing: Standing) {
   /** what A's openings in use diagnosed (the displayed cells read their codes) */
   const diagA = diagnosticLog(() => crypto.randomUUID(), 1000)
   const host = (transport: Parameters<typeof rltpHolderHost>[0]['transport'], diagnostics?: DiagnosticLog) =>
-    rltpHolderHost({ idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle, ...(diagnostics ? { diagnostics } : {}) })
+    rltpHolderHost({ ceremony: 'card', idb, clock: vc, entropy: fakeEntropy(ent++), transport, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {}, lifecycle, ...(diagnostics ? { diagnostics } : {}) })
 
   // ── the fault seam on A's wires ────────────────────────────────────────────────────────────────
   const ctx = { inUse: false }

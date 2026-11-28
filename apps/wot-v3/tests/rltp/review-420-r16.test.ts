@@ -104,7 +104,7 @@ it('R16 drain: an already-running receive must not acknowledge after host.close 
   const answers: string[] = []
   let callbacks!: TransportHandlers
   const released = vi.fn()
-  const host = rltpHolderHost({
+  const host = rltpHolderHost({ ceremony: 'card',
     idb: new IDBFactory(), clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(16420), writer: { acquire: async () => released },
     transport: {

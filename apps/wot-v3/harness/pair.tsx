@@ -155,10 +155,12 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
       pn?.setOnline(on)
       d.platform.network.set(on ? 'online' : 'offline')
     })
-    // record what this phone shows: the displayed card and the sent card of the optical return path
+    // record what this phone shows: the displayed card, the sent card of the optical return path and the
+    // back-code of the connection ceremony without a carrier
     const trust = d.port.trust
     const showCard = trust.showCard.bind(trust)
     const sentCardFor = trust.sentCardFor.bind(trust)
+    const showBackCode = trust.showBackCode.bind(trust)
     const send = trust.send.bind(trust)
     Object.assign(trust, {
       // the virtual clock stands still between button presses; every message takes a second, so
@@ -170,6 +172,11 @@ async function createWorld(lang: 'en' | 'de', theme: PairWorld['theme'], met: bo
       showCard: () => {
         const h = showCard()
         void h.done.then((r) => (r.ok ? optics.set(p.id, r.value.qr) : undefined))
+        return h
+      },
+      showBackCode: (connection: Parameters<typeof showBackCode>[0]) => {
+        const h = showBackCode(connection)
+        void h.done.then((r) => (r.ok && r.value.kind === 'shown' ? optics.set(p.id, r.value.qr) : undefined))
         return h
       },
       sentCardFor: async (contactId: Parameters<typeof sentCardFor>[0]) => {

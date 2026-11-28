@@ -3,14 +3,22 @@
 // screen keeps its copy path.
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { QrCode, qrPath } from '../src/ui/components/QrCode'
+import { create } from 'qrcode'
+import { QR_ERROR_CORRECTION, QrCode, qrPath } from '../src/ui/components/QrCode'
 
 const TOO_LONG = `https://web-of-trust.de/c#1:${'A'.repeat(5000)}`
 
 describe('QrCode', () => {
   it('qrPath answers null for a text no QR version holds', () => {
     expect(qrPath(TOO_LONG)).toBeNull()
-    expect(qrPath('https://web-of-trust.de/c#1:ABC')?.version).toBe(3)
+    expect(qrPath('https://web-of-trust.de/c#1:ABC')?.version).toBe(2)
+  })
+
+  it('draws at error correction L: every code is shown on a screen, nothing covers or damages it', () => {
+    expect(QR_ERROR_CORRECTION).toBe('L')
+    const link = `https://web-of-trust.de/t#${'A1b2C3'.repeat(110)}`
+    expect(qrPath(link)?.version).toBe(create(link, { errorCorrectionLevel: 'L' }).version)
+    expect(qrPath(link)?.version).toBeLessThan(create(link, { errorCorrectionLevel: 'M' }).version)
   })
 
   it('draws the text instead of a code when the link does not fit, without throwing', () => {

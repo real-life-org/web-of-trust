@@ -142,7 +142,7 @@ it('R1-4: a staged restore opens beside the old holder under the same lock; the 
       }
     },
   } as unknown as LockManager
-  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(91), transport: unconfiguredTransport(), writer: webLockWriter(locks), publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(91), transport: unconfiguredTransport(), writer: webLockWriter(locks), publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const a = await host.open('old', keys())
   const b = await host.open('staged', keys())
   expect([a.kind, b.kind]).toEqual(['ok', 'ok'])
@@ -159,7 +159,7 @@ it('R1-3: a failed opening stops its transport before the writer is released', a
   const tr = unconfiguredTransport()
   const order: string[] = []
   vi.spyOn(tr, 'stop').mockImplementation(() => void order.push('stop'))
-  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(92), transport: tr, writer: { acquire: async () => () => void order.push('release') }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(92), transport: tr, writer: { acquire: async () => () => void order.push('release') }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const original = IDBDatabase.prototype.transaction
   const spy = vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
     if (this.name.startsWith('wot-v3-app-') && args[1] === 'readwrite') throw Error('injected first ingest failure')
@@ -206,7 +206,7 @@ it('R1-5: closing the old opening leaves the staged opening its transport', asyn
   const device = carrier.endpoint('me')
   const other = carrier.endpoint('other')
   const stop = vi.spyOn(device, 'stop')
-  const host = rltpHolderHost({ idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(93), transport: device, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
+  const host = rltpHolderHost({ ceremony: 'card', idb: new IDBFactory(), clock: virtualClock(T0, 'UTC'), entropy: fakeEntropy(93), transport: device, writer: { acquire: async () => () => {} }, publish: () => {}, emit: () => {}, onCurrent: () => {} })
   const a = await host.open('old', keys())
   const b = await host.open('staged', keys())
   if (a.kind !== 'ok' || b.kind !== 'ok') throw Error('open')

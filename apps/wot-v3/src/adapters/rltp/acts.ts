@@ -2,7 +2,7 @@
 // §3.4). One table: the journal names the command, a repeat finds the same function and gives it
 // the journaled input and the same actId, so the library's act journal makes it idempotent.
 
-import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent } from '@real-life/trust-protocol'
+import type { ActError, ActResult, CarrierOffer, Holder, HolderEvent, SharedConnectView } from '@real-life/trust-protocol'
 import { CHALLENGE_MAX_AGE } from '@real-life/trust-protocol'
 import { encodeCardLink } from './card-link'
 import type { CommandName, ConnectionId, ContactId, DecisionId, EncounterOutcome, GroupId, MessageId } from '../../port'
@@ -19,10 +19,15 @@ export interface ActContext {
   /** the library's carrier offer from the journaled one in the act input (carrier-offer.ts) */
   offer(raw: unknown): Promise<CarrierOffer | undefined>
   /** where the documents of a connection ceremony travel (shared-connect 0.1): the build's carrier as
-   *  the relay of the per-encounter messaging identity; null without a carrier that has such wires */
+   *  the relay of the per-encounter messaging identity, configuration known offline too; null without a
+   *  carrier that has such wires (then the two codes are the only way, the link names no relay) */
   readonly relays: readonly { readonly kind: string; readonly address: string }[] | null
-  /** the shown code starts the connection ceremony (the build names it and `relays` is there); else the card */
-  readonly showsLink: boolean
+  /** tests and the harness only (RltpPortDeps.ceremony 'card'): the shown code is the card of encounter-scan */
+  readonly legacyCard: boolean
+  /** the app is in front now (a human act that opens a contact runs only then) */
+  foreground(): boolean
+  /** the device time now (an act run late, a recovery, reads its preconditions at this time) */
+  now(): number
 }
 
 /** how long a shown code is valid (shared-connect 0.1 caps a code read in person at ten minutes) */
@@ -49,7 +54,9 @@ export interface PartialRefusal {
   readonly code: ActError
   readonly partial: true
 }
-export type ActOutcome = ActResult | PartialRefusal
+/** an act that checked its preconditions and ran nothing at the holder, with the reason it found */
+export type Skipped = Extract<ActResult, { ok: true }> & { readonly skipped: string }
+export type ActOutcome = ActResult | PartialRefusal | Skipped
 
 export interface ActSpec {
   readonly policy: IntentPolicy
@@ -73,6 +80,15 @@ export interface ActSpec {
    *  only when its lanes cover the older one's whole; otherwise the older one runs first (review 483,
    *  rounds 1 to 3). Default: the command's name. */
   lanes?(input: Readonly<Record<string, unknown>>): readonly string[]
+}
+
+/** why the back-code act does not run for this ceremony now; null when it may */
+export function notShown(v: SharedConnectView | undefined, now: number, foreground: boolean): 'closed' | 'accepted' | 'expired' | 'background' | null {
+  if (!v || v.role !== 'responder' || v.status !== 'open') return 'closed'
+  if (v.myCredential !== null) return 'accepted'
+  if (now >= v.link.exp * 1000) return 'expired'
+  if (!foreground) return 'background'
+  return null
 }
 
 /** the refusals on which the app keeps a message unsent (Message Tasks 5.1) */
@@ -156,16 +172,18 @@ const str = (input: Readonly<Record<string, unknown>>, k: string): string => {
 export const ACTS: Partial<Record<CommandName, ActSpec>> = {
   showCard: {
     policy: 'discard',
-    // the displayed card carries this side's delivery hint for C under its proof (lib 0.8.0)
-    // with a carrier for it, the shown code is the trigger link of a connection ceremony (shared-connect
-    // 0.1, the one ceremony of the app); without one, the card of encounter-scan as before
+    // the shown code is the trigger link of the connection ceremony (shared-connect 0.1), the one ceremony
+    // of the app, with or without a carrier in reach: a link shown in person carries this side's card, so
+    // the responder's back-code opens both contacts without a carrier (lib 0.22.0)
     run: async (h, i, o, ctx) => {
       const carrier = await ctx.offer(i.carrier)
       // the offer makes the relationship the ceremony opens a carried one (lib 0.17.0)
+      // tests and the harness: the card of encounter-scan, as the app showed it before (its carrier offer
+      // signs this side's delivery hint for C into the card, lib 0.8.0)
+      if (ctx.legacyCard) return h.show(carrier ? { ...o, carrier } : o)
       // the link on the app's own host: a camera scan opens the app (an app link), a page explains the code
       // to someone without it; the flow stays the registered URI
-      if (ctx.relays && ctx.showsLink) return h.sharedConnectShow({ relays: ctx.relays.map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', origin: LINK_ORIGIN, ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
-      return h.show(carrier ? { ...o, carrier } : o)
+      return h.sharedConnectShow({ relays: (ctx.relays ?? []).map((r) => ({ ...r })), minutes: CODE_MINUTES, channel: 'displayed', origin: LINK_ORIGIN, ...(await ownName(h)), ...(carrier ? { carrier } : {}) }, o)
     },
     outcome: (events, i) => {
       const link = ev(events, 'sharedconnect.shown')[0]
@@ -200,6 +218,26 @@ export const ACTS: Partial<Record<CommandName, ActSpec>> = {
       const proposed = ev(events, 'sharedconnect.proposed')[0]
       if (proposed) return { kind: 'proposed', connection: proposed.id as ConnectionId, contactId: null } satisfies EncounterOutcome
       return encounterOutcome(events, i.role === 'sent' ? 'sent' : 'displayed')
+    },
+  },
+  // the responder's back-code (shared-connect without a carrier, lib 0.22.0): the own proposal as a code for
+  // the inviter's camera; the act opens this side's contact from the inviter's card in the link. The same
+  // code every time, the contact opens once: a repeat runs again. Its preconditions are read here, right
+  // before the holder's act, also for a late run or a recovery, never taken over from a screen: the
+  // responder's ceremony, open, not accepted (an acceptance over the carrier opened no contact from the
+  // code), its link not ended, the app in front. Otherwise nothing runs and nothing is shown (`notShown`)
+  showBackCode: {
+    policy: 'replay',
+    run: async (h, i, o, ctx) => {
+      const v = (await h.sharedConnect()).find((x) => x.id === str(i, 'connection'))
+      // the reason found here travels unchanged into the act's result (never read again later)
+      const why = notShown(v, ctx.now(), ctx.foreground())
+      if (why !== null) return { ok: true, outbound: [], events: [], skipped: why }
+      return h.sharedConnectBack({ id: str(i, 'connection'), origin: LINK_ORIGIN }, o)
+    },
+    outcome: (events) => {
+      const shown = ev(events, 'sharedconnect.shown')[0]
+      return shown ? { qr: shown.link } : null
     },
   },
   counterVerify: {

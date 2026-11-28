@@ -227,7 +227,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       return page(<Working label={v.checking} />)
     case 'scanError':
       return page(
-        <Hero icon={<AlertIcon />} tone="danger" title={s.code === 'connect-failed' ? v.errorTitleConnectFailed : v.errorTitle} body={v[`error.${s.code}`]} />,
+        <Hero icon={<AlertIcon />} tone="danger" title={s.code === 'connect-failed' || s.code === 'connect-failed-kept' ? v.errorTitleConnectFailed : v.errorTitle} body={v[`error.${s.code}`]} />,
         <PrimaryAction label={t.common.retry} onClick={() => send({ type: 'retry' })} />,
       )
     case 'confirm': {
@@ -282,18 +282,32 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     }
     case 'loadingFallback':
       return page(<Working label={v.showing} />, undefined, undefined)
-    case 'fallback': {
+    case 'fallback':
+    case 'backCode': {
+      // the scanner's second code: the sent card of encounter-scan, or the back-code of a connection
+      // ceremony without a carrier; one screen
       const name = nameOf(s.name2)
+      const first = firstName(name)
+      const [title, body, label, qr] = s.name === 'fallback' ? [v.fallbackTitle, f(v.fallbackBody, { name: first }), v.fallbackLabel, s.sentQr] : [f(v.backTitle, { name: first }), f(s.connections?.[s.connection]?.contactId ? v.backBody : v.backBodyNoContact, { name: first }), v.backLabel, s.qr]
       return page(
         <div className="flex flex-col items-center gap-4 text-center">
-          <h2 className="m-0 text-lg font-semibold">{v.fallbackTitle}</h2>
-          <p className="m-0 text-sm text-pretty text-muted-foreground">{f(v.fallbackBody, { name: name.split(' ')[0] ?? name })}</p>
-          <QrCode value={s.sentQr} label={v.fallbackLabel} tooLarge={v.codeTooLarge} />
+          <h2 className="m-0 text-lg font-semibold">{title}</h2>
+          <p className="m-0 text-sm text-pretty text-muted-foreground">{body}</p>
+          <QrCode value={qr} label={label} tooLarge={v.codeTooLarge} />
         </div>,
-        <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />,
+        <>
+          {/* the back-code: back to waiting for the acceptance over the connection */}
+          {s.name === 'backCode' && s.connections?.[s.connection]?.relayed !== false ? <QuietAction label={v.backKeepWaiting} onClick={() => send({ type: 'keepWaiting' })} /> : null}
+          <QuietAction label={v.backToChat} onClick={() => send({ type: 'leave' })} />
+        </>,
         () => send({ type: 'leave' }),
       )
     }
+    case 'backing':
+      return page(<Working label={v.showing} />, undefined, undefined)
+    case 'readingBack':
+      // read, its confirmation not published yet: said so, and back is a way out
+      return page(<Working label={s.connection ? v.readBackPending : v.checking} />, undefined, s.connection ? back : undefined)
     case 'confirmationRequired':
     case 'confirmIncoming':
       // the shower, the same confirmation as the scanner's (E4): "not now" leaves the decision open
@@ -322,7 +336,12 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
       const name = firstName(nameOf(s.name2))
       return page(
         <>
-          <Hero icon={<CheckIcon />} title={f(s.role === 'scanner' ? v.connectWaitTitle : v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectWaitBody : v.connectFinishBody, { name })} />
+          {/* the scanner whose acceptance arrived waits only for the rest */}
+          {s.role === 'scanner' && s.phase !== 'accepted' ? (
+            <Hero icon={<CheckIcon />} title={f(v.connectWaitTitle, { name })} body={f(s.phase === 'unknown' ? v.connectUnknownBody : v.connectWaitBody, { name })} />
+          ) : (
+            <Hero icon={<CheckIcon />} title={f(v.connectFinishTitle, { name })} body={f(s.role === 'scanner' ? v.connectAcceptedBody : v.connectFinishBody, { name })} />
+          )}
           {s.waitLong ? (
             <Callout tone="warning" role="status">
               <div className="flex flex-col gap-2.5">
@@ -342,7 +361,7 @@ export function VerifyView({ state: s, send, scanTarget }: { state: VerifyState;
     }
     case 'declined':
       return page(
-        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={v.declinedBody} />,
+        <Hero icon={<AlertIcon />} tone="muted" title={f(v.declinedTitle, { name: firstName(nameOf(s.name2)) })} body={s.kept ? v.declinedBodyKept : v.declinedBody} />,
         <PrimaryAction label={t.common.close} onClick={() => send({ type: 'done' })} />,
         () => send({ type: 'done' }),
       )

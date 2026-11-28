@@ -37,7 +37,7 @@ export interface RltpHostDeps {
   readonly ceremony?: 'shared-connect' | 'card'
   /** where the adapter records what it met (codes only, architecture §2.6) */
   readonly diagnostics?: Pick<DiagnosticStore, 'record'>
-  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void }
+  readonly lifecycle?: { onState(cb: (s: 'active' | 'background') => void): () => void; current?(): 'active' | 'background' }
   /** the current session's models, null when no session is current (stores to LOADING, S5) */
   publish(models: ReadModels | null): void
   emit(e: AppEvent): void

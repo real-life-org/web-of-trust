@@ -12,6 +12,10 @@ export type RefusalCode =
   | 'code-expired'
   | 'code-used'
   | 'nothing-to-counter'
+  // a connection ceremony without a carrier: the code read carries no card of the other side (another
+  // app, an older version), or the back-code would not fit one QR code (a long name)
+  | 'no-card'
+  | 'code-too-long'
   // Contacts, trust
   | 'unknown-contact'
   | 'already-done'

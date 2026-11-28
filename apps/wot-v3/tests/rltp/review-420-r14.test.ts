@@ -162,7 +162,7 @@ it('R14 undo control: a failed construction waits for holder.close before releas
   hooks.created = 0
   const released = vi.fn()
   const closedDb = vi.spyOn(IDBDatabase.prototype, 'close')
-  const host = rltpHolderHost({
+  const host = rltpHolderHost({ ceremony: 'card',
     idb: new IDBFactory(),
     clock: virtualClock(Date.parse('2026-10-20T10:00:00Z'), 'UTC'),
     entropy: fakeEntropy(14420),

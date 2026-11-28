@@ -12,7 +12,7 @@ const flush = async () => { for (let i=0;i<15;i++) await new Promise(r=>setTimeo
 it('R5 probe: lock revokes a resumed setup while host.init is pending', async () => {
   const clock=virtualClock(T0,'UTC'),device=fakeDevice(),entropy=fakeEntropy(501)
   const identity=fakeIdentityPlatform(device,{clock,entropy}),carrier=memoryCarrier()
-  const port=createRltpPort({identity,idb:new IDBFactory(),transport:carrier.endpoint('A'),writer:{acquire:async()=>()=>{}}})
+  const port=createRltpPort({ ceremony: 'card',identity,idb:new IDBFactory(),transport:carrier.endpoint('A'),writer:{acquire:async()=>()=>{}}})
   await port.runtime.boot()
   const r=await port.runtime.setup.reserve('setup','passphrase');if(!r.ok)throw Error('reserve')
   await port.runtime.setup.writeVault(r.value.ns,{mnemonic:secret(LOOPBACK_PHRASES[0].split(' ')) as never,protection:{mode:'passphrase',passphrase:secret('harness passphrase')},profile:{name:'resumed-profile'},termsVersion:port.runtime.termsConsent().current})

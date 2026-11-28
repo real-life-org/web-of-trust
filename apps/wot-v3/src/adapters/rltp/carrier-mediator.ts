@@ -330,6 +330,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
       publish()
     }
 
+    /** the latest view names counterpart hints for this relationship */
+    const hintsNamed = (relId: string): boolean => contacts.some((c) => c.relationships.some((r) => r.id === relId && (r.counterpartDeliveryHints ?? []).length > 0))
+
     /** the instances this generation should run: build what is missing, close what was chained */
     const plan = () => {
       if (!live()) return
@@ -377,6 +380,9 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         void track(buildCard(card))
       }
       for (const [relId, rel] of present) {
+        // a relationship whose counterpart's hints came after it opened (shared-connect without a carrier:
+        // the card in a code names none, the issue step brings them, lib 0.22.0) is carried from then on
+        if (uncarried.get(relId) === 'no-hint' && (rel.counterpartDeliveryHints ?? []).length > 0) uncarried.delete(relId)
         if (chained.has(relId) || instances.has(relId) || building.has(relId) || uncarried.has(relId)) continue
         // the instance of a displayed card with this N becomes the relationship's (it binds above, or
         // once its collection or its build ended)
@@ -608,11 +614,15 @@ export function mediatorTransport(cfg: MediatorCarrierConfig): MediatorCarrier {
         }
         return
       } finally {
-        if (building.get(rel.id) === token) building.delete(rel.id)
+        const mine = building.get(rel.id) === token
+        if (mine) building.delete(rel.id)
         if (!made) {
           answeredWhileBuilding.delete(late)
           publish()
         }
+        // the view this build read had no hints, and a later one (delivered while it ran, when plan()
+        // skipped the relationship as being built) names them: planned again on the latest view now
+        if (!made && mine && g === gen && live() && uncarried.get(rel.id) === 'no-hint' && hintsNamed(rel.id)) plan()
       }
       // the answers committed while it was built (lease.answered reached no instance of it yet)
       answeredWhileBuilding.delete(late)

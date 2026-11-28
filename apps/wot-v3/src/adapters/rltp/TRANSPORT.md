@@ -212,8 +212,11 @@ contact's details name the reason: the card had no hint, it named none readable 
 state was refused, or the build has no mediator. An instance whose build failed for a transient reason
 (the store, a derivation) is planned again on the device clock, only while its generation runs; what
 the failed build made is closed. A contact met without a carrier offer (no N) shows the reason "no
-hint" while a mediator is configured. A contact's documents go through its first carried
-relationship only (in the view's order); every carried relationship of the contact still receives.
+hint" while a mediator is configured. A relationship marked "no hint" is carried as soon as the
+counterpart's hints arrive in the view (shared-connect without a carrier: the codes carry no hints, the
+issue step brings them, lib 0.22.0); until then its documents wait in custody. A contact's documents go
+through its first carried relationship only (in the view's order); every carried relationship of the
+contact still receives.
 
 **Delivery hints.** `show` and `scan` (the displayed card, the scanner's sent card) draw N, 32 bytes
 of the entropy port, at the gesture and journal it with the act input (`carrier-offer.ts`); the act
@@ -495,6 +498,20 @@ regression of #463 (`card-link-qr-463.json`). The distribution over random cards
 Real cards with a name of 12 characters: displayed always version 14, sent version 15 and in a small
 tail 16 (#463). A numeric QR segment instead of base32 (card link form 4, follow-up) holds about one
 version more per card and would bring the sent card back to version 16.
+
+**Drawn code.** `QrCode` draws every code at error correction level L: each one is shown on a screen,
+never printed or covered, so the reserve of M buys nothing there. The bounds above are measured at M;
+the drawn version is never larger (the regression of #463 is version 13 at L). On a phone the code
+takes the page's side gutter as well, its own quiet zone of four modules being the margin: 358 px of
+code on a screen of 360 points, at most 378 px. The codes of shared-connect (mediator.web-of-trust.de,
+names of 2 to 40 characters):
+
+| | link | back-code |
+|---|---|---|
+| characters | 674–772 | 751–809 |
+| QR version (L) | 18–19 | 19–20 |
+| modules with the quiet zone | 97–101 | 101–105 |
+| CSS px per module at 360 / 412 points | 3.69–3.54 / 3.90–3.74 | 3.54–3.41 / 3.74–3.60 |
 `didwebvh-ts` (inside
 `vti-didcomm-js`) carries a lazy `node:fs` branch the build externalizes; the browser never takes it.
 
@@ -526,3 +543,32 @@ restart, the whole `outbox` of the view goes out again, and the counterpart's ma
 duplicate without acting twice. The carriage starts from the view whenever the opening becomes the
 one in use (`Session.offer`), and stops with the opening. A build without a mediator has no such
 wires: an enactment opened there stays in the holder until a carrier is configured.
+
+**Without a carrier in reach** (lib 0.22.0). The shown code is always the trigger link, also while the
+device is offline: the link names the mediator from the build's configuration as the relay (none in a
+build without one), and a link shown in person carries the inviter's card (its pair keys, no delivery
+hints). A responder that read the link with its camera shows its back-code (`sharedConnectBack`, the act
+`showBackCode`) at once when the link names no relay or the connectivity the app shows has no carrier in
+reach (network offline, carrier unreachable or not configured); otherwise it waits for the acceptance over
+the carrier and shows the back-code on its own after `BACK_AFTER_MS` (12 s) without one, since it cannot
+tell which side lacks the connection. The wait measures "no acceptance yet", not "not delivered":
+shared-connect gives no signal before the acceptance, and a frame on the socket is no acceptance by the
+mediator. "Keep waiting" goes back to the wait (not offered for a link without a relay). An acceptance over
+the carrier ends the wait for it and the code: with the success when the responder's contact stands (its
+back-code opened it), otherwise the screen waits for the rest of the ceremony, without a back-code; a
+decline or a failure ends both with its message. Every one of these decisions is taken against the
+ceremony as the port projects it from the core's view on every bundle (`Connection`: camera, accepted,
+backShown, relayed, theirDid, expiresAt, decision, contactId), the same on the first scan and on a
+resumption, never from what the screen did before. The back-code act runs only while the app is in front;
+back from the background the newest state decides again. The back-code opens the responder's contact from
+the inviter's card; it is shown until the link it answers ends, and the same link read again by the camera
+(after a restart) shows the same code again, opening nothing twice. The inviter's camera, and only its
+camera, reads the back-code (`sharedConnectReadBack` for the own open link whose card check it passes, not
+a human act): a refusal the core reports is a refusal, a new proposal opens its confirmation and the flow
+asks exactly that one, the same proposal read again is that confirmation or that contact, and a code past
+the end of its link is expired. Accepting opens the inviter's contact. Trust and an invitation into a group
+go at once (they wait in custody); a message is `not-ready` until the counterpart's first document. The
+acceptance, the credentials and the receipts go over the wires above once a carrier is in reach and
+complete the same enactment; the issue steps bring the delivery hints, and the relationship is carried from
+then on (also when they arrive while its instance is being built). A link without a relay reaches its
+inviter over no carrier: the two contacts stand, the rest of the ceremony does not arrive.
